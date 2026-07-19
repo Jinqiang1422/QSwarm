@@ -21,6 +21,7 @@ class NTRIPManager;
 class QGCPalette;
 class QGCPositionManager;
 class SettingsManager;
+class SwarmManager;
 class VideoManager;
 class QmlObjectListModel;
 
@@ -36,6 +37,7 @@ Q_MOC_INCLUDE("QGCMapEngineManager.h")
 Q_MOC_INCLUDE("QGCPalette.h")
 Q_MOC_INCLUDE("PositionManager.h")
 Q_MOC_INCLUDE("SettingsManager.h")
+Q_MOC_INCLUDE("SwarmManager.h")
 Q_MOC_INCLUDE("VideoManager.h")
 
 class QGroundControlQmlGlobal : public QObject
@@ -63,6 +65,7 @@ public:
     Q_PROPERTY(QString              appName                 READ    appName                 CONSTANT)
     Q_PROPERTY(LinkManager*         linkManager             READ    linkManager             CONSTANT)
     Q_PROPERTY(MultiVehicleManager* multiVehicleManager     READ    multiVehicleManager     CONSTANT)
+    Q_PROPERTY(SwarmManager*        swarmManager            READ    swarmManager            CONSTANT)
     Q_PROPERTY(QGCMapEngineManager* mapEngineManager        READ    mapEngineManager        CONSTANT)
     Q_PROPERTY(QGCPositionManager*  qgcPositionManger       READ    qgcPositionManger       CONSTANT)
     Q_PROPERTY(VideoManager*        videoManager            READ    videoManager            CONSTANT)
@@ -156,6 +159,7 @@ public:
     static QString appName();
     LinkManager*            linkManager         ()  { return _linkManager; }
     MultiVehicleManager*    multiVehicleManager ()  { return _multiVehicleManager; }
+    SwarmManager*           swarmManager        ()  { return _swarmManager; }
     QGCMapEngineManager*    mapEngineManager    ()  { return _mapEngineManager; }
     QGCPositionManager*     qgcPositionManger   ()  { return _qgcPositionManager; }
     MissionCommandTree*     missionCommandTree  ()  { return _missionCommandTree; }
@@ -225,6 +229,7 @@ private:
     VideoManager*           _videoManager           = nullptr;
     LinkManager*            _linkManager            = nullptr;
     MultiVehicleManager*    _multiVehicleManager    = nullptr;
+    SwarmManager*           _swarmManager           = nullptr;
     SettingsManager*        _settingsManager        = nullptr;
     QGCCorePlugin*          _corePlugin             = nullptr;
     QGCPalette*             _globalPalette          = nullptr;
