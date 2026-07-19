@@ -1,0 +1,23 @@
+{
+  "name": "全员返航降落",
+  "description": "停止编队并立即返航降落，适用于任务收尾或紧急回收",
+  "version": 1,
+  "parameters": [],
+  "stages": [
+    {
+      "name": "返航",
+      "actions": [
+        {
+          "type": "stop_formation"
+        },
+        {
+          "type": "rtl"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_disarmed",
+        "timeout_sec": 300
+      }
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "name": "编队巡航后返航",
+  "description": "全体起飞→按指定队形编队巡航→计时结束停止编队并返航",
+  "version": 1,
+  "parameters": [
+    {
+      "key": "altitude",
+      "label": "起飞高度(米)",
+      "type": "number",
+      "default": 30,
+      "min": 10,
+      "max": 120
+    },
+    {
+      "key": "climb_gate",
+      "label": "升空判定高度(米)",
+      "type": "number",
+      "default": 25,
+      "min": 5,
+      "max": 115
+    },
+    {
+      "key": "leader_id",
+      "label": "长机编号",
+      "type": "integer",
+      "default": 1
+    },
+    {
+      "key": "formation",
+      "label": "队形(wedge/column/line/circle)",
+      "type": "string",
+      "default": "wedge"
+    },
+    {
+      "key": "spacing",
+      "label": "编队间距(米)",
+      "type": "number",
+      "default": 15,
+      "min": 5,
+      "max": 100
+    },
+    {
+      "key": "cruise_seconds",
+      "label": "巡航时长(秒)",
+      "type": "number",
+      "default": 120,
+      "min": 10,
+      "max": 7200
+    }
+  ],
+  "stages": [
+    {
+      "name": "起飞",
+      "actions": [
+        {
+          "type": "takeoff",
+          "altitude": "${altitude}"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_airborne",
+        "min_altitude": "${climb_gate}"
+      }
+    },
+    {
+      "name": "编队",
+      "actions": [
+        {
+          "type": "start_formation",
+          "leader_id": "${leader_id}",
+          "formation": "${formation}",
+          "spacing": "${spacing}",
+          "vertical_step": 3
+        }
+      ],
+      "complete_when": {
+        "kind": "formation_running"
+      }
+    },
+    {
+      "name": "巡航",
+      "actions": [],
+      "complete_when": {
+        "kind": "duration",
+        "seconds": "${cruise_seconds}"
+      }
+    },
+    {
+      "name": "返航",
+      "actions": [
+        {
+          "type": "stop_formation"
+        },
+        {
+          "type": "rtl"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_disarmed"
+      }
+    }
+  ]
+}

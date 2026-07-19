@@ -1,0 +1,423 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "set_selection",
+      "description": "选中无人机分组：后续集群指令只作用于这些飞机",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "vehicle_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "在线无人机系统 id 列表"
+          }
+        },
+        "required": [
+          "vehicle_ids"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "arm",
+      "description": "集群解锁（arm=true）或上锁（arm=false）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "arm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "arm"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "takeoff",
+      "description": "集群起飞到相对高度（米）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "altitude": {
+            "type": "number",
+            "minimum": 2,
+            "maximum": 120
+          }
+        },
+        "required": [
+          "altitude"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "land",
+      "description": "集群原地降落",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rtl",
+      "description": "集群返航",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "pause",
+      "description": "集群暂停悬停",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_mission",
+      "description": "集群开始已上传的航线任务",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "disarm",
+      "description": "集群上锁",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "emergency_disarm",
+      "description": "紧急强制上锁（飞行中会坠机，仅当用户明确说“紧急/强制”时使用）",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_formation",
+      "description": "开始长机-僚机编队：wedge楔形/column纵队/line横队/circle环形",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "leader_id": {
+            "type": "integer",
+            "description": "长机系统 id"
+          },
+          "formation": {
+            "type": "string",
+            "enum": [
+              "wedge",
+              "column",
+              "line",
+              "circle"
+            ]
+          },
+          "spacing": {
+            "type": "number",
+            "description": "队形间距（米），缺省 10"
+          },
+          "vertical_step": {
+            "type": "number",
+            "description": "高度分层（米），缺省 3"
+          }
+        },
+        "required": [
+          "leader_id",
+          "formation"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "stop_formation",
+      "description": "停止编队，僚机原地悬停",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "plan_coverage",
+      "description": "矩形区域覆盖任务规划并上传（不改变当前飞行状态）；缺省中心为当前地图中心",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "center_lat": {
+            "type": "number"
+          },
+          "center_lon": {
+            "type": "number"
+          },
+          "length": {
+            "type": "number",
+            "description": "区域沿航线方向长度（米）"
+          },
+          "width": {
+            "type": "number",
+            "description": "区域宽度（米）"
+          },
+          "angle": {
+            "type": "number",
+            "description": "航线方位角（度），缺省 0"
+          },
+          "spacing": {
+            "type": "number",
+            "description": "行距（米），缺省 20"
+          },
+          "altitude": {
+            "type": "number",
+            "description": "作业高度（米），缺省 30"
+          },
+          "assign": {
+            "type": "string",
+            "enum": [
+              "sequential",
+              "auction"
+            ],
+            "description": "条带分配方式：sequential=按机号升序（缺省）；auction=拍卖法，总转场里程最优"
+          }
+        },
+        "required": [
+          "length",
+          "width"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "clear_missions",
+      "description": "清空各机任务",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_swarm_task",
+      "description": "创建并启动多阶段集群任务：状态机监控每阶段完成条件（含航线进度 MISSION_CURRENT），自动推进",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_name": {
+            "type": "string"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "set_selection",
+                          "arm",
+                          "takeoff",
+                          "land",
+                          "rtl",
+                          "pause",
+                          "start_mission",
+                          "disarm",
+                          "start_formation",
+                          "stop_formation",
+                          "plan_coverage",
+                          "clear_missions"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "description": "动作对象：type 加对应参数（同各工具参数）"
+                  }
+                },
+                "complete_when": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "all_airborne",
+                        "all_disarmed",
+                        "all_mission_finished",
+                        "formation_running",
+                        "duration",
+                        "manual"
+                      ]
+                    },
+                    "min_altitude": {
+                      "type": "number"
+                    },
+                    "seconds": {
+                      "type": "number"
+                    },
+                    "timeout_sec": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "actions",
+                "complete_when"
+              ]
+            }
+          }
+        },
+        "required": [
+          "task_name",
+          "stages"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "abort_swarm_task",
+      "description": "中止正在运行的多阶段任务（全体暂停悬停）",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_task_template",
+      "description": "按名引用任务模板库中的多阶段任务模板并代入参数执行（模板清单见上下文 templates），优于 start_swarm_task 自定义编排",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "模板名（须来自上下文 templates 列表）"
+          },
+          "parameter_values": {
+            "type": "object",
+            "description": "模板参数键值对，缺省用模板默认值"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "propose_candidates",
+      "description": "给出 2~3 个候选任务方案供操作员对比选择（WP2.2；仅在用户要求多方案或存在多种明显不同实现时使用）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "方案名"
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "一句话概述"
+                },
+                "pros": {
+                  "type": "string",
+                  "description": "优点"
+                },
+                "cons": {
+                  "type": "string",
+                  "description": "缺点"
+                },
+                "actions": {
+                  "type": "array",
+                  "description": "动作序列（与执行动作同构，如 {\"type\":\"takeoff\",\"altitude\":30}）",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "template_name": {
+                  "type": "string",
+                  "description": "或：引用任务模板名（与 actions 二选一）"
+                },
+                "template_params": {
+                  "type": "object",
+                  "description": "模板参数"
+                }
+              },
+              "required": [
+                "title",
+                "summary"
+              ]
+            }
+          }
+        },
+        "required": [
+          "candidates"
+        ]
+      }
+    }
+  }
+]

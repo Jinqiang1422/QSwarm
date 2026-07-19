@@ -1,0 +1,76 @@
+# ============================================================================
+# P1 CI（WP1.6）：C++ 单元测试 + 评测集自检 + 场景库自检
+# 完整 QGC 构建在专用构建机执行（见 docs），本流水线守护 Swarm 扩展的可测部分。
+# ============================================================================
+name: p1-ci
+
+on:
+  push:
+    branches: [master]
+    paths: ["src/Swarm/**", "tests/**", "sim/**", "services/**", "mavlink/**",
+            ".github/workflows/p1-ci.yml"]
+  pull_request:
+    paths: ["src/Swarm/**", "tests/**", "sim/**", "services/**", "mavlink/**"]
+
+jobs:
+  cpp-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Qt6 与构建工具
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake build-essential qt6-base-dev
+      - name: 构建 P1 单元测试
+        run: cmake -S tests/cpp -B tests/cpp/build -DCMAKE_BUILD_TYPE=Release
+             && cmake --build tests/cpp/build -j2
+      - name: 运行单元测试
+        run: ctest --test-dir tests/cpp/build --output-on-failure
+
+  llm-eval-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: 语法检查
+        run: python3 -m py_compile tests/llm_eval/*.py sim/run_scenario.py
+      - name: 工具 Schema 提取（与 C++ 单源一致）
+        run: cd tests/llm_eval && python3 export_tools.py
+      - name: 数据集生成确定性（两次生成必须一致）
+        run: |
+          cd tests/llm_eval
+          python3 generate_dataset.py /tmp/d1.jsonl
+          python3 generate_dataset.py /tmp/d2.jsonl
+          diff /tmp/d1.jsonl /tmp/d2.jsonl
+          test "$(wc -l < /tmp/d1.jsonl)" -ge 500
+      - name: 数据集一致性校验
+        run: cd tests/llm_eval && python3 run_eval.py --dry-run
+
+  scenario-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: 场景 JSON 合法性与 dry-run
+        run: |
+          for f in sim/scenarios/*.json; do
+            python3 -c "import json; json.load(open('$f'))" || exit 1
+            python3 sim/run_scenario.py "$f" --dry-run || exit 1
+          done
+
+  perception-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: 安装科学计算依赖
+        run: pip install --quiet numpy scipy
+      - name: 感知服务单元测试（编解码/几何互逆/跟踪稳定/端到端）
+        run: python3 services/perception/test_perception.py
+      - name: 场景 06 端到端馈送（离线文件模式）
+        run: python3 services/perception/service.py
+             --scenario sim/scenarios/06_perception_feed.json
+             --out file:///tmp/ci_tracks.jsonl --quiet
+      - name: 方言 XML 良构校验
+        run: python3 -c "import xml.etree.ElementTree as ET; ET.parse('mavlink/swarm_perception.xml'); print('dialect XML OK')"

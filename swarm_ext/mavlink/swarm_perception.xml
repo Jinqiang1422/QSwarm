@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!--
+  QGC 集群扩展 — 感知/态势自定义 MAVLink 消息集（WP3.7）
+
+  定位：本文件是感知数据链路的「原生消息」契约文档，供后续 dialect 代码生成
+  （mavgen）接入使用。当前 P3 阶段的实际传输走 MAVLink common 的 TUNNEL
+  消息（#385），载荷为分片 JSON（编解码见 services/perception/swarm_msgs.py），
+  两种通道语义一一对应：
+    SWARM_PERCEPTION_HEARTBEAT ↔ kind="heartbeat"
+    SWARM_TARGET_TRACK         ↔ kind="track"（单条）/ "track_batch"（批量）
+    SWARM_PLAN_META            ↔ kind="plan_meta"
+
+  payload_type 约定（TUNNEL payload_type 字段，uint16）：
+    42000 = JSON 单帧/首帧   42001 = JSON 中间帧   42002 = JSON 尾帧
+-->
+<mavlink>
+    <include>common.xml</include>
+    <version>1</version>
+    <dialect>1</dialect>
+    <enums>
+        <enum name="SWARM_TARGET_CATEGORY">
+            <description>目标类别（与检测服务类别表对齐）</description>
+            <entry value="0" name="SWARM_TARGET_UNKNOWN"/>
+            <entry value="1" name="SWARM_TARGET_PERSON"/>
+            <entry value="2" name="SWARM_TARGET_VEHICLE"/>
+            <entry value="3" name="SWARM_TARGET_BOAT"/>
+            <entry value="4" name="SWARM_TARGET_ANIMAL"/>
+            <entry value="5" name="SWARM_TARGET_FIRE"/>
+            <entry value="6" name="SWARM_TARGET_SMOKE"/>
+        </enum>
+        <enum name="SWARM_TRACK_SOURCE">
+            <description>航迹来源（态势摘要来源标注用）</description>
+            <entry value="0" name="SWARM_TRACK_SRC_PERCEPTION"/>
+            <entry value="1" name="SWARM_TRACK_SRC_TELEMETRY"/>
+            <entry value="2" name="SWARM_TRACK_SRC_FUSED"/>
+        </enum>
+    </enums>
+    <messages>
+        <message id="420" name="SWARM_PERCEPTION_HEARTBEAT">
+            <description>感知服务心跳：服务在线/帧率/跟踪数</description>
+            <field type="uint64_t" name="time_usec" units="us">时间戳（统一时基，微秒）</field>
+            <field type="uint16_t" name="tracks_active">当前活动航迹数</field>
+            <field type="uint16_t" name="fps_x10">处理帧率×10</field>
+            <field type="uint8_t" name="camera_channels">接入视频路数</field>
+            <field type="uint8_t" name="status">0=正常 1=降级 2=故障</field>
+        </message>
+        <message id="421" name="SWARM_TARGET_TRACK">
+            <description>单条目标航迹上报（地理坐标已解算为 WGS84）</description>
+            <field type="uint64_t" name="time_usec" units="us">量测时间戳</field>
+            <field type="int32_t" name="lat" units="degE7">纬度×1e7</field>
+            <field type="int32_t" name="lon" units="degE7">经度×1e7</field>
+            <field type="float" name="alt_msl" units="m">海拔高度（未知=NaN）</field>
+            <field type="float" name="vel_east" units="m/s">东向速度</field>
+            <field type="float" name="vel_north" units="m/s">北向速度</field>
+            <field type="float" name="confidence">置信度 0~1</field>
+            <field type="uint32_t" name="track_id">航迹 ID（服务侧唯一）</field>
+            <field type="uint16_t" name="sensor_id">来源传感器/通道</field>
+            <field type="uint8_t" name="category" enum="SWARM_TARGET_CATEGORY">目标类别</field>
+            <field type="uint8_t" name="source" enum="SWARM_TRACK_SOURCE">航迹来源</field>
+        </message>
+        <message id="422" name="SWARM_PLAN_META">
+            <description>计划元数据下发（覆盖区/禁飞区变更时同步感知服务，供在线去冲突）</description>
+            <field type="uint64_t" name="time_usec" units="us">时间戳</field>
+            <field type="uint32_t" name="plan_id">计划标识</field>
+            <field type="uint8_t" name="op">0=清空 1=设置覆盖区 2=设置禁飞区</field>
+            <field type="uint8_t" name="payload_len" units="bytes">JSON 载荷长度</field>
+            <field type="uint8_t[240]" name="payload">GeoJSON-like 载荷</field>
+        </message>
+    </messages>
+</mavlink>

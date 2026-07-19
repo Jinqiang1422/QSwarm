@@ -1,0 +1,19 @@
+{
+  "name": "05 一键中止时延实测（8 机）",
+  "fleet": 8,
+  "description": "任务执行中对全体下发暂停（悬停）指令，逐机测量指令到模式确认时延，验收指标：≤1s",
+  "steps": [
+    {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
+    {"t": 0,  "action": "arm_all"},
+    {"t": 3,  "action": "takeoff_all", "altitude": 30},
+    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 90},
+    {"t": 0,  "action": "measure_pause_latency", "threshold_ms": 1000},
+    {"t": 0,  "action": "rtl_all"},
+    {"t": 0,  "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 120}
+  ],
+  "pass_criteria": {
+    "all_steps_completed": true,
+    "pause_latency_ms_max": 1000,
+    "max_total_sec": 400
+  }
+}

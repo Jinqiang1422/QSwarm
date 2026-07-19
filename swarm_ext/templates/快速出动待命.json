@@ -1,0 +1,45 @@
+{
+  "name": "快速出动待命",
+  "description": "全体快速起飞至指定高度悬停，等待人工进一步指令",
+  "version": 1,
+  "parameters": [
+    {
+      "key": "altitude",
+      "label": "起飞高度(米)",
+      "type": "number",
+      "default": 20,
+      "min": 5,
+      "max": 120
+    },
+    {
+      "key": "climb_gate",
+      "label": "升空判定高度(米)",
+      "type": "number",
+      "default": 15,
+      "min": 3,
+      "max": 115
+    }
+  ],
+  "stages": [
+    {
+      "name": "起飞",
+      "actions": [
+        {
+          "type": "takeoff",
+          "altitude": "${altitude}"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_airborne",
+        "min_altitude": "${climb_gate}"
+      }
+    },
+    {
+      "name": "待命",
+      "actions": [],
+      "complete_when": {
+        "kind": "manual"
+      }
+    }
+  ]
+}

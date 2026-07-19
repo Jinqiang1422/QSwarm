@@ -1,0 +1,139 @@
+{
+  "name": "平行网格扫掠",
+  "description": "双程网格扫掠：起飞后先按角度一覆盖，再旋转至角度二二次覆盖，提高目标发现率，完成后返航",
+  "version": 1,
+  "schema_version": 2,
+  "tags": [
+    "搜索",
+    "扫掠",
+    "网格"
+  ],
+  "min_fleet": 2,
+  "required_payload": "camera",
+  "parameters": [
+    {
+      "key": "altitude",
+      "label": "作业高度（米）",
+      "type": "number",
+      "default": 30,
+      "min": 10,
+      "max": 120
+    },
+    {
+      "key": "climb_gate",
+      "label": "升空判定高度（米）",
+      "type": "number",
+      "default": 25,
+      "min": 5,
+      "max": 115
+    },
+    {
+      "key": "length",
+      "label": "区域长度（米）",
+      "type": "number",
+      "default": 400,
+      "min": 20,
+      "max": 100000
+    },
+    {
+      "key": "width",
+      "label": "区域宽度（米）",
+      "type": "number",
+      "default": 300,
+      "min": 20,
+      "max": 100000
+    },
+    {
+      "key": "spacing",
+      "label": "行距（米）",
+      "type": "number",
+      "default": 20,
+      "min": 5,
+      "max": 200
+    },
+    {
+      "key": "angle1",
+      "label": "第一程角度（度）",
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 359
+    },
+    {
+      "key": "angle2",
+      "label": "第二程角度（度）",
+      "type": "number",
+      "default": 90,
+      "min": 0,
+      "max": 359
+    }
+  ],
+  "stages": [
+    {
+      "name": "起飞",
+      "actions": [
+        {
+          "type": "takeoff",
+          "altitude": "${altitude}"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_airborne",
+        "min_altitude": "${climb_gate}",
+        "timeout_sec": 180
+      }
+    },
+    {
+      "name": "第一程扫掠",
+      "actions": [
+        {
+          "type": "plan_coverage",
+          "center": "map_center",
+          "length": "${length}",
+          "width": "${width}",
+          "angle": "${angle1}",
+          "spacing": "${spacing}",
+          "altitude": "${altitude}"
+        },
+        {
+          "type": "start_mission"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_mission_finished"
+      }
+    },
+    {
+      "name": "第二程扫掠",
+      "actions": [
+        {
+          "type": "plan_coverage",
+          "center": "map_center",
+          "length": "${length}",
+          "width": "${width}",
+          "angle": "${angle2}",
+          "spacing": "${spacing}",
+          "altitude": "${altitude}"
+        },
+        {
+          "type": "start_mission"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_mission_finished"
+      }
+    },
+    {
+      "name": "返航",
+      "actions": [
+        {
+          "type": "rtl"
+        }
+      ],
+      "complete_when": {
+        "kind": "all_disarmed",
+        "timeout_sec": 600
+      }
+    }
+  ]
+}

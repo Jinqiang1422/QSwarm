@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+export_tools.py — 从 SwarmAIAgent.cc 提取 OpenAI tools 定义 → tools_schema.json
+
+单源事实原则：评测集回归使用的工具 Schema 必须与 QGC 内运行的代码一致，
+因此不手工维护副本，而是从 C++ 源码中的原始 JSON 字符串自动提取。
+
+用法：python3 export_tools.py [SwarmAIAgent.cc 路径] [输出路径]
+"""
+import json
+import re
+import sys
+from pathlib import Path
+
+DEFAULT_SRC = Path(__file__).resolve().parents[2] / "src" / "Swarm" / "SwarmAIAgent.cc"
+DEFAULT_OUT = Path(__file__).resolve().parent / "tools_schema.json"
+
+# 两段式提取：先定位 fn(QStringLiteral("name"), QStringLiteral("desc"), params(R"( 起始，
+# 再文本搜索 raw string 结束符 )"（工具 Schema 的 JSON 内容中不含该序列，安全）。
+FN_RE = re.compile(
+    r'fn\(QStringLiteral\("(?P<name>[^"]+)"\),\s*'
+    r'QStringLiteral\("(?P<desc>(?:[^"\\]|\\.)*)"\),\s*'
+    r'(?P<tail>params\(R"\(|noParams)',
+    re.DOTALL,
+)
+
+
+def extract(src_path: Path) -> list:
+    text = src_path.read_text(encoding="utf-8")
+    tools = []
+    for m in FN_RE.finditer(text):
+        name, desc, tail = m.group("name"), m.group("desc"), m.group("tail")
+        if tail == "noParams":
+            parameters = {"type": "object", "properties": {}}
+        else:
+            end = text.find(')"', m.end())   # raw string 结束符
+            if end < 0:
+                raise SystemExit(f"[export_tools] 找不到 raw string 结束符：{name}")
+            try:
+                parameters = json.loads(text[m.end():end])
+            except json.JSONDecodeError as e:
+                raise SystemExit(f"[export_tools] {name} 参数 Schema 非法 JSON：{e}")
+        tools.append({
+            "type": "function",
+            "function": {"name": name, "description": desc, "parameters": parameters},
+        })
+    return tools
+
+
+def main() -> None:
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SRC
+    out = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_OUT
+    tools = extract(src)
+    if len(tools) < 10:
+        raise SystemExit(f"[export_tools] 仅提取到 {len(tools)} 个工具，疑似解析失败")
+    out.write_text(json.dumps(tools, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[export_tools] 提取 {len(tools)} 个工具 → {out}")
+    for t in tools:
+        print(f"  - {t['function']['name']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+{
+  "name": "03 单机故障注入（8 机，任务中 kill 1 机）",
+  "fleet": 8,
+  "description": "巡航阶段 kill 3 号机 SITL 进程模拟失联坠机，验证：其余机不受影响、任务状态机超时保护、面板离线可见",
+  "steps": [
+    {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
+    {"t": 0,  "action": "arm_all"},
+    {"t": 3,  "action": "takeoff_all", "altitude": 30},
+    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 90},
+    {"t": 10, "action": "kill_instance", "instance": 2, "note": "instance 从 0 计，即 sysid=3 的机"},
+    {"t": 0,  "action": "wait_seconds", "seconds": 20},
+    {"t": 0,  "action": "check_online_count", "expect": 7},
+    {"t": 0,  "action": "rtl_all"},
+    {"t": 0,  "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 120}
+  ],
+  "pass_criteria": {
+    "all_steps_completed": true,
+    "online_after_fault": 7,
+    "max_total_sec": 400
+  }
+}

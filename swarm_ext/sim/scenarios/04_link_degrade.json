@@ -1,0 +1,19 @@
+{
+  "name": "04 链路退化注入（8 机，冻结/恢复 1 机链路）",
+  "fleet": 8,
+  "description": "SIGSTOP 冻结 4 号机进程 20 秒模拟链路卡顿后恢复，验证：遥测超时表现、恢复后自动重连、集群指令不被单机卡顿阻塞",
+  "steps": [
+    {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
+    {"t": 0,  "action": "arm_all"},
+    {"t": 3,  "action": "takeoff_all", "altitude": 30},
+    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 90},
+    {"t": 0,  "action": "freeze_instance", "instance": 3, "seconds": 20},
+    {"t": 0,  "action": "wait_seconds", "seconds": 15},
+    {"t": 0,  "action": "rtl_all", "note": "链路卡顿期间其余机应正常响应返航"},
+    {"t": 0,  "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 180}
+  ],
+  "pass_criteria": {
+    "all_steps_completed": true,
+    "max_total_sec": 500
+  }
+}
