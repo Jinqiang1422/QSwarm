@@ -63,6 +63,39 @@ Item {
         property real rightEdgeCenterInset: rightEdgeTopInset
     }
 
+    //-- 集群指挥控制扩展（Kimi_Agent_QGC 集成）
+    // 集群指控面板：停靠在左侧工具条下方，可折叠
+    SwarmControlPanel {
+        id:                     swarmControlPanel
+        anchors.left:           parent.left
+        anchors.leftMargin:     _toolsMargin
+        anchors.top:            toolStrip.bottom
+        anchors.topMargin:      _toolsMargin
+        maxHeight:              parent.height - toolStrip.height - (_toolsMargin * 4)
+        z:                      QGroundControl.zOrderWidgets
+        visible:                QGroundControl.multiVehicleManager.vehicles.count > 0
+    }
+
+    // AI 集群指挥面板：停靠在集群面板下方，可折叠
+    SwarmAIPanel {
+        anchors.left:           parent.left
+        anchors.leftMargin:     _toolsMargin
+        anchors.top:            swarmControlPanel.bottom
+        anchors.topMargin:      _toolsMargin
+        maxHeight:              parent.height - toolStrip.height - swarmControlPanel.height - (_toolsMargin * 6)
+        z:                      QGroundControl.zOrderWidgets
+        visible:                QGroundControl.multiVehicleManager.vehicles.count > 0
+    }
+
+    // 集群态势叠加层：目标航迹/威胁区/覆盖热力（数据来自 QGroundControl.swarmManager.copModel）
+    SwarmSituationLayer {
+        map:                    mapControl
+        swarmManager:           QGroundControl.swarmManager
+        showHeatmap:            true
+        showThreats:            true
+        showTracks:             true
+    }
+
     FlyViewTopRightColumnLayout {
         id:                 topRightColumnLayout
         anchors.top:        parent.top

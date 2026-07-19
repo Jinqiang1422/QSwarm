@@ -65,6 +65,9 @@ qt_add_qml_module(FlyViewModule
         ProximityRadarVideoView.qml
         RoverChecklist.qml
         SubChecklist.qml
+        SwarmAIPanel.qml
+        SwarmControlPanel.qml
+        SwarmSituationLayer.qml
         TelemetryValuesBar.qml
         TerrainProgress.qml
         VehicleWarnings.qml
