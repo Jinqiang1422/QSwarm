@@ -1,0 +1,93 @@
+/****************************************************************************
+ *
+ * QGroundControl 集群指挥控制扩展 — SwarmTrackFusion（WP3.3 多源航迹融合）
+ *
+ * 把多传感器（多路机载视频、后续可扩展 ADS-B/光电球等）上报的目标航迹
+ * 融合为统一目标清单：
+ *   - 最近邻关联（ENU 平面距离门限，含速度外推补偿上报时延）
+ *   - 置信度加权位置/速度/类别融合（同目标多源上报去重）
+ *   - 生命周期：tentative(命中<minHits) → confirmed → coasting(超时未更新) → 删除
+ *
+ * 仅依赖 QtCore（坐标经 SwarmTypes 局部平面化），可脱离 QGC 独立单元测试。
+ *
+ ****************************************************************************/
+
+#pragma once
+
+#include <QtCore/QList>
+#include <QtCore/QSet>
+#include <QtCore/QString>
+
+class SwarmTrackFusion
+{
+public:
+    /// 上游航迹上报（与 swarm_msgs.make_track / SWARM_TARGET_TRACK 字段一一对应）
+    struct TrackReport {
+        int     trackId     = 0;        ///< 服务侧航迹 ID
+        int     sensorId    = 0;        ///< 来源传感器
+        int     category    = 0;        ///< SWARM_TARGET_CATEGORY
+        double  lat         = 0.0;
+        double  lon         = 0.0;
+        double  ve          = 0.0;      ///< 东向速度 m/s
+        double  vn          = 0.0;      ///< 北向速度 m/s
+        double  confidence  = 0.5;
+        int     source      = 0;        ///< SWARM_TRACK_SOURCE
+        qint64  timeUsec    = 0;        ///< 量测时间戳
+    };
+
+    /// 融合后的统一航迹（COP/事件检测/态势摘要共用）
+    struct FusedTrack {
+        int         fusedId     = 0;
+        int         category    = 0;
+        double      lat         = 0.0;
+        double      lon         = 0.0;
+        double      ve          = 0.0;
+        double      vn          = 0.0;
+        double      confidence  = 0.0;
+        QSet<int>   sensors;            ///< 贡献传感器集合
+        QList<int>  sourceTrackIds;     ///< 贡献上游航迹
+        int         hits        = 0;
+        qint64      firstSeenMs = 0;
+        qint64      lastSeenMs  = 0;
+        QString     state;              ///< tentative / confirmed / coasting
+        double      speedMs() const;    ///< 地速
+    };
+
+    struct Config {
+        double gateDistM      = 25.0;   ///< 关联距离门限（米）
+        double coastMs        = 3000;   ///< 超过则进入 coasting
+        double dropMs         = 10000;  ///< 超过则删除
+        int    minHits        = 2;      ///< tentative→confirmed 所需命中
+        double speedDamp      = 0.4;    ///< 速度融合阻尼（防瞬时跳变）
+    };
+
+    explicit SwarmTrackFusion(const Config &cfg = Config());
+
+    void setConfig(const Config &cfg) { _cfg = cfg; }
+    void setReference(double lat, double lon);          ///< ENU 参考点（默认首报自动设定）
+
+    /// 摄入一条上游航迹，返回命中的融合航迹 ID（新建则为新 ID）
+    int ingest(const TrackReport &r, qint64 monoMs);
+
+    /// 周期维护：状态迁移与过期删除（建议 ≥2Hz 调用）
+    void prune(qint64 monoMs);
+
+    /// 统一目标清单（confirmed + coasting，供 COP 显示与事件检测）
+    QList<FusedTrack> tracks() const;
+
+    /// 含 tentative 的全量（诊断/测试用）
+    QList<FusedTrack> allTracks() const { return _tracks; }
+
+    /// 类别名（与 mavlink/swarm_perception.xml 对齐）
+    static QString categoryName(int category);
+
+private:
+    int  _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
+    void _localToGeo(double eastM, double northM, double &lat, double &lon) const;
+
+    Config              _cfg;
+    QList<FusedTrack>   _tracks;
+    double              _refLat = 0.0, _refLon = 0.0;
+    bool                _refSet = false;
+    int                 _nextFusedId = 1;
+};
