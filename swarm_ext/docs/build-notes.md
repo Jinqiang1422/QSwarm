@@ -344,3 +344,45 @@ docker build --network=host --build-arg http_proxy --build-arg https_proxy \
   修改**这两个脚本,留给 T2/T3 按此结论去改;若 T2 选择不改脚本而是手工
   复现等价的 `docker build`/`docker run` 命令来跑首次构建,也可以直接照抄
   4.3 里验证过的命令形式(加 `--network=host` + 4 个代理环境变量)。
+
+---
+
+## 5. 整机编译打通结果(T2–T4,2026-07-20)
+
+> 更正 §4 的一处判断:T1 曾结论"docker run 不需要 `--network host`",实际 cmake
+> configure 阶段 CPM/FetchContent 会在 docker run(entrypoint)里 `git clone github`,
+> 因此 **docker build 和 docker run 都需要** `--network=host`+代理透传。
+
+### 5.1 结论
+QGC + Swarm 用官方 Docker(`ubuntu` variant / Qt 6.11.1 / GCC / C++20 / -Werror)**整机编译链接成功**,产物 `build/Debug/QGroundControl`(633M,ELF,not stripped)。Swarm 21 个 C++ 模块与 3 个 QML 面板全部编入。
+
+### 5.2 依次攻克的构建环境问题(controller 直接修复)
+| # | 问题 | 修复 | commit |
+|---|---|---|---|
+| 1 | docker build 装 Qt 无法联网 | run-docker.sh env 门控 `--network=host`+代理透传 | 93f95ccdd |
+| 2 | docker run 里 configure 的 CPM `git clone github(geographiclib)` 直连被墙超时 | _docker-exec.sh env 门控 `--network=host`+代理透传 | 1a8a099a5 |
+| 3 | qmlimportscanner 缺 ICU 73(Qt6.11 链接 ICU73,ubuntu24.04 只有 ICU74,ICU 符号版本化→软链无效) | Dockerfile 装 github 预编译 ICU 73.2 | dffe1bfa2 |
+| — | 提速技巧 | 复用 build-02 完整镜像叠加 ICU,避免重下 Qt / 绕过 apt 503 | (临时 overlay) |
+
+### 5.3 Swarm 代码真实编译错误(T3,4 类,均 KIMI 无 Qt 环境未发现)
+| 类别 | 错误 | 修复 | commit |
+|---|---|---|---|
+| A | 嵌套 Config NSDMI + 默认参数 `=Config()`(~124 处) | 拆构造/重载 + .cc 委托构造 | 3a73b5fde |
+| B | FactGroup 无 heading/altitude 成员 | `qobject_cast<VehicleFactGroup*>` | caff1ca32 |
+| C | 1 参信号 connect 到 2 参 showAppMessage(5 处) | 改 lambda connect | 5af1b4318 |
+| D | 未使用参数 widthMeters 触发 -Werror | Q_UNUSED | 1f173e65b |
+
+### 5.4 验证证据(T4)
+- 编译 `[577/577]` 0 error / 0 undefined reference。
+- `nm -C build/Debug/QGroundControl` 抽查 Swarm 符号 3613 个(`SwarmManager::instance()`/`staticMetaObject`、SwarmAIAgent/TaskController/ConstraintChecker 等)。
+- `build/qml/QGroundControl/FlyView/qmldir` 注册 `SwarmAIPanel`/`SwarmControlPanel`/`SwarmSituationLayer` 1.0。
+
+### 5.5 遗留
+- **AppImage 打包**未完成:`qgc-package` 阶段下载 `appimagelint`(github continuous release)经代理失败,**不影响可执行文件**。需 AppImage 时再解决该工具下载或跳过 lint。
+- **GUI 实跑**:可执行文件已生成,实际运行需 X11(容器 `--env DISPLAY` + X socket 挂载,或宿主运行),属"运行验证"阶段,非本次编译目标。
+- **从零重建成本**:docker build cache 可能被 BuildKit 回收,从零重建会重下 Qt(~43min)且 apt 装依赖可能遇代理 503;建议后续给容器 apt 配国内镜像。当前完整镜像 `qgc-ubuntu-docker`(含 Qt+依赖+ICU73)已就绪,增量重编(改 Swarm 代码)只需几分钟:
+  ```bash
+  cd <repo> && export http_proxy=http://127.0.0.1:8118 https_proxy=http://127.0.0.1:8118 \
+    HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118
+  deploy/docker/_docker-exec.sh --fuse qgc-ubuntu-docker Debug
+  ```
