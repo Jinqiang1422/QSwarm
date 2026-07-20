@@ -103,8 +103,9 @@ void FormationController::_updateFormation()
     }
 
     const QGeoCoordinate leaderCoord  = leader->coordinate();
-    const double leaderHeading = leader->vehicleFactGroup()->heading()->rawValue().toDouble();
-    const double leaderAltAMSL = leader->vehicleFactGroup()->altitudeAMSL()->rawValue().toDouble();
+    VehicleFactGroup *leaderFactGroup = qobject_cast<VehicleFactGroup *>(leader->vehicleFactGroup());
+    const double leaderHeading = leaderFactGroup ? leaderFactGroup->heading()->rawValue().toDouble() : 0.0;
+    const double leaderAltAMSL = leaderFactGroup ? leaderFactGroup->altitudeAMSL()->rawValue().toDouble() : 0.0;
 
     // 收集僚机：除长机外已解锁且已离地的在线车辆，按 id 升序保证槽位稳定
     QList<Vehicle *> followers;
@@ -114,7 +115,8 @@ void FormationController::_updateFormation()
         if (!vehicle || vehicle->id() == _leaderVehicleId || !vehicle->armed()) {
             continue;
         }
-        const double altRel = vehicle->vehicleFactGroup()->altitudeRelative()->rawValue().toDouble();
+        VehicleFactGroup *vfg = qobject_cast<VehicleFactGroup *>(vehicle->vehicleFactGroup());
+        const double altRel = vfg ? vfg->altitudeRelative()->rawValue().toDouble() : 0.0;
         if (altRel < _minAirborneAltMeters) {
             continue;   // 未离地，等待下一个周期自动入队
         }
