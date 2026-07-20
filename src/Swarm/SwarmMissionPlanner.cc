@@ -62,6 +62,7 @@ QList<MissionItem *> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCo
                                                                     double bandMin,
                                                                     double bandMax) const
 {
+    Q_UNUSED(widthMeters);   // 条带宽度已体现在 bandMin/bandMax 中，此处按条带生成航点无需整体宽度
     // 条带内生成割草机航线：行位于条带内均布，方向逐行交替
     QList<QGeoCoordinate> waypoints;
     const double bandWidth = bandMax - bandMin;
