@@ -5,6 +5,14 @@
 SwarmRehearsalEstimator::Estimate SwarmRehearsalEstimator::estimate(
         const QList<SwarmAction> &plan,
         const QList<SwarmTypes::VehicleState> &vehicles,
+        double mapCenterLat, double mapCenterLon) const
+{
+    return estimate(plan, vehicles, mapCenterLat, mapCenterLon, Config());
+}
+
+SwarmRehearsalEstimator::Estimate SwarmRehearsalEstimator::estimate(
+        const QList<SwarmAction> &plan,
+        const QList<SwarmTypes::VehicleState> &vehicles,
         double mapCenterLat, double mapCenterLon,
         const Config &cfg) const
 {

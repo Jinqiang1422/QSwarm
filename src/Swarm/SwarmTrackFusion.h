@@ -61,7 +61,8 @@ public:
         double speedDamp      = 0.4;    ///< 速度融合阻尼（防瞬时跳变）
     };
 
-    explicit SwarmTrackFusion(const Config &cfg = Config());
+    SwarmTrackFusion();
+    explicit SwarmTrackFusion(const Config &cfg);
 
     void setConfig(const Config &cfg) { _cfg = cfg; }
     void setReference(double lat, double lon);          ///< ENU 参考点（默认首报自动设定）

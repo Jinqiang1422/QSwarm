@@ -4,6 +4,11 @@
 
 #include <QtCore/QtMath>
 
+SwarmTrackFusion::SwarmTrackFusion()
+    : SwarmTrackFusion(Config())
+{
+}
+
 SwarmTrackFusion::SwarmTrackFusion(const Config &cfg)
     : _cfg(cfg)
 {

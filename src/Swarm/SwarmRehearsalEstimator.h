@@ -40,8 +40,11 @@ public:
 
     Estimate estimate(const QList<SwarmAction> &plan,
                       const QList<SwarmTypes::VehicleState> &vehicles,
+                      double mapCenterLat, double mapCenterLon) const;
+    Estimate estimate(const QList<SwarmAction> &plan,
+                      const QList<SwarmTypes::VehicleState> &vehicles,
                       double mapCenterLat, double mapCenterLon,
-                      const Config &cfg = Config()) const;
+                      const Config &cfg) const;
 
     /// 摘要串，如 "≈12.3 分钟｜8.4 km｜最低裕度 31%"
     static QString summary(const Estimate &est);

@@ -2,6 +2,11 @@
 
 #include <QtCore/QtMath>
 
+SwarmEventDetector::SwarmEventDetector()
+    : SwarmEventDetector(Config())
+{
+}
+
 SwarmEventDetector::SwarmEventDetector(const Config &cfg)
     : _cfg(cfg)
 {

@@ -45,7 +45,8 @@ public:
         qint64 cooldownMs         = 30000;
     };
 
-    explicit SwarmEventDetector(const Config &cfg = Config());
+    SwarmEventDetector();
+    explicit SwarmEventDetector(const Config &cfg);
 
     void setConfig(const Config &cfg) { _cfg = cfg; }
 
