@@ -76,6 +76,16 @@ RUN sh /usr/local/lib/qgc/install-qt.sh linux desktop linux_gcc_64 && \
 COPY tools/setup/install_dependencies/ /tmp/tools/setup/install_dependencies/
 RUN python3 /tmp/tools/setup/install_dependencies --platform "${DEP_PLATFORM}" && \
     rm -rf /var/lib/apt/lists/* /var/cache/dnf /var/cache/pacman/pkg /tmp/tools
+# Qt 6.11 Linux binaries dynamically link ICU 73 (symbol-versioned, so a 74->73
+# symlink cannot satisfy them) while Ubuntu 24.04 ships ICU 74. Install the real
+# ICU 73 runtime so qmlimportscanner and other Qt tools run during the cmake
+# QML-import scan (Swarm extension build).
+RUN cd /tmp && \
+    wget -q https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-Ubuntu22.04-x64.tgz && \
+    tar -xzf icu4c-73_2-Ubuntu22.04-x64.tgz && \
+    cp -a icu/usr/local/lib/libicu*.so.73* /usr/lib/x86_64-linux-gnu/ && \
+    ldconfig && \
+    rm -rf /tmp/icu /tmp/icu4c-73_2-Ubuntu22.04-x64.tgz
 COPY deploy/docker/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/bin/bash", "-l", "/entrypoint.sh"]
 CMD ["Release"]
