@@ -39,10 +39,20 @@ run_flags=()
 
 IMAGE_NAME="${IMAGE_NAME:-${default_image}}"
 
+# Proxy environments (gost HTTP proxy on 127.0.0.1:8118): if http_proxy/https_proxy
+# are set, let docker build reach the host proxy and forward the proxy env into the
+# build so apt/aqt/uv can fetch Qt etc. Left empty (no behavior change) otherwise.
+proxy_build_args=()
+if [[ -n "${http_proxy:-}" || -n "${https_proxy:-}" ]]; then
+    proxy_build_args=(--network=host --build-arg http_proxy --build-arg https_proxy \
+        --build-arg HTTP_PROXY --build-arg HTTPS_PROXY)
+fi
+
 docker build \
     --file "${DOCKERFILE}" \
     --target "${target}" \
     ${build_args[@]+"${build_args[@]}"} \
+    ${proxy_build_args[@]+"${proxy_build_args[@]}"} \
     -t "${IMAGE_NAME}" \
     "${SOURCE_DIR}"
 
