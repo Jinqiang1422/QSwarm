@@ -270,7 +270,9 @@ SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager *swarmManager)
     QDir().mkpath(_templateDir);
     _ensureDefaults();
     _scan();
-    (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(), &QGCApplication::showAppMessage);
+    (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(), [](const QString &message) {
+        qgcApp()->showAppMessage(message);
+    });
 }
 
 SwarmTaskLibrary::~SwarmTaskLibrary() = default;

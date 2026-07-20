@@ -72,7 +72,9 @@ void SwarmManager::init()
     (void) connect(mvm, &MultiVehicleManager::vehicleRemoved, this, &SwarmManager::_vehicleRemoved);
 
     // 将指令反馈透传到 QGC 顶部应用消息条
-    (void) connect(this, &SwarmManager::swarmCommandFeedback, qgcApp(), &QGCApplication::showAppMessage);
+    (void) connect(this, &SwarmManager::swarmCommandFeedback, qgcApp(), [](const QString &message) {
+        qgcApp()->showAppMessage(message);
+    });
 
     // P3：默认启动感知链路接收（QSettings 可关）
     if (QSettings().value(QStringLiteral("Swarm/perceptionAutoStart"), true).toBool()) {

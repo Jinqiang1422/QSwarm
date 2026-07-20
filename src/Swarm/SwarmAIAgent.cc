@@ -54,7 +54,9 @@ SwarmAIAgent::SwarmAIAgent(SwarmManager *swarmManager)
     _modelName  = settings.value(QStringLiteral("SwarmAI/modelName"),  QStringLiteral("deepseek-chat")).toString();
     _useFunctionCalling = settings.value(QStringLiteral("SwarmAI/useFunctionCalling"), true).toBool();
 
-    (void) connect(this, &SwarmAIAgent::agentFeedback, qgcApp(), &QGCApplication::showAppMessage);
+    (void) connect(this, &SwarmAIAgent::agentFeedback, qgcApp(), [](const QString &message) {
+        qgcApp()->showAppMessage(message);
+    });
 
     // WP3.5：周期态势摘要定时器（默认关，面板可开）
     _situationTimer = new QTimer(this);

@@ -17,7 +17,9 @@
 SwarmMissionPlanner::SwarmMissionPlanner(QObject *parent)
     : QObject(parent)
 {
-    (void) connect(this, &SwarmMissionPlanner::plannerFeedback, qgcApp(), &QGCApplication::showAppMessage);
+    (void) connect(this, &SwarmMissionPlanner::plannerFeedback, qgcApp(), [](const QString &message) {
+        qgcApp()->showAppMessage(message);
+    });
 }
 
 SwarmMissionPlanner::~SwarmMissionPlanner() = default;

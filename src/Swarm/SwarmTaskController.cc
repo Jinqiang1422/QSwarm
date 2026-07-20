@@ -23,7 +23,9 @@ SwarmTaskController::SwarmTaskController(SwarmManager *swarmManager)
 {
     _tickTimer.setInterval(1000);
     (void) connect(&_tickTimer, &QTimer::timeout, this, &SwarmTaskController::_tick);
-    (void) connect(this, &SwarmTaskController::taskFeedback, qgcApp(), &QGCApplication::showAppMessage);
+    (void) connect(this, &SwarmTaskController::taskFeedback, qgcApp(), [](const QString &message) {
+        qgcApp()->showAppMessage(message);
+    });
     _setStateText(tr("空闲"));
 }
 
