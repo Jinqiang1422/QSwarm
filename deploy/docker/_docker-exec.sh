@@ -42,6 +42,15 @@ mkdir -p "${BUILD_DIR}"
 # HOME is forced to a writable path because a mapped UID has no /etc/passwd
 # entry (gradle/ccache need a writable home). Source is mounted read-write: the
 # build writes a compile_commands.json symlink and the CPM cache into the tree.
+# Proxy environments (gost HTTP proxy on 127.0.0.1:8118): the cmake configure step
+# runs CPM/FetchContent git clone (e.g. geographiclib from github) inside this
+# container, so it needs host network + the proxy env forwarded. Empty otherwise.
+proxy_run_args=()
+if [[ -n "${http_proxy:-}" || -n "${https_proxy:-}" ]]; then
+    proxy_run_args=(--network=host \
+        --env http_proxy --env https_proxy --env HTTP_PROXY --env HTTPS_PROXY)
+fi
+
 docker run \
     --rm \
     --user "$(id -u):$(id -g)" \
@@ -49,6 +58,7 @@ docker run \
     --env CLEAN_BUILD="${CLEAN_BUILD:-0}" \
     --env JOBS="${JOBS:-}" \
     ${FUSE_FLAGS[@]+"${FUSE_FLAGS[@]}"} \
+    ${proxy_run_args[@]+"${proxy_run_args[@]}"} \
     -v "${SOURCE_DIR}:/project/source" \
     -v "${BUILD_DIR}:/project/build" \
     "${IMAGE_NAME}" \
