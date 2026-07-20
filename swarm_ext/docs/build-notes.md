@@ -215,3 +215,132 @@
 都加 `--network host`(推荐)或 `--add-host=host.docker.internal:host-gateway`
 + 代理地址改成 `host.docker.internal:8118`,这两处目前都不存在,需要后续步骤
 (T1)显式加上并验证。
+
+---
+
+## 4. 代理通路实测结论(T1)
+
+本节基于三次实测(非只读调研),验证第 3 节推导出的方案是否真的可行。
+过程中用到的临时文件(`/tmp/proxytest/`)和测试镜像(`qgc-proxytest`)已在
+实验结束后清理,不留痕迹。
+
+### 4.1 实验 1:宿主代理本身可用 — **通过**
+
+```bash
+curl -s -x http://127.0.0.1:8118 -o /dev/null -w "host->8118 %{http_code}\n" https://github.com
+# → host->8118 200
+```
+
+宿主机上 gost 监听的 `127.0.0.1:8118` HTTP 代理工作正常。
+
+### 4.2 实验 2:docker daemon 拉取境外镜像 — **先失败后修复,通过**
+
+- 直接 `docker pull hello-world`(不做任何改动)**意外地成功了**——但排查后
+  发现这不代表代理链路健康:`hello-world` 命中的是 `/etc/docker/daemon.json`
+  里预置的 registry mirror `https://docker.xuanyuan.me`,这个 mirror 本身可以
+  直连,不经过 daemon 的 `HTTP_PROXY`/`HTTPS_PROXY`。
+- 深挖发现 daemon 早就存在一份**与本任务无关的遗留** systemd drop-in
+  `/etc/systemd/system/docker.service.d/proxy.conf`:
+  ```
+  Environment="HTTP_PROXY=socks5://127.0.0.1:10808"
+  Environment="HTTPS_PROXY=socks5://127.0.0.1:10808"
+  ```
+  用 `ss -tlnp` 确认 **10808 端口当前根本没有进程监听**(`curl` 直连测试报
+  `Connection refused`),即这条 daemon 代理配置是失效的僵尸配置。
+- 用 QGC 实际需要的基础镜像 `ubuntu:24.04`(对应
+  `deploy/docker/Dockerfile:12` 锁定的
+  `ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54`)
+  复测,**复现了故障**:mirror 返回 `429 Too Many Requests`,直连
+  `registry-1.docker.io` 因为走的是死掉的 socks5:10808,报
+  `context deadline exceeded` / `request canceled while waiting for connection`。
+- 修复(可逆改动):
+  1. 备份原文件:
+     `sudo cp /etc/systemd/system/docker.service.d/proxy.conf /etc/systemd/system/docker.service.d/proxy.conf.bak-T1`
+  2. **没有像任务模板里建议的那样新建 `http-proxy.conf`**——因为已经存在
+     同名 `proxy.conf`,systemd drop-in 按文件名字典序合并、同名变量以
+     后加载者为准(`http-proxy.conf` 字典序在 `proxy.conf` 之前,会被
+     后加载的旧 `proxy.conf` 覆盖回失效的 socks5),所以直接改写既有
+     `proxy.conf`,内容改为宿主已验证可用的 gost HTTP 代理:
+     ```
+     [Service]
+     Environment="HTTP_PROXY=http://127.0.0.1:8118"
+     Environment="HTTPS_PROXY=http://127.0.0.1:8118"
+     Environment="NO_PROXY=localhost,127.0.0.1"
+     ```
+  3. `sudo systemctl daemon-reload && sudo systemctl restart docker`
+  4. 复测:`docker pull ubuntu:24.04` → **成功**
+     (`Status: Downloaded newer image for ubuntu:24.04`)。
+- **当前状态:daemon 代理已改为 8118 并保持生效(未回滚)**。原因:T2 真正
+  跑 `run-docker.sh` 时,`docker build` 第一步 `FROM ubuntu:24.04@sha256:...`
+  同样需要 daemon 能拉到这个 pinned 基础镜像;若回滚回失效的 socks5:10808,
+  T2 一开始就会在拉基础镜像这一步失败。
+- **回滚方法**(如后续确认不再需要 docker 联网,想恢复原状):
+  ```bash
+  sudo cp /etc/systemd/system/docker.service.d/proxy.conf.bak-T1 /etc/systemd/system/docker.service.d/proxy.conf
+  sudo systemctl daemon-reload && sudo systemctl restart docker
+  ```
+  (注:回滚后会恢复到失效的 socks5:10808,daemon 级镜像拉取会重新失败,
+  仅在明确不再需要联网时才建议这样做;备份文件保留在
+  `/etc/systemd/system/docker.service.d/proxy.conf.bak-T1`。)
+
+### 4.3 实验 3:docker build(RUN 指令)能否经宿主代理联网 — **通过,方案是 `--network=host`**
+
+最小测试 Dockerfile(测试完已删除,`/tmp/proxytest/` 已清空):
+
+```dockerfile
+FROM ubuntu:24.04
+RUN apt-get update -o Acquire::http::Timeout=30 -qq && apt-get install -y -qq curl >/dev/null && echo "APT_UPDATE_OK"
+RUN echo "proxy env inside build: http_proxy=$http_proxy https_proxy=$https_proxy"
+RUN curl -s -o /dev/null -w "container->github via proxy: %{http_code}\n" --max-time 20 https://github.com
+```
+
+构建命令:
+
+```bash
+export http_proxy=http://127.0.0.1:8118 https_proxy=http://127.0.0.1:8118 \
+       HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118
+docker build --network=host --build-arg http_proxy --build-arg https_proxy \
+    -t qgc-proxytest /tmp/proxytest
+```
+
+结果:
+
+- `apt-get update` 成功(`APT_UPDATE_OK`)。但 `archive.ubuntu.com` /
+  `security.ubuntu.com` 在本机网络环境下**即使不挂代理也能直连**(不是被墙
+  的域名),所以这一步本身不能单独证明代理透传生效,只能证明网络能通。
+- 关键证据是后两条 RUN:
+  - `echo` 打印出 `http_proxy=http://127.0.0.1:8118 https_proxy=http://127.0.0.1:8118`
+    ——证明调用 `docker build` 那个 shell 里 `export` 的代理变量,经 Docker
+    的 predefined proxy build-arg 机制(**不需要**在 Dockerfile 里显式声明
+    `ARG http_proxy`),已经原样进入了容器内 RUN 的环境变量。
+  - 容器内 `curl --max-time 20 https://github.com` 返回 **`200`**——
+    github.com 在没有代理时在本机是连不通的(会被墙),这就证明:
+    ① `--network=host` 让容器内的 `127.0.0.1` 确实指向宿主机自身,能摸到
+    宿主机监听在 `127.0.0.1:8118` 的 gost 代理;
+    ② 容器内的 `http_proxy`/`https_proxy` 环境变量确实生效并被 `curl` 使用。
+- 因为首选方案(`--network=host`)已经验证通过,**没有再测试备选方案
+  `host.docker.internal` + `--add-host=host.docker.internal:host-gateway`**。
+- 清理:`docker rmi qgc-proxytest`、`rm -rf /tmp/proxytest` 均已执行。
+
+### 4.4 对 T2(实际跑 `run-docker.sh`)的结论
+
+- **daemon 级代理**:必须保留当前已生效的 8118 代理配置(见 4.2),否则
+  `docker build` 的 `FROM ubuntu:24.04@sha256:...` 这一步就会失败
+  (mirror 429 / 死代理超时)。
+- **`docker build` 阶段**:需要在 `run-docker.sh:42-47` 组装的 `docker build`
+  命令上追加 `--network=host`,并在调用 `run-docker.sh` **之前、同一个
+  shell** 里
+  `export http_proxy=http://127.0.0.1:8118 https_proxy=http://127.0.0.1:8118 HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118`。
+  依赖 Docker 内建的 predefined-ARG 机制,这些变量会自动透传成 build-arg
+  (已实测生效,见 4.3),不强制要求额外手写 `--build-arg`;但显式加上
+  `--build-arg http_proxy --build-arg https_proxy`(不给值,让 Docker 从
+  调用环境读取同名变量)更保险、效果等价,建议保留。
+- **`docker run`(entrypoint 执行期)**:第 3 节已确认 entrypoint 只跑
+  `qt-cmake`/`ninja`/`cpack`,不联网。本次 T1 没有单独验证这一点(不在任务
+  范围内),沿用第 3 节的结论,即 `docker run` 原则上不需要 `--network host`。
+- **是否需要修改 `run-docker.sh`/`_docker-exec.sh` 加 `--network host`**:
+  **需要,且只需要在 `docker build` 那一处(`run-docker.sh:42-47`)加
+  `--network=host`**——这是本次实测后的明确结论。本任务按约束**未实际
+  修改**这两个脚本,留给 T2/T3 按此结论去改;若 T2 选择不改脚本而是手工
+  复现等价的 `docker build`/`docker run` 命令来跑首次构建,也可以直接照抄
+  4.3 里验证过的命令形式(加 `--network=host` + 4 个代理环境变量)。
