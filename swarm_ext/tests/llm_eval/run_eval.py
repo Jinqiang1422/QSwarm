@@ -256,8 +256,13 @@ def main() -> None:
                         "expected": entry["expected"],
                         "actual_calls": [{"name": n, "args": a} for n, a in actual_calls],
                         "reply": reply_text[:300]})
-        if i % 50 == 0:
-            print(f"  进度 {i}/{len(dataset)}，当前准确率 {stats['intent_ok']/stats['total']:.1%}")
+        if i % 20 == 0:
+            print(f"  进度 {i}/{len(dataset)}，当前准确率 {stats['intent_ok']/stats['total']:.1%}", flush=True)
+            if args.out:  # 增量落盘，长跑中断不丢已完成结果
+                Path(args.out).write_text(json.dumps(
+                    {"partial": True, "done": i, "total": len(dataset),
+                     "intent_accuracy_running": round(stats["intent_ok"] / max(stats["total"], 1), 4),
+                     "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
         time.sleep(args.sleep)
 
     total = max(stats["total"], 1)
