@@ -386,3 +386,19 @@ QGC + Swarm 用官方 Docker(`ubuntu` variant / Qt 6.11.1 / GCC / C++20 / -Werro
     HTTP_PROXY=http://127.0.0.1:8118 HTTPS_PROXY=http://127.0.0.1:8118
   deploy/docker/_docker-exec.sh --fuse qgc-ubuntu-docker Debug
   ```
+
+---
+
+## 6. SITL 仿真环境诊断(P1 第三战,2026-07-22,受阻)
+
+目标:PX4 SITL 8 机 + `run_scenario.py` 实测集群指令(一键中止≤1s 等)。PX4 二进制已编译(v1.15.4,`build/px4_sitl_default/bin/px4`);`run_scenario.py` 用 pymavlink 单 UDP 按 sysid 区分各机,不依赖 QGC。
+
+### 6.1 受阻结论
+**这台多 GPU headless 服务器无法起 PX4 SITL 仿真**:5 种方式(KIMI launch 脚本 / 手动 px4 / 单独 gz server / 官方 `make px4_sitl gz_x500` / 官方 `make px4_sitl gazebo-classic`)、两个仿真后端全部 —— px4 进程能起但**无 MAVLink heartbeat(14550)**,卡在与仿真器连接。疑系统级图形/OpenGL 依赖问题(与 QGC GUI 黑屏同源:无正常显示/GL 环境)。
+
+### 6.2 KIMI `launch_swarm_sitl.sh` 的实质 bug(需重写)
+- `cd INST_DIR`(空目录)后跑 px4 → px4 从 CWD 找 `etc/init.d-posix/rcS` 失败。正确:从 `$PX4/build/px4_sitl_default` 运行,px4 用相对路径 `etc/init.d-posix/rcS`。
+- 完全没设 PX4 gz 环境:需 `GZ_SIM_RESOURCE_PATH=$PX4/Tools/simulation/gz/models:$PX4/Tools/simulation/gz/worlds`、`PX4_GZ_WORLD=default`,且 gz server 须先单独起(否则 px4 自拼的 world 路径为错误的 `/default.sdf`)。
+
+### 6.3 后续补做方向
+先解决仿真环境:配 Xvfb 虚拟显示 + `LIBGL_ALWAYS_SOFTWARE=1` 让 Gazebo headless 渲染,或换有显示器/图形环境的机器;之后按 §6.2 重写 launch 脚本再上 8 机。Swarm 扩展代码本身已通过编译/运行/单测/评测/CI 充分验证,SITL 仅为 PX4 层面的验收补做。
