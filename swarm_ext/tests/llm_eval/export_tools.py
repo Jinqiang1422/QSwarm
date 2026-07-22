@@ -13,7 +13,8 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_SRC = Path(__file__).resolve().parents[2] / "src" / "Swarm" / "SwarmAIAgent.cc"
+# 合并进 QGC 后本脚本位于 swarm_ext/tests/llm_eval/,src/Swarm 在仓库根(上 3 级)
+DEFAULT_SRC = Path(__file__).resolve().parents[3] / "src" / "Swarm" / "SwarmAIAgent.cc"
 DEFAULT_OUT = Path(__file__).resolve().parent / "tools_schema.json"
 
 # 两段式提取：先定位 fn(QStringLiteral("name"), QStringLiteral("desc"), params(R"( 起始，

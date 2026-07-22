@@ -14,7 +14,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Test)
 
 enable_testing()
 
-set(SWARM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../src/Swarm)
+# 合并进 QGC 后本工程在 swarm_ext/tests/cpp/，src/Swarm 在仓库根(上 3 级)
+set(SWARM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/Swarm)
 
 add_executable(tst_p1modules
     tst_p1modules.cc
