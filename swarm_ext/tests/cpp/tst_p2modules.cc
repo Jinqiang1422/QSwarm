@@ -26,8 +26,44 @@ private slots:
     void estimator_basicPlan();
     void allocator_correctness();
     void allocator_beatsSequentialOnReversed();
+    // P2 约束校验加固：补充允许空域/链路分级/多区重叠/间距 warning/电量未知/
+    // hasError 语义/无围栏跳过/几何/配置往返等边界与分级分支
+    void constraint_allowedAirspace();
+    void constraint_commRangeBands();
+    void constraint_overlapWarning();
+    void constraint_spacingWarningBand();
+    void constraint_batteryUnknownWarning();
+    void constraint_hasErrorSemantics();
+    void constraint_noFenceConfigSkips();
+    void coverageGeometry_math();
+    void config_jsonRoundTrip();
 
 private:
+    static SwarmAction coverageAt(double length, double width, double spacing,
+                                  double lat, double lon)
+    {
+        SwarmAction a;
+        a.type = QStringLiteral("plan_coverage");
+        a.params = {{QStringLiteral("length"), length},
+                    {QStringLiteral("width"), width},
+                    {QStringLiteral("spacing"), spacing},
+                    {QStringLiteral("center_lat"), lat},
+                    {QStringLiteral("center_lon"), lon}};
+        return a;
+    }
+    static bool hasRule(const QList<SwarmConstraintChecker::Violation> &vs,
+                        const QString &rule, const QString &severity)
+    {
+        for (const auto &v : vs) {
+            if (v.rule == rule && v.severity == severity) return true;
+        }
+        return false;
+    }
+    static bool hasAnyRule(const QList<SwarmConstraintChecker::Violation> &vs, const QString &rule)
+    {
+        for (const auto &v : vs) if (v.rule == rule) return true;
+        return false;
+    }
     static SwarmAction coverage(double length, double width, double spacing)
     {
         SwarmAction a;
@@ -183,6 +219,127 @@ void TestP2Modules::allocator_beatsSequentialOnReversed()
     const auto cmp = alloc.compare(vs, ts);
     QVERIFY(cmp.value(QStringLiteral("auction_total_m")).toDouble()
             < cmp.value(QStringLiteral("seq_total_m")).toDouble() * 0.5);
+}
+
+// === P2 约束校验加固测试(补充边界/分级/几何/配置) ===
+
+void TestP2Modules::constraint_allowedAirspace()
+{
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1e9; cfg.enduranceMin = 1e6;   // 屏蔽链路/电量干扰
+    cfg.includePolygons = {{{39.895, 116.395}, {39.895, 116.405},
+                            {39.905, 116.405}, {39.905, 116.395}}};
+    // 中心在允许空域内 → 无 fence 违例
+    auto v = checker.check({coverageAt(100, 100, 25, 39.9, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(!hasAnyRule(v, QStringLiteral("fence")));
+    // 中心在允许空域外 → fence error
+    v = checker.check({coverageAt(100, 100, 25, 40.2, 117.2)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(hasRule(v, QStringLiteral("fence"), QStringLiteral("error")));
+}
+
+void TestP2Modules::constraint_commRangeBands()
+{
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1000.0;
+    cfg.homeLat = 39.9; cfg.homeLon = 116.4;
+    cfg.enduranceMin = 1e6;   // 屏蔽电量
+    // 中心距集结点 ~1334m + 半对角 ~71m ≈ 1405m ∈ (1000,1500) → warning
+    auto v = checker.check({coverageAt(100, 100, 25, 39.912, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(hasRule(v, QStringLiteral("comm"), QStringLiteral("warning")));
+    QVERIFY(!hasRule(v, QStringLiteral("comm"), QStringLiteral("error")));
+    // 中心距集结点 ~2505m > 1.5×comm=1500 → error
+    v = checker.check({coverageAt(100, 100, 25, 39.9225, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(hasRule(v, QStringLiteral("comm"), QStringLiteral("error")));
+}
+
+void TestP2Modules::constraint_overlapWarning()
+{
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1e9; cfg.enduranceMin = 1e6;
+    // 两作业区中心相距 ~11m (<50) → deconflict warning
+    auto v = checker.check({coverageAt(100, 100, 25, 39.9, 116.4),
+                            coverageAt(100, 100, 25, 39.9001, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(hasRule(v, QStringLiteral("deconflict"), QStringLiteral("warning")));
+    // 相距 ~222m (>50) → 无 deconflict
+    v = checker.check({coverageAt(100, 100, 25, 39.9, 116.4),
+                       coverageAt(100, 100, 25, 39.902, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(!hasAnyRule(v, QStringLiteral("deconflict")));
+}
+
+void TestP2Modules::constraint_spacingWarningBand()
+{
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.minSeparationM = 3.0;
+    SwarmAction f;
+    f.type = QStringLiteral("start_formation");
+    f.params = {{QStringLiteral("spacing"), 5.0}};   // 3 < 5 < 6 → warning(非 error)
+    const auto v = checker.check({f}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(!SwarmConstraintChecker::hasError(v));
+    QVERIFY(hasRule(v, QStringLiteral("spacing"), QStringLiteral("warning")));
+}
+
+void TestP2Modules::constraint_batteryUnknownWarning()
+{
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    // 全机电量未知(-1) → battery warning「电量未知」
+    const auto v = checker.check({coverageAt(200, 150, 25, 39.9, 116.4)}, fleet(4, -1.0), cfg, 39.9, 116.4);
+    QVERIFY(hasRule(v, QStringLiteral("battery"), QStringLiteral("warning")));
+}
+
+void TestP2Modules::constraint_hasErrorSemantics()
+{
+    // 仅 warning 的场景 → hasError=false
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.minSeparationM = 3.0;
+    SwarmAction f;
+    f.type = QStringLiteral("start_formation");
+    f.params = {{QStringLiteral("spacing"), 5.0}};
+    const auto v = checker.check({f}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY(!v.isEmpty());
+    QVERIFY(!SwarmConstraintChecker::hasError(v));
+    QVERIFY(!SwarmConstraintChecker::hasError({}));   // 空 → false
+}
+
+void TestP2Modules::constraint_noFenceConfigSkips()
+{
+    // 无 include/exclude 配置 → 任意中心都不产生 fence 违例
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1e9; cfg.enduranceMin = 1e6;
+    const auto v = checker.check({coverageAt(300, 200, 25, 12.3, 45.6)}, fleet(4, 90.0), cfg, 12.3, 45.6);
+    QVERIFY(!hasAnyRule(v, QStringLiteral("fence")));
+}
+
+void TestP2Modules::coverageGeometry_math()
+{
+    int bands = 0; double sweep = 0.0;
+    SwarmConstraintChecker::coverageGeometry(600, 400, 20, bands, sweep);
+    QCOMPARE(bands, 20);                              // ceil(400/20)
+    QCOMPARE(sweep, 20 * 600.0 + 19 * 20.0);          // 12380
+    // spacing=0 保护：不除零，bands≥1
+    SwarmConstraintChecker::coverageGeometry(100, 50, 0, bands, sweep);
+    QVERIFY(bands >= 1);
+    QVERIFY(sweep > 0.0);
+}
+
+void TestP2Modules::config_jsonRoundTrip()
+{
+    SwarmConstraintChecker::Config cfg;
+    cfg.maxAltitudeM = 120.0; cfg.commRangeM = 800.0; cfg.minSeparationM = 4.0;
+    cfg.cruiseSpeedMs = 15.0; cfg.enduranceMin = 30.0; cfg.reserveFactor = 0.75;
+    const auto back = SwarmConstraintChecker::configFromJson(SwarmConstraintChecker::configToJson(cfg));
+    QCOMPARE(back.maxAltitudeM, 120.0);
+    QCOMPARE(back.commRangeM, 800.0);
+    QCOMPARE(back.minSeparationM, 4.0);
+    QCOMPARE(back.cruiseSpeedMs, 15.0);
+    QCOMPARE(back.enduranceMin, 30.0);
+    QCOMPARE(back.reserveFactor, 0.75);
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)
