@@ -143,9 +143,16 @@ def parse_calls(message: dict, whitelist: set) -> tuple:
     return calls, valid
 
 
-def args_match(expected: dict, actual: dict) -> bool:
-    """期望参数是实际参数的子集（数值容差 1e-6）；start_swarm_task 只比阶段数与任务名。"""
+def args_match(expected: dict, actual: dict, tool_name: str = "") -> bool:
+    """期望参数是实际参数的子集（数值容差 1e-6）。
+    校准判定（WP1.4 修正，依据 C/D 类排查，详见 BASELINE_kimi_k26.md）：
+      - start_swarm_task 只比阶段数，不比模型自由命名的 task_name；
+      - 空参数期望（如 parameter_values={}）不强制要求实际存在该键。"""
     for key, ev in expected.items():
+        if tool_name == "start_swarm_task" and key == "task_name":
+            continue
+        if isinstance(ev, (dict, list)) and not ev:
+            continue
         av = actual.get(key)
         if key == "stages" and isinstance(ev, list):
             if not isinstance(av, list) or len(av) != len(ev):
@@ -160,16 +167,40 @@ def args_match(expected: dict, actual: dict) -> bool:
 
 
 def calls_match(expected_calls: list, actual_calls: list) -> tuple:
-    """返回 (名称序列匹配, 名称+参数全匹配)"""
-    exp_names = [c["name"] for c in expected_calls]
-    act_names = [n for n, _ in actual_calls]
-    name_ok = exp_names == act_names
-    if not name_ok:
-        return False, False
-    for exp, (_, act_args) in zip(expected_calls, actual_calls):
-        if not args_match(exp.get("args", {}), act_args):
-            return True, False
-    return True, True
+    """返回 (名称子序列匹配, 名称+参数全匹配)。
+    校准判定（WP1.4 修正）：期望调用是实际调用的有序子序列，承认模型合理补全
+    前置动作（如“起飞”→选中+解锁+起飞），而非要求名称序列完全相等。"""
+    act = list(actual_calls)
+    # full：期望按序在实际中找到同名且参数匹配的调用
+    ai = 0
+    full = True
+    for exp in expected_calls:
+        found = False
+        while ai < len(act):
+            name, act_args = act[ai]
+            ai += 1
+            if name == exp["name"] and args_match(exp.get("args", {}), act_args, exp["name"]):
+                found = True
+                break
+        if not found:
+            full = False
+            break
+    # name_ok：期望名称是实际名称的有序子序列（忽略参数）
+    ai = 0
+    name_ok = True
+    act_names = [n for n, _ in act]
+    for exp in expected_calls:
+        found = False
+        while ai < len(act_names):
+            if act_names[ai] == exp["name"]:
+                found = True
+                ai += 1
+                break
+            ai += 1
+        if not found:
+            name_ok = False
+            break
+    return name_ok, full
 
 
 def judge(entry: dict, actual_calls: list, reply_text: str) -> bool:
