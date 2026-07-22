@@ -37,6 +37,17 @@ private slots:
     void constraint_noFenceConfigSkips();
     void coverageGeometry_math();
     void config_jsonRoundTrip();
+    // estimator/allocator 边界加固
+    void estimator_emptyPlan();
+    void estimator_actionsAccumulate();
+    void estimator_summaryFormat();
+    void estimator_configAffectsDuration();
+    void estimator_biggerAreaLessMargin();
+    void allocator_sequentialAssign();
+    void allocator_auctionNoWorseThanSeq();
+    void allocator_singleNode();
+    void allocator_assignmentCostMath();
+    void allocator_alignedZeroCost();
 
 private:
     static SwarmAction coverageAt(double length, double width, double spacing,
@@ -340,6 +351,119 @@ void TestP2Modules::config_jsonRoundTrip()
     QCOMPARE(back.cruiseSpeedMs, 15.0);
     QCOMPARE(back.enduranceMin, 30.0);
     QCOMPARE(back.reserveFactor, 0.75);
+}
+
+// === estimator / allocator 边界加固 ===
+
+void TestP2Modules::estimator_emptyPlan()
+{
+    SwarmRehearsalEstimator est;
+    const auto r = est.estimate({}, fleet(4, 80.0), 39.9, 116.4);
+    QCOMPARE(r.durationMin, 0.0);
+    QCOMPARE(r.distanceKm, 0.0);
+    QCOMPARE(r.vehiclesUsed, 4);
+    QCOMPARE(r.batteryMarginPct, 80.0);          // minBatt - 0
+    QVERIFY(!r.notes.isEmpty());                 // "计划无显著耗时动作"
+}
+
+void TestP2Modules::estimator_actionsAccumulate()
+{
+    SwarmRehearsalEstimator est;
+    SwarmAction tk; tk.type = QStringLiteral("takeoff"); tk.params = {{QStringLiteral("altitude"), 30.0}};
+    SwarmAction fm; fm.type = QStringLiteral("start_formation");
+    SwarmAction rtl; rtl.type = QStringLiteral("rtl");
+    const auto cov = coverageAt(600, 400, 20, 40.0, 116.5);   // 远处覆盖区，rtl 返场里程可观
+    const auto base    = est.estimate({tk, cov}, fleet(4, 80.0), 39.9, 116.4);
+    const auto withFm  = est.estimate({tk, fm, cov}, fleet(4, 80.0), 39.9, 116.4);
+    const auto withRtl = est.estimate({tk, cov, rtl}, fleet(4, 80.0), 39.9, 116.4);
+    QVERIFY(withFm.durationMin > base.durationMin);          // start_formation +0.5
+    QVERIFY(withRtl.durationMin > base.durationMin);         // rtl 返场+下降
+    QVERIFY(withRtl.distanceKm > base.distanceKm);           // rtl 增里程
+}
+
+void TestP2Modules::estimator_summaryFormat()
+{
+    SwarmRehearsalEstimator est;
+    SwarmAction tk; tk.type = QStringLiteral("takeoff"); tk.params = {{QStringLiteral("altitude"), 30.0}};
+    const QString s = SwarmRehearsalEstimator::summary(
+        est.estimate({tk, coverage(600, 400, 20)}, fleet(4, 80.0), 39.9, 116.4));
+    QVERIFY(s.contains(QStringLiteral("分钟")));
+    QVERIFY(s.contains(QStringLiteral("km")));
+    QVERIFY(s.contains(QStringLiteral("裕度")));
+}
+
+void TestP2Modules::estimator_configAffectsDuration()
+{
+    SwarmRehearsalEstimator est;
+    SwarmRehearsalEstimator::Config slow; slow.cruiseSpeedMs = 6.0;
+    SwarmRehearsalEstimator::Config fast; fast.cruiseSpeedMs = 24.0;
+    const auto cov = coverage(600, 400, 20);
+    const auto rSlow = est.estimate({cov}, fleet(4, 80.0), 39.9, 116.4, slow);
+    const auto rFast = est.estimate({cov}, fleet(4, 80.0), 39.9, 116.4, fast);
+    QVERIFY(rFast.durationMin < rSlow.durationMin);          // 巡航更快→更短
+}
+
+void TestP2Modules::estimator_biggerAreaLessMargin()
+{
+    SwarmRehearsalEstimator est;
+    const auto small = est.estimate({coverage(200, 150, 25)}, fleet(4, 80.0), 39.9, 116.4);
+    const auto big   = est.estimate({coverage(3000, 2000, 25)}, fleet(4, 80.0), 39.9, 116.4);
+    QVERIFY(big.durationMin > small.durationMin);
+    QVERIFY(big.batteryMarginPct < small.batteryMarginPct);  // 耗时多→裕度低
+}
+
+void TestP2Modules::allocator_sequentialAssign()
+{
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}, {2, 50, 0}, {3, 100, 0}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 0, 0}, {102, 50, 0}, {103, 100, 0}};
+    const auto a = alloc.sequentialAssign(vs, ts);
+    QCOMPARE(a.value(1), 101);
+    QCOMPARE(a.value(2), 102);
+    QCOMPARE(a.value(3), 103);
+}
+
+void TestP2Modules::allocator_auctionNoWorseThanSeq()
+{
+    SwarmTaskAllocator alloc;
+    QList<SwarmTaskAllocator::Node> vs, ts;
+    for (int i = 0; i < 6; i++) {
+        vs.append({i + 1, i * 40.0, (i % 2) * 60.0});
+        ts.append({201 + i, (5 - i) * 40.0, (i % 3) * 30.0});
+    }
+    const auto cmp = alloc.compare(vs, ts);
+    QVERIFY(cmp.value(QStringLiteral("auction_total_m")).toDouble()
+            <= cmp.value(QStringLiteral("seq_total_m")).toDouble() + 1e-6);
+}
+
+void TestP2Modules::allocator_singleNode()
+{
+    SwarmTaskAllocator alloc;
+    const auto a = alloc.auctionAssign({{7, 0, 0}}, {{99, 10, 10}});
+    QCOMPARE(a.count(), 1);
+    QCOMPARE(a.value(7), 99);
+}
+
+void TestP2Modules::allocator_assignmentCostMath()
+{
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 3, 4}};
+    QMap<int, int> assign; assign[1] = 101;
+    double maxCost = 0.0;
+    const double total = SwarmTaskAllocator::assignmentCost(assign, vs, ts, maxCost);
+    QVERIFY(qAbs(total - 5.0) < 1e-6);           // sqrt(3²+4²)
+    QVERIFY(qAbs(maxCost - 5.0) < 1e-6);
+}
+
+void TestP2Modules::allocator_alignedZeroCost()
+{
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}, {2, 100, 100}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 0, 0}, {102, 100, 100}};
+    const auto a = alloc.auctionAssign(vs, ts);
+    double maxCost = 0.0;
+    const double total = SwarmTaskAllocator::assignmentCost(a, vs, ts, maxCost);
+    QVERIFY(total < 1e-6);                        // 机与目标同位置→零成本最优
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)
