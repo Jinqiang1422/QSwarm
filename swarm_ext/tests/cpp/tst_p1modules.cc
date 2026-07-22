@@ -123,6 +123,9 @@ void TestP1Modules::filter_builtinSamples()
     QVERIFY(samples.count() >= 8);
     for (const auto &sample : samples) {
         const SwarmInputFilter::Verdict v = filter->check(sample.first);
+        if (v.level != sample.second)
+            qWarning() << "样本判定不符:" << sample.first << "得到" << v.level
+                       << "期望" << sample.second << "score" << v.score << "命中" << v.matched;
         QCOMPARE(v.level, sample.second);
     }
 }

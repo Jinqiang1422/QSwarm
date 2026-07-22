@@ -22,7 +22,9 @@ QString SwarmInputFilter::_sanitize(const QString &text) const
 {
     QString out = text;
     // 零宽字符（常用于隐藏注入载荷）
-    static const QRegularExpression zeroWidth(QStringLiteral("[\\x200B\\x200C\\x200D\\xFEFF]"));
+    // 注意：PCRE2 中 \x200B 会被解析为 \x20(空格)+"0B"，必须用 \x{200B} 码点语法，
+    // 否则会误删文本中的空格与 0/B/C/D/F 等字符，导致注入模式(依赖 \s)全部失配。
+    static const QRegularExpression zeroWidth(QStringLiteral("[\\x{200B}\\x{200C}\\x{200D}\\x{FEFF}]"));
     out.remove(zeroWidth);
     // 异常重复串压缩（40 个以上相同字符的刷屏/载荷）
     static const QRegularExpression repeatRun(QStringLiteral("(.)\\1{39,}"));
