@@ -11,6 +11,8 @@ def args_ok(name, exp, act):
     if name=="start_swarm_task":            # 只比阶段数，不比自由命名的 task_name
         return len(exp.get("stages",[]))==len(act.get("stages",[]))
     for k,ev in exp.items():
+        if isinstance(ev,(dict,list)) and not ev:   # 空参数(如 parameter_values={})不强制要求键存在
+            continue
         av=act.get(k)
         if isinstance(ev,(int,float)) and isinstance(av,(int,float)):
             if abs(float(ev)-float(av))>1e-6: return False
