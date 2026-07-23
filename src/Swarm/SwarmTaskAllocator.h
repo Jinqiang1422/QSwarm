@@ -28,6 +28,12 @@ public:
     /// 拍卖分配（目标数须等于机数；返回 vehicleId → targetId）
     QMap<int, int> auctionAssign(const QList<Node> &vehicles, const QList<Node> &targets) const;
 
+    /// CBBA 分布式一致性拍卖(移植自 zehuilu/CBBA-Python 核心机制)。
+    /// 全连接通信图模拟:各机本地贪心投标(bundle-building) + winning-bid/winner
+    /// 共识解冲突(被更高投标顶替则释放),迭代至收敛;适配一对一里程最小化。
+    /// 与集中式 auctionAssign 形成"集中/分布"双模,对应开发计划 P4。
+    QMap<int, int> cbbaAssign(const QList<Node> &vehicles, const QList<Node> &targets) const;
+
     /// 顺序基线（按 id 升序一一对应）
     QMap<int, int> sequentialAssign(const QList<Node> &vehicles, const QList<Node> &targets) const;
 

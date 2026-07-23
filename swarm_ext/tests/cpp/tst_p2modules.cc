@@ -48,6 +48,10 @@ private slots:
     void allocator_singleNode();
     void allocator_assignmentCostMath();
     void allocator_alignedZeroCost();
+    // CBBA 分布式一致性拍卖(移植自 zehuilu/CBBA-Python)
+    void allocator_cbbaSurjective();
+    void allocator_cbbaAlignedOptimal();
+    void allocator_cbbaInCompare();
 
 private:
     static SwarmAction coverageAt(double length, double width, double spacing,
@@ -464,6 +468,54 @@ void TestP2Modules::allocator_alignedZeroCost()
     double maxCost = 0.0;
     const double total = SwarmTaskAllocator::assignmentCost(a, vs, ts, maxCost);
     QVERIFY(total < 1e-6);                        // 机与目标同位置→零成本最优
+}
+
+// === CBBA 分布式一致性拍卖 ===
+
+void TestP2Modules::allocator_cbbaSurjective()
+{
+    // 8 机 8 目标散布 → CBBA 收敛到一对一满射,无重复分配(conflict-free)
+    SwarmTaskAllocator alloc;
+    QList<SwarmTaskAllocator::Node> vs, ts;
+    for (int i = 0; i < 8; i++) {
+        vs.append({i + 1, (i % 4) * 50.0, (i / 4) * 300.0});
+        ts.append({101 + i, ((i + 2) % 4) * 50.0, (i / 4) * 250.0});
+    }
+    const auto a = alloc.cbbaAssign(vs, ts);
+    QCOMPARE(a.count(), 8);
+    QSet<int> usedTargets;
+    for (auto it = a.constBegin(); it != a.constEnd(); ++it) {
+        usedTargets.insert(it.value());
+    }
+    QCOMPARE(usedTargets.count(), 8);            // 无重复目标(conflict-free)
+}
+
+void TestP2Modules::allocator_cbbaAlignedOptimal()
+{
+    // 机与目标位置一一重合 → CBBA 应收敛到零成本(每机投自身位置目标)
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}, {2, 100, 0}, {3, 0, 100}, {4, 100, 100}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 0, 0}, {102, 100, 0}, {103, 0, 100}, {104, 100, 100}};
+    const auto a = alloc.cbbaAssign(vs, ts);
+    QCOMPARE(a.count(), 4);
+    double maxCost = 0.0;
+    const double total = SwarmTaskAllocator::assignmentCost(a, vs, ts, maxCost);
+    QVERIFY(total < 1e-6);                        // 收敛到零成本最优
+}
+
+void TestP2Modules::allocator_cbbaInCompare()
+{
+    // compare 三方对照含 cbba 指标,且 CBBA 产出合法满射(有限成本)
+    SwarmTaskAllocator alloc;
+    QList<SwarmTaskAllocator::Node> vs, ts;
+    for (int i = 0; i < 5; i++) {
+        vs.append({i + 1, i * 40.0, 0.0});
+        ts.append({201 + i, (4 - i) * 40.0, 0.0});
+    }
+    const auto cmp = alloc.compare(vs, ts);
+    QVERIFY(cmp.contains(QStringLiteral("cbba_total_m")));
+    QVERIFY(cmp.value(QStringLiteral("cbba_total_m")).toDouble() >= 0.0);
+    QCOMPARE(alloc.cbbaAssign(vs, ts).count(), 5);
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)

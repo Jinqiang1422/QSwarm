@@ -87,6 +87,72 @@ QMap<int, int> SwarmTaskAllocator::auctionAssign(const QList<Node> &vehicles,
     return out;
 }
 
+QMap<int, int> SwarmTaskAllocator::cbbaAssign(const QList<Node> &vehicles,
+                                              const QList<Node> &targets) const
+{
+    // CBBA/CBAA 分布式一致性拍卖:移植自 zehuilu/CBBA-Python 的核心机制,
+    // 适配一对一里程最小化(每机 bundle 容量 1)。全连接通信图下,各机本地贪心
+    // 投标(bundle-building),被更高 winning-bid 顶替的机释放任务(bundle_remove
+    // 的一对一退化),迭代至无变化(共识收敛)。得分取负里程(越近越优)。
+    const int na = vehicles.count();
+    const int nt = targets.count();
+    QMap<int, int> out;
+    if (na <= 0 || nt <= 0) {
+        return out;
+    }
+
+    const double kLarge = std::numeric_limits<double>::max();
+    QList<double> winBid(nt, -kLarge);   // y:每任务当前最高投标(=负里程)
+    QList<int>    winner(nt, -1);         // z:每任务当前赢家(机索引)
+    QList<int>    assigned(na, -1);       // 每机赢得的任务索引(-1=无)
+
+    const auto score = [&](int i, int j) {
+        const double dx = vehicles.at(i).x - targets.at(j).x;
+        const double dy = vehicles.at(i).y - targets.at(j).y;
+        return -qSqrt(dx * dx + dy * dy);
+    };
+
+    int guard = 0;
+    const int maxIter = na * nt + na + 10;
+    bool changed = true;
+    while (changed && guard++ < maxIter) {
+        changed = false;
+        for (int i = 0; i < na; i++) {
+            if (assigned[i] >= 0) {
+                continue;   // 已持有任务,不再投标(除非下轮被顶替释放)
+            }
+            // bundle-building:选"能赢"(得分超过当前 winning-bid)的最高得分任务
+            int bestJ = -1;
+            double bestScore = -kLarge;
+            for (int j = 0; j < nt; j++) {
+                const double s = score(i, j);
+                if (s > winBid[j] && s > bestScore) {
+                    bestScore = s;
+                    bestJ = j;
+                }
+            }
+            if (bestJ < 0) {
+                continue;
+            }
+            // consensus:更高投标顶替原赢家 → 原赢家释放该任务(下轮重投)
+            if (winner[bestJ] >= 0 && winner[bestJ] != i) {
+                assigned[winner[bestJ]] = -1;
+            }
+            winBid[bestJ] = bestScore;
+            winner[bestJ] = i;
+            assigned[i]   = bestJ;
+            changed = true;
+        }
+    }
+
+    for (int i = 0; i < na; i++) {
+        if (assigned[i] >= 0) {
+            out.insert(vehicles.at(i).id, targets.at(assigned[i]).id);
+        }
+    }
+    return out;
+}
+
 double SwarmTaskAllocator::assignmentCost(const QMap<int, int> &assignment,
                                           const QList<Node> &vehicles,
                                           const QList<Node> &targets,
@@ -111,13 +177,16 @@ double SwarmTaskAllocator::assignmentCost(const QMap<int, int> &assignment,
 QVariantMap SwarmTaskAllocator::compare(const QList<Node> &vehicles,
                                         const QList<Node> &targets) const
 {
-    double seqMax = 0.0, aucMax = 0.0;
-    const double seqTotal = assignmentCost(sequentialAssign(vehicles, targets), vehicles, targets, seqMax);
-    const double aucTotal = assignmentCost(auctionAssign(vehicles, targets), vehicles, targets, aucMax);
+    double seqMax = 0.0, aucMax = 0.0, cbbaMax = 0.0;
+    const double seqTotal  = assignmentCost(sequentialAssign(vehicles, targets), vehicles, targets, seqMax);
+    const double aucTotal  = assignmentCost(auctionAssign(vehicles, targets), vehicles, targets, aucMax);
+    const double cbbaTotal = assignmentCost(cbbaAssign(vehicles, targets), vehicles, targets, cbbaMax);
     return {
         {QStringLiteral("seq_total_m"),     seqTotal},
         {QStringLiteral("seq_max_m"),       seqMax},
         {QStringLiteral("auction_total_m"), aucTotal},
         {QStringLiteral("auction_max_m"),   aucMax},
+        {QStringLiteral("cbba_total_m"),    cbbaTotal},
+        {QStringLiteral("cbba_max_m"),      cbbaMax},
     };
 }
