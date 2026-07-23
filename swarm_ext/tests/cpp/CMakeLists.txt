@@ -66,3 +66,17 @@ target_include_directories(tst_p3modules PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_p3modules PRIVATE Qt6::Core Qt6::Test)
 
 add_test(NAME p3modules COMMAND tst_p3modules)
+
+# --- 集群协同战术（协同搜索 / 巡逻 / 跟踪 / 围捕 / 拦截） ---
+add_executable(tst_tactics
+    tst_tactics.cc
+    ${SWARM_SRC}/SwarmTactics.cc
+    ${SWARM_SRC}/SwarmTactics.h
+    ${SWARM_SRC}/SwarmTaskAllocator.cc
+    ${SWARM_SRC}/SwarmTaskAllocator.h
+    ${SWARM_SRC}/SwarmTypes.h
+)
+target_include_directories(tst_tactics PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_tactics PRIVATE Qt6::Core Qt6::Test)
+
+add_test(NAME tactics COMMAND tst_tactics)

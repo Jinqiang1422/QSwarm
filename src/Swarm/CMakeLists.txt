@@ -31,6 +31,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         SwarmSituationDigest.h
         SwarmTaskAllocator.cc
         SwarmTaskAllocator.h
+        SwarmTactics.cc
+        SwarmTactics.h
         SwarmTrackFusion.cc
         SwarmTrackFusion.h
         SwarmTypes.h
