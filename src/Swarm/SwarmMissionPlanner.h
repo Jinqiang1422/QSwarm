@@ -54,7 +54,7 @@ public:
     /// @param lengthMeters    区域沿航线方向长度（米）
     /// @param widthMeters     区域垂直航线方向宽度（米）
     /// @param angleDeg        航线方向方位角（度，0=北，90=东）
-    /// @param assignMode      条带分配方式：sequential（id 升序，默认）/ auction（拍卖法，WP2.4）
+    /// @param assignMode      条带分配方式：sequential（id 升序，默认）/ auction（集中式拍卖，WP2.4）/ cbba（分布式一致性拍卖）
     Q_INVOKABLE bool planAndUploadCoverage(const QGeoCoordinate &center,
                                            double lengthMeters,
                                            double widthMeters,

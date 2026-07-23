@@ -205,7 +205,8 @@ QString SwarmAIAgent::_systemPromptTools() const
         "及 actions 或 template_name+template_params 二选一），由操作员对比选择后执行；否则直接调用执行工具。\n"
         "9. 意图不清或缺关键参数且无法合理默认时：不调用工具，用文字追问。\n"
         "10. 数值必须是数字不带单位。vertical_step 缺省 3，编队 spacing 缺省 10；"
-        "plan_coverage 的 assign 缺省 sequential，用户要求“最优分配/就近分配”时用 auction。\n"
+        "plan_coverage 的 assign 缺省 sequential，用户要求“最优分配/就近分配”时用 auction，"
+        "要求“分布式/去中心/一致性分配”或强调抗通信中断时用 cbba。\n"
         "11. 态势类请求（摘要/问答/告警处置建议）：仅依据 [态势摘要] 中给出的事实作答，"
         "每个事实性陈述必须标注来源角标——[遥测]（机体状态）、[感知]（检测/融合航迹）、"
         "[推测]（规则推导）；摘要中没有的数字不得编造，不确定就说“暂无数据”。"
@@ -319,7 +320,7 @@ QJsonArray SwarmAIAgent::_toolsJson() const
                         "angle":{"type":"number","description":"航线方位角（度），缺省 0"},
                         "spacing":{"type":"number","description":"行距（米），缺省 20"},
                         "altitude":{"type":"number","description":"作业高度（米），缺省 30"},
-                        "assign":{"type":"string","enum":["sequential","auction"],"description":"条带分配方式：sequential=按机号升序（缺省）；auction=拍卖法，总转场里程最优"}
+                        "assign":{"type":"string","enum":["sequential","auction","cbba"],"description":"条带分配方式：sequential=按机号升序（缺省）；auction=集中式拍卖，总转场里程最优；cbba=分布式一致性拍卖，各机本地决策、抗通信中断"}
                     },"required":["length","width"]})")));
     tools.append(fn(QStringLiteral("clear_missions"), QStringLiteral("清空各机任务"), noParams));
 

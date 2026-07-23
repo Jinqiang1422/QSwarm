@@ -677,10 +677,11 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
             const double angle  = qBound(0.0, obj.value(QStringLiteral("angle")).toDouble(0.0), 360.0);
             const double spacing= qBound(2.0, obj.value(QStringLiteral("spacing")).toDouble(20.0), 1000.0);
             const double alt    = qBound(3.0, obj.value(QStringLiteral("altitude")).toDouble(30.0), 120.0);
-            // WP2.4：条带分配方式（sequential 默认 / auction 拍卖法）
+            // WP2.4：条带分配方式（sequential 默认 / auction 集中式拍卖 / cbba 分布式一致性拍卖）
             const QString assignRaw = obj.value(QStringLiteral("assign")).toString();
             QString assignMode = QStringLiteral("sequential");
-            if (assignRaw == QStringLiteral("auction") || assignRaw == QStringLiteral("sequential")) {
+            if (assignRaw == QStringLiteral("auction") || assignRaw == QStringLiteral("cbba")
+                || assignRaw == QStringLiteral("sequential")) {
                 assignMode = assignRaw;
             } else if (!assignRaw.isEmpty()) {
                 warnings.append(tr("未知分配方式「%1」，已回退为顺序分配").arg(assignRaw));
@@ -695,7 +696,8 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
             action.params[QStringLiteral("assign")]  = assignMode;
             action.description = tr("区域覆盖任务规划：%1×%2 米，角度 %3°，行距 %4 米，高度 %5 米%6")
                     .arg(length).arg(width).arg(angle).arg(spacing).arg(alt)
-                    .arg(assignMode == QStringLiteral("auction") ? tr("（拍卖分配）") : QString());
+                    .arg(assignMode == QStringLiteral("auction") ? tr("（集中拍卖分配）")
+                         : assignMode == QStringLiteral("cbba") ? tr("（CBBA 分布式分配）") : QString());
         } else if (type == QStringLiteral("clear_missions")) {
             action.description = tr("清空各机任务");
         }

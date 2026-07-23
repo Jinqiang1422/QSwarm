@@ -133,7 +133,7 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate &center,
     for (int v = 0; v < vehicleCount; v++) {
         bandOfVehicle[v] = v;
     }
-    if (assignMode == QStringLiteral("auction") && vehicleCount > 1) {
+    if ((assignMode == QStringLiteral("auction") || assignMode == QStringLiteral("cbba")) && vehicleCount > 1) {
         SwarmTaskAllocator allocator;
         QList<SwarmTaskAllocator::Node> vehicleNodes, bandNodes;
         for (int v = 0; v < vehicleCount; v++) {
@@ -151,17 +151,22 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate &center,
                                        bandCenter.latitude(), bandCenter.longitude(), eastM, northM);
             bandNodes.append({b, eastM, northM});   // 条带 Node id = 条带索引
         }
-        const QMap<int, int> assignment = allocator.auctionAssign(vehicleNodes, bandNodes);
+        const bool useCbba = (assignMode == QStringLiteral("cbba"));
+        const QMap<int, int> assignment = useCbba
+            ? allocator.cbbaAssign(vehicleNodes, bandNodes)      // 分布式一致性拍卖
+            : allocator.auctionAssign(vehicleNodes, bandNodes);  // 集中式拍卖(最优)
         const QVariantMap cmp = allocator.compare(vehicleNodes, bandNodes);
         for (int v = 0; v < vehicleCount; v++) {
             bandOfVehicle[v] = assignment.value(targets[v]->id(), v);
         }
         const double seqTotal = cmp.value(QStringLiteral("seq_total_m")).toDouble();
-        const double aucTotal = cmp.value(QStringLiteral("auction_total_m")).toDouble();
+        const double optTotal = cmp.value(useCbba ? QStringLiteral("cbba_total_m")
+                                                  : QStringLiteral("auction_total_m")).toDouble();
         if (seqTotal > 1.0) {
-            emit plannerFeedback(tr("拍卖法条带分配：总转场里程 %1 米（顺序分配 %2 米，降低 %3%）")
-                                     .arg(aucTotal, 0, 'f', 0).arg(seqTotal, 0, 'f', 0)
-                                     .arg((seqTotal - aucTotal) / seqTotal * 100.0, 0, 'f', 1));
+            emit plannerFeedback(tr("%1条带分配：总转场里程 %2 米（顺序分配 %3 米，降低 %4%）")
+                                     .arg(useCbba ? tr("CBBA 分布式") : tr("拍卖法"))
+                                     .arg(optTotal, 0, 'f', 0).arg(seqTotal, 0, 'f', 0)
+                                     .arg((seqTotal - optTotal) / seqTotal * 100.0, 0, 'f', 1));
         }
     }
 

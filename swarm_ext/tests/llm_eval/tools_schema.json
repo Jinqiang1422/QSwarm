@@ -211,9 +211,10 @@
             "type": "string",
             "enum": [
               "sequential",
-              "auction"
+              "auction",
+              "cbba"
             ],
-            "description": "条带分配方式：sequential=按机号升序（缺省）；auction=拍卖法，总转场里程最优"
+            "description": "条带分配方式：sequential=按机号升序（缺省）；auction=集中式拍卖，总转场里程最优；cbba=分布式一致性拍卖，各机本地决策、抗通信中断"
           }
         },
         "required": [
