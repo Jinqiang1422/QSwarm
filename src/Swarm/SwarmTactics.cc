@@ -64,4 +64,68 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
     return out;
 }
 
+// ============================================================================
+// 场景⑤ 拦截：碰撞三角预测（匀速直线目标）
+// ============================================================================
+InterceptSolution intercept(double insLat, double insLon, double vMps,
+                            const MovingTarget &tgt)
+{
+    InterceptSolution sol;
+    if (vMps <= 0.0) {
+        return sol;
+    }
+    // 以拦截机为原点的本地米坐标：目标初始位置与速度向量（东、北）
+    double tE, tN;
+    SwarmTypes::latLonToLocalM(insLat, insLon, tgt.lat, tgt.lon, tE, tN);
+    const double hd = SwarmTypes::degToRad(tgt.headingDeg);
+    const double vE = tgt.speedMps * std::sin(hd);
+    const double vN = tgt.speedMps * std::cos(hd);
+
+    // 拦截机以速度 v 直飞目标 t 时刻位置 T(t)，要求 |T(t)| = v·t，
+    // 展开得碰撞三角二次方程 a·t² + b·t + c = 0
+    const double a = tgt.speedMps * tgt.speedMps - vMps * vMps;
+    const double b = 2.0 * (tE * vE + tN * vN);
+    const double c = tE * tE + tN * tN;
+
+    double t = -1.0;
+    const double kEps = 1e-9;
+    if (std::abs(a) < kEps) {
+        // 双方速度相等：退化为线性方程
+        if (std::abs(b) > kEps) {
+            const double cand = -c / b;
+            if (cand > 0.0) {
+                t = cand;
+            }
+        }
+    } else {
+        const double disc = b * b - 4.0 * a * c;
+        if (disc >= 0.0) {
+            const double sq = std::sqrt(disc);
+            const double roots[2] = {(-b + sq) / (2.0 * a), (-b - sq) / (2.0 * a)};
+            for (const double cand : roots) {   // 取最小正根 = 最早拦截
+                if (cand > 0.0 && (t < 0.0 || cand < t)) {
+                    t = cand;
+                }
+            }
+        }
+    }
+    if (t <= 0.0) {
+        return sol;   // 追不上（速度不足或目标远离）
+    }
+
+    // 拦截点（本地米）→ 方位角/距离 → 地理坐标
+    const double iE = tE + vE * t;
+    const double iN = tN + vN * t;
+    const double dist = std::sqrt(iE * iE + iN * iN);
+    double bearing = std::atan2(iE, iN) * 180.0 / M_PI;   // (东,北) → 北起顺时针方位角
+    if (bearing < 0.0) {
+        bearing += 360.0;
+    }
+    SwarmTypes::destinationPoint(insLat, insLon, bearing, dist, sol.lat, sol.lon);
+    sol.feasible   = true;
+    sol.headingDeg = bearing;
+    sol.timeS      = t;
+    return sol;
+}
+
 } // namespace SwarmTactics

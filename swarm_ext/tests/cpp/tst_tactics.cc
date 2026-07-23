@@ -39,6 +39,12 @@ private slots:
     void encircle_coversRing();
     void encircle_nearestAssignment();
     void encircle_degenerate();
+
+    // ---- 场景⑤ 拦截 ----
+    void intercept_stationaryTarget();
+    void intercept_movingTargetConsistency();
+    void intercept_infeasibleWhenSlower();
+    void intercept_zeroSpeed();
 };
 
 // ============================================================================
@@ -130,6 +136,65 @@ void TstTactics::encircle_nearestAssignment()
 void TstTactics::encircle_degenerate()
 {
     QVERIFY(encircle({}, 39.9, 116.4, 100.0).isEmpty());
+}
+
+// ============================================================================
+// 场景⑤ 拦截：碰撞三角预测
+// ============================================================================
+void TstTactics::intercept_stationaryTarget()
+{
+    // 静止目标在正东 1000m，拦截机 10 m/s → t≈100s，拦截点=目标，航向≈90°(东)
+    const double insLat = 39.9, insLon = 116.4;
+    double tLat, tLon;
+    SwarmTypes::destinationPoint(insLat, insLon, 90.0, 1000.0, tLat, tLon);
+    MovingTarget tgt;
+    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 0.0; tgt.headingDeg = 0.0;
+
+    const InterceptSolution s = intercept(insLat, insLon, 10.0, tgt);
+    QVERIFY(s.feasible);
+    QVERIFY2(std::abs(s.timeS - 100.0) < 1.0, "t = dist/v ≈ 100s");
+    QVERIFY2(std::abs(s.headingDeg - 90.0) < 1.0, "拦截静止目标应直飞其方位(东)");
+    QVERIFY2(SwarmTypes::haversineM(s.lat, s.lon, tLat, tLon) < 3.0, "拦截点≈静止目标位置");
+}
+
+void TstTactics::intercept_movingTargetConsistency()
+{
+    // 目标正北 500m 向东 5 m/s，拦截机 20 m/s：可拦截，满足碰撞条件 |ins→拦截点| = v·t
+    const double insLat = 39.9, insLon = 116.4;
+    double tLat, tLon;
+    SwarmTypes::destinationPoint(insLat, insLon, 0.0, 500.0, tLat, tLon);
+    MovingTarget tgt;
+    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 5.0; tgt.headingDeg = 90.0;
+
+    const InterceptSolution s = intercept(insLat, insLon, 20.0, tgt);
+    QVERIFY(s.feasible);
+    QVERIFY(s.timeS > 0.0);
+    // 碰撞条件：拦截机以 v 飞 t 秒的航程 = 到拦截点的直线距离
+    const double flown = 20.0 * s.timeS;
+    const double reach = SwarmTypes::haversineM(insLat, insLon, s.lat, s.lon);
+    QVERIFY2(std::abs(flown - reach) < 2.0, "航程应等于到拦截点距离");
+    // 目标向东逃逸，拦截点应落在其初始位置以东
+    QVERIFY(s.lon > tLon);
+}
+
+void TstTactics::intercept_infeasibleWhenSlower()
+{
+    // 目标正东 1000m 向东逃逸 20 m/s，拦截机仅 10 m/s：追不上
+    const double insLat = 39.9, insLon = 116.4;
+    double tLat, tLon;
+    SwarmTypes::destinationPoint(insLat, insLon, 90.0, 1000.0, tLat, tLon);
+    MovingTarget tgt;
+    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 20.0; tgt.headingDeg = 90.0;
+
+    const InterceptSolution s = intercept(insLat, insLon, 10.0, tgt);
+    QVERIFY2(!s.feasible, "慢于逃逸目标应判不可拦截");
+}
+
+void TstTactics::intercept_zeroSpeed()
+{
+    MovingTarget tgt;
+    tgt.lat = 39.91; tgt.lon = 116.41; tgt.speedMps = 0.0;
+    QVERIFY(!intercept(39.9, 116.4, 0.0, tgt).feasible);   // 拦截机速度 0
 }
 
 QTEST_GUILESS_MAIN(TstTactics)
