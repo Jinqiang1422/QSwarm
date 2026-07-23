@@ -50,6 +50,11 @@ private slots:
     void search_partitionCoversWidth();
     void search_nearestAssignment();
     void search_degenerate();
+
+    // ---- 场景② 巡逻 ----
+    void patrol_partitionsPerimeter();
+    void patrol_pointsWithinBounds();
+    void patrol_degenerate();
 };
 
 // ============================================================================
@@ -247,6 +252,65 @@ void TstTactics::search_nearestAssignment()
 void TstTactics::search_degenerate()
 {
     QVERIFY(partitionSearch({}, 39.9, 116.4, 1000.0, 600.0, 0.0).isEmpty());
+}
+
+// ============================================================================
+// 场景② 巡逻：周界均分 + 相位错开
+// ============================================================================
+void TstTactics::patrol_partitionsPerimeter()
+{
+    // 矩形周界，4 机，全周 16 采样点 → 每机 4 点，覆盖不同弧段
+    const QList<QPair<double, double>> poly{
+        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
+    };
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
+    };
+    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 16);
+    QCOMPARE(plan.size(), 4);
+
+    QList<GeoPoint> all;
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
+        QCOMPARE(it.value().size(), 4);      // 16/4
+        all.append(it.value());
+    }
+    QCOMPARE(all.size(), 16);
+    // 各机巡逻点互不重叠（分守不同弧段，降低巡逻空隙）
+    for (int i = 0; i < all.size(); i++) {
+        for (int j = i + 1; j < all.size(); j++) {
+            QVERIFY2(SwarmTypes::haversineM(all[i].lat, all[i].lon, all[j].lat, all[j].lon) > 1.0,
+                     "巡逻点应分守不同周界弧段");
+        }
+    }
+}
+
+void TstTactics::patrol_pointsWithinBounds()
+{
+    const QList<QPair<double, double>> poly{
+        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
+    };
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.91, 116.41)
+    };
+    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 20);
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
+        for (const GeoPoint &p : it.value()) {
+            QVERIFY(p.lat >= 39.90 - 1e-6 && p.lat <= 39.91 + 1e-6);
+            QVERIFY(p.lon >= 116.40 - 1e-6 && p.lon <= 116.41 + 1e-6);
+        }
+    }
+    // 第一机（id1）巡逻段起点相位 0 = 周界起始顶点
+    QVERIFY2(SwarmTypes::haversineM(plan[1].first().lat, plan[1].first().lon, 39.90, 116.40) < 1.0,
+             "首机段应从周界起点出发（相位错开的基准）");
+}
+
+void TstTactics::patrol_degenerate()
+{
+    const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}};
+    QVERIFY(partitionPatrol({}, poly, 12).isEmpty());                       // 无机
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.9, 116.4)};
+    QVERIFY(partitionPatrol(v, {{39.9, 116.4}}, 12).isEmpty());             // 顶点 < 2
 }
 
 QTEST_GUILESS_MAIN(TstTactics)

@@ -184,4 +184,64 @@ QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicle
     return out;
 }
 
+// ============================================================================
+// 场景② 巡逻：多边形周界按机数均分为弧段（相位错开覆盖不同区段）
+// ============================================================================
+QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState> &vehicles,
+                                           const QList<QPair<double, double>> &polygon,
+                                           int samplesPerLap)
+{
+    QMap<int, QList<GeoPoint>> out;
+    const int n  = vehicles.count();
+    const int nv = polygon.count();
+    if (n <= 0 || nv < 2) {
+        return out;
+    }
+    const int M = (samplesPerLap > 0) ? samplesPerLap : n * 8;
+
+    // 闭合周界各边长度（米）与总周长
+    QList<double> edgeLen;
+    double perim = 0.0;
+    for (int i = 0; i < nv; i++) {
+        const QPair<double, double> &a = polygon.at(i);
+        const QPair<double, double> &b = polygon.at((i + 1) % nv);   // 首尾闭合
+        const double d = SwarmTypes::haversineM(a.first, a.second, b.first, b.second);
+        edgeLen.append(d);
+        perim += d;
+    }
+    if (perim <= 0.0) {
+        return out;
+    }
+
+    // 沿周界等弧长采样 M 个巡逻点（在对应边上线性内插）
+    QList<GeoPoint> samples;
+    for (int k = 0; k < M; k++) {
+        double s = perim * k / M;   // 该点的周界弧长
+        int e = 0;
+        while (e < nv - 1 && s > edgeLen.at(e)) {
+            s -= edgeLen.at(e);
+            e++;
+        }
+        const QPair<double, double> &a = polygon.at(e);
+        const QPair<double, double> &b = polygon.at((e + 1) % nv);
+        const double t = (edgeLen.at(e) > 1e-9) ? (s / edgeLen.at(e)) : 0.0;
+        GeoPoint p;
+        p.lat = a.first  + t * (b.first  - a.first);
+        p.lon = a.second + t * (b.second - a.second);
+        samples.append(p);
+    }
+
+    // M 个采样点按机数均分为连续弧段，每机巡逻一段（起点相位天然错开）
+    for (int i = 0; i < n; i++) {
+        const int lo = i * M / n;
+        const int hi = (i + 1) * M / n;
+        QList<GeoPoint> seg;
+        for (int k = lo; k < hi; k++) {
+            seg.append(samples.at(k));
+        }
+        out.insert(vehicles.at(i).id, seg);
+    }
+    return out;
+}
+
 } // namespace SwarmTactics
