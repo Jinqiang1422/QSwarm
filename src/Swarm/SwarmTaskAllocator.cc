@@ -153,6 +153,134 @@ QMap<int, int> SwarmTaskAllocator::cbbaAssign(const QList<Node> &vehicles,
     return out;
 }
 
+QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
+        const QList<Node> &vehicles, const QList<Node> &targets,
+        int maxBundlePerAgent) const
+{
+    // 多任务 CBBA:每机 bundle 可含多个目标。忠实 CBBA 两阶段——
+    // bundle-building 用 compute_bid(最优插入位置的里程增量)贪心加任务;
+    // consensus 用 winning-bid(y)/winner(z),被更高投标顶替时释放该任务及
+    // bundle 后续(路径依赖破裂)。全连接通信图,迭代至收敛。
+    const int na = vehicles.count();
+    const int nt = targets.count();
+    QMap<int, QList<int>> out;
+    if (na <= 0 || nt <= 0) {
+        return out;
+    }
+    const int cap = (maxBundlePerAgent > 0) ? maxBundlePerAgent
+                                            : qMax(1, (nt + na - 1) / na);
+
+    const double kLarge = std::numeric_limits<double>::max();
+    QList<double>     y(nt, -kLarge);   // 每任务当前最高投标(=负里程增量)
+    QList<int>        z(nt, -1);        // 每任务当前赢家
+    QList<QList<int>> bundle(na);       // 每机 bundle(加入顺序)
+    QList<QList<int>> path(na);         // 每机 path(访问顺序,最优插入)
+
+    const auto dVT = [&](int i, int j) {
+        return qSqrt(qPow(vehicles.at(i).x - targets.at(j).x, 2)
+                   + qPow(vehicles.at(i).y - targets.at(j).y, 2));
+    };
+    const auto dTT = [&](int j, int k) {
+        return qSqrt(qPow(targets.at(j).x - targets.at(k).x, 2)
+                   + qPow(targets.at(j).y - targets.at(k).y, 2));
+    };
+    const auto pathCost = [&](int i, const QList<int> &pth) {
+        if (pth.isEmpty()) {
+            return 0.0;
+        }
+        double c = dVT(i, pth.first());
+        for (int k = 1; k < pth.size(); k++) {
+            c += dTT(pth.at(k - 1), pth.at(k));
+        }
+        return c;
+    };
+    // 释放机 ag 的 bundle 中 taskJ 及其后续(路径依赖破裂,后续全部重规划)
+    const auto releaseFrom = [&](int ag, int taskJ) {
+        const int idx = bundle[ag].indexOf(taskJ);
+        if (idx < 0) {
+            return;
+        }
+        for (int k = idx; k < bundle[ag].size(); k++) {
+            const int t = bundle[ag].at(k);
+            if (z[t] == ag) {
+                z[t] = -1;
+                y[t] = -kLarge;
+            }
+            path[ag].removeOne(t);
+        }
+        bundle[ag] = bundle[ag].mid(0, idx);
+    };
+
+    int guard = 0;
+    const int maxIter = (na * nt + na) * 2 + 20;
+    bool changed = true;
+    while (changed && guard++ < maxIter) {
+        changed = false;
+        // Phase 1: bundle-building —— 每机贪心加"能赢"的最优插入任务
+        for (int i = 0; i < na; i++) {
+            while (bundle[i].size() < cap) {
+                const double base = pathCost(i, path[i]);
+                int bestJ = -1, bestPos = 0;
+                double bestScore = -kLarge;
+                for (int j = 0; j < nt; j++) {
+                    if (bundle[i].contains(j)) {
+                        continue;
+                    }
+                    double bestInc = kLarge;
+                    int pos = path[i].size();
+                    for (int p = 0; p <= path[i].size(); p++) {
+                        QList<int> tmp = path[i];
+                        tmp.insert(p, j);
+                        const double inc = pathCost(i, tmp) - base;
+                        if (inc < bestInc) {
+                            bestInc = inc;
+                            pos = p;
+                        }
+                    }
+                    const double s = -bestInc;   // 里程增量越小得分越高
+                    if (s > y[j] && s > bestScore) {
+                        bestScore = s;
+                        bestJ = j;
+                        bestPos = pos;
+                    }
+                }
+                if (bestJ < 0) {
+                    break;
+                }
+                if (z[bestJ] >= 0 && z[bestJ] != i) {
+                    releaseFrom(z[bestJ], bestJ);   // 顶替原赢家
+                }
+                bundle[i].append(bestJ);
+                path[i].insert(bestPos, bestJ);
+                y[bestJ] = bestScore;
+                z[bestJ] = i;
+                changed = true;
+            }
+        }
+        // Phase 2: consensus —— 释放被顶替任务(及 bundle 后续)
+        for (int i = 0; i < na; i++) {
+            for (int k = 0; k < bundle[i].size(); k++) {
+                if (z[bundle[i].at(k)] != i) {
+                    releaseFrom(i, bundle[i].at(k));
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < na; i++) {
+        if (!path[i].isEmpty()) {
+            QList<int> ids;
+            for (const int j : path[i]) {
+                ids.append(targets.at(j).id);
+            }
+            out.insert(vehicles.at(i).id, ids);
+        }
+    }
+    return out;
+}
+
 double SwarmTaskAllocator::assignmentCost(const QMap<int, int> &assignment,
                                           const QList<Node> &vehicles,
                                           const QList<Node> &targets,

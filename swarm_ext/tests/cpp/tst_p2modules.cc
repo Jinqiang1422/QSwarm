@@ -52,6 +52,8 @@ private slots:
     void allocator_cbbaSurjective();
     void allocator_cbbaAlignedOptimal();
     void allocator_cbbaInCompare();
+    void allocator_cbbaBundleCoversAll();
+    void allocator_cbbaBundleCapacity();
 
 private:
     static SwarmAction coverageAt(double length, double width, double spacing,
@@ -516,6 +518,54 @@ void TestP2Modules::allocator_cbbaInCompare()
     QVERIFY(cmp.contains(QStringLiteral("cbba_total_m")));
     QVERIFY(cmp.value(QStringLiteral("cbba_total_m")).toDouble() >= 0.0);
     QCOMPARE(alloc.cbbaAssign(vs, ts).count(), 5);
+}
+
+// === 多任务 CBBA(bundle) ===
+
+void TestP2Modules::allocator_cbbaBundleCoversAll()
+{
+    // 4 机 12 目标 → 多任务 CBBA 覆盖全部 12,无重复,每机 ≤ ceil(12/4)=3
+    SwarmTaskAllocator alloc;
+    QList<SwarmTaskAllocator::Node> vs, ts;
+    for (int i = 0; i < 4; i++) {
+        vs.append({i + 1, (i % 2) * 200.0, (i / 2) * 200.0});
+    }
+    for (int j = 0; j < 12; j++) {
+        ts.append({101 + j, (j % 4) * 60.0, (j / 4) * 60.0});
+    }
+    const auto a = alloc.cbbaAssignBundle(vs, ts);
+    QSet<int> covered;
+    int maxBundle = 0;
+    for (auto it = a.constBegin(); it != a.constEnd(); ++it) {
+        maxBundle = qMax(maxBundle, it.value().size());
+        for (const int tid : it.value()) {
+            covered.insert(tid);
+        }
+    }
+    QCOMPARE(covered.count(), 12);   // 覆盖全部目标且无重复
+    QVERIFY(maxBundle <= 3);         // 不超均衡容量
+}
+
+void TestP2Modules::allocator_cbbaBundleCapacity()
+{
+    // maxBundlePerAgent=2 → 每机最多 2 目标;3 机×2=6=目标数,应全覆盖
+    SwarmTaskAllocator alloc;
+    QList<SwarmTaskAllocator::Node> vs, ts;
+    for (int i = 0; i < 3; i++) {
+        vs.append({i + 1, i * 100.0, 0.0});
+    }
+    for (int j = 0; j < 6; j++) {
+        ts.append({101 + j, j * 50.0, 0.0});
+    }
+    const auto a = alloc.cbbaAssignBundle(vs, ts, 2);
+    QSet<int> covered;
+    for (auto it = a.constBegin(); it != a.constEnd(); ++it) {
+        QVERIFY(it.value().size() <= 2);
+        for (const int tid : it.value()) {
+            covered.insert(tid);
+        }
+    }
+    QCOMPARE(covered.count(), 6);
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)

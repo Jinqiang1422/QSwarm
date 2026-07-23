@@ -34,6 +34,14 @@ public:
     /// 与集中式 auctionAssign 形成"集中/分布"双模,对应开发计划 P4。
     QMap<int, int> cbbaAssign(const QList<Node> &vehicles, const QList<Node> &targets) const;
 
+    /// 多任务 CBBA:每机可分配多个目标(bundle),用于目标数 > 机数的场景。
+    /// compute_bid 取"最优插入位置的里程增量",consensus 被更高投标顶替时释放
+    /// 该任务及 bundle 后续(路径依赖破裂)。maxBundlePerAgent=0 时自动取 ceil(目标/机)
+    /// 均衡分配。返回 机id → 按访问顺序的目标id列表。
+    QMap<int, QList<int>> cbbaAssignBundle(const QList<Node> &vehicles,
+                                           const QList<Node> &targets,
+                                           int maxBundlePerAgent = 0) const;
+
     /// 顺序基线（按 id 升序一一对应）
     QMap<int, int> sequentialAssign(const QList<Node> &vehicles, const QList<Node> &targets) const;
 
