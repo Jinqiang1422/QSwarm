@@ -45,6 +45,11 @@ private slots:
     void intercept_movingTargetConsistency();
     void intercept_infeasibleWhenSlower();
     void intercept_zeroSpeed();
+
+    // ---- 场景① 协同搜索 ----
+    void search_partitionCoversWidth();
+    void search_nearestAssignment();
+    void search_degenerate();
 };
 
 // ============================================================================
@@ -195,6 +200,53 @@ void TstTactics::intercept_zeroSpeed()
     MovingTarget tgt;
     tgt.lat = 39.91; tgt.lon = 116.41; tgt.speedMps = 0.0;
     QVERIFY(!intercept(39.9, 116.4, 0.0, tgt).feasible);   // 拦截机速度 0
+}
+
+// ============================================================================
+// 场景① 协同搜索：区域分区 + 拍卖就近分配
+// ============================================================================
+void TstTactics::search_partitionCoversWidth()
+{
+    // 2 机，1000×600 区域，航向 0°(南北航线)：切成 2 条各宽 300 的东西向条带
+    const double cLat = 39.9, cLon = 116.4;
+    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, cLat, cLon), mkVehicle(2, cLat, cLon) };
+    const QList<SearchLane> lanes = partitionSearch(v, cLat, cLon, 1000.0, 600.0, 0.0);
+    QCOMPARE(lanes.size(), 2);
+
+    for (const SearchLane &ln : lanes) {
+        QVERIFY2(std::abs(ln.laneWidthM - 300.0) < 1e-6, "条带宽 = 总宽/机数");
+        QVERIFY2(std::abs(ln.laneLengthM - 1000.0) < 1e-6, "条带长 = 区域长");
+        QCOMPARE(ln.bearingDeg, 0.0);
+        // 条带中心到区域中心 ≈ 半条带宽 = 150m
+        const double d = SwarmTypes::haversineM(cLat, cLon, ln.center.lat, ln.center.lon);
+        QVERIFY2(std::abs(d - 150.0) < 1.0, "条带中心偏移 = W/(2n) = 150m");
+    }
+    // 两条带分列区域东西两侧（航向 0° → 垂直切分方向为东西）
+    const bool oneWest = (lanes[0].center.lon < cLon) != (lanes[1].center.lon < cLon);
+    QVERIFY2(oneWest, "两条带应分列中心线东西两侧，无缝覆盖全宽");
+}
+
+void TstTactics::search_nearestAssignment()
+{
+    // 机分处区域东西两侧，拍卖就近应各分到同侧条带
+    const double cLat = 39.9, cLon = 116.4;
+    double wLat, wLon, eLat, eLon;
+    SwarmTypes::destinationPoint(cLat, cLon, 270.0, 500.0, wLat, wLon);   // 西 500m
+    SwarmTypes::destinationPoint(cLat, cLon,  90.0, 500.0, eLat, eLon);   // 东 500m
+    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, wLat, wLon), mkVehicle(2, eLat, eLon) };
+    const QList<SearchLane> lanes = partitionSearch(v, cLat, cLon, 1000.0, 600.0, 0.0);
+    QCOMPARE(lanes.size(), 2);
+
+    // lanes 按输入机序：机1(西)应得西条带，机2(东)应得东条带
+    QCOMPARE(lanes[0].vehicleId, 1);
+    QVERIFY2(lanes[0].center.lon < cLon, "西侧机应分到西条带");
+    QCOMPARE(lanes[1].vehicleId, 2);
+    QVERIFY2(lanes[1].center.lon > cLon, "东侧机应分到东条带");
+}
+
+void TstTactics::search_degenerate()
+{
+    QVERIFY(partitionSearch({}, 39.9, 116.4, 1000.0, 600.0, 0.0).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TstTactics)

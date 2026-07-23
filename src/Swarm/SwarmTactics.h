@@ -48,10 +48,11 @@ struct InterceptSolution {
 
 /// 搜索分区（每机负责的一条带）
 struct SearchLane {
-    int      vehicleId  = 0;
-    GeoPoint center;             ///< 条带中心
-    double   laneWidthM = 0.0;   ///< 条带宽度（米）
-    double   bearingDeg = 0.0;   ///< 搜索航线方位角（度）
+    int      vehicleId   = 0;
+    GeoPoint center;              ///< 条带中心
+    double   laneWidthM  = 0.0;   ///< 条带宽度（垂直航向，米）
+    double   laneLengthM = 0.0;   ///< 条带长度（沿搜索航向，米）
+    double   bearingDeg  = 0.0;   ///< 搜索航线方位角（度）
 };
 
 // ---- 场景③ 跟踪：Standoff 环绕观测 ----

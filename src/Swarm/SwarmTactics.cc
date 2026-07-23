@@ -128,4 +128,60 @@ InterceptSolution intercept(double insLat, double insLon, double vMps,
     return sol;
 }
 
+// ============================================================================
+// 场景① 协同搜索：矩形区域按机数分区 + 拍卖就近分配
+// ============================================================================
+QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicles,
+                                  double centerLat, double centerLon,
+                                  double lengthM, double widthM, double angleDeg)
+{
+    QList<SearchLane> out;
+    const int n = vehicles.count();
+    if (n <= 0 || widthM <= 0.0) {
+        return out;
+    }
+    const double laneW       = widthM / n;
+    const double perpBearing = std::fmod(angleDeg + 90.0, 360.0);   // 垂直航向=切分方向
+
+    // 沿垂直航向把区域均匀切成 n 条带，求各条带中心
+    QList<GeoPoint> laneCenters;
+    for (int i = 0; i < n; i++) {
+        const double offset = -widthM / 2.0 + (i + 0.5) * laneW;    // [-W/2, +W/2]
+        GeoPoint p{centerLat, centerLon};
+        if (std::abs(offset) > 1e-6) {
+            const double brg = (offset > 0.0) ? perpBearing
+                                              : std::fmod(perpBearing + 180.0, 360.0);
+            SwarmTypes::destinationPoint(centerLat, centerLon, brg, std::abs(offset), p.lat, p.lon);
+        }
+        laneCenters.append(p);
+    }
+
+    // 拍卖就近分配：机、条带中心均以区域中心为原点转本地米，最小化总进场转场
+    SwarmTaskAllocator allocator;
+    QList<SwarmTaskAllocator::Node> vNodes, lNodes;
+    for (int i = 0; i < n; i++) {
+        double e, nth;
+        SwarmTypes::latLonToLocalM(centerLat, centerLon, vehicles.at(i).lat, vehicles.at(i).lon, e, nth);
+        vNodes.append({vehicles.at(i).id, e, nth});
+    }
+    for (int i = 0; i < n; i++) {
+        double e, nth;
+        SwarmTypes::latLonToLocalM(centerLat, centerLon, laneCenters.at(i).lat, laneCenters.at(i).lon, e, nth);
+        lNodes.append({i, e, nth});
+    }
+    const QMap<int, int> assign = allocator.auctionAssign(vNodes, lNodes);
+    for (int i = 0; i < n; i++) {
+        const int vid  = vehicles.at(i).id;
+        const int lIdx = assign.value(vid, i);
+        SearchLane lane;
+        lane.vehicleId   = vid;
+        lane.center      = laneCenters.at(lIdx);
+        lane.laneWidthM  = laneW;
+        lane.laneLengthM = lengthM;
+        lane.bearingDeg  = std::fmod(angleDeg, 360.0);
+        out.append(lane);
+    }
+    return out;
+}
+
 } // namespace SwarmTactics
