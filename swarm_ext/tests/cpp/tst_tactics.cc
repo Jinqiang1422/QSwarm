@@ -34,6 +34,11 @@ private slots:
     void tracking_standoffRingGeometry();
     void tracking_standoffRingPhaseOffset();
     void tracking_standoffRingDegenerate();
+
+    // ---- 场景④ 围捕 ----
+    void encircle_coversRing();
+    void encircle_nearestAssignment();
+    void encircle_degenerate();
 };
 
 // ============================================================================
@@ -75,6 +80,56 @@ void TstTactics::tracking_standoffRingDegenerate()
 {
     QVERIFY(standoffRing(39.9, 116.4, 100.0, 0, 0.0).isEmpty());   // 机数 0
     QVERIFY(standoffRing(39.9, 116.4, 0.0, 4, 0.0).isEmpty());     // 半径 0
+}
+
+// ============================================================================
+// 场景④ 围捕：环形包围 + 拍卖就近分配
+// ============================================================================
+void TstTactics::encircle_coversRing()
+{
+    const double tgtLat = 39.9, tgtLon = 116.4, R = 150.0;
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.905, 116.400),   // 北
+        mkVehicle(2, 39.900, 116.406),   // 东
+        mkVehicle(3, 39.895, 116.400),   // 南
+        mkVehicle(4, 39.900, 116.394),   // 西
+    };
+    const QMap<int, GeoPoint> asg = encircle(v, tgtLat, tgtLon, R);
+    QCOMPARE(asg.size(), 4);
+
+    // 每机分到的包围点距目标 ≈ R，且四点互不重复（真正“包围”）
+    QList<GeoPoint> seen;
+    for (auto it = asg.constBegin(); it != asg.constEnd(); ++it) {
+        const double d = SwarmTypes::haversineM(tgtLat, tgtLon, it.value().lat, it.value().lon);
+        QVERIFY2(std::abs(d - R) < 1.0, "包围点应在半径 R 圆上");
+        for (const GeoPoint &s : seen) {
+            QVERIFY2(SwarmTypes::haversineM(s.lat, s.lon, it.value().lat, it.value().lon) > 1.0,
+                     "各机应分到不同包围点");
+        }
+        seen.append(it.value());
+    }
+}
+
+void TstTactics::encircle_nearestAssignment()
+{
+    // 四机分处目标 N/E/S/W，拍卖就近应各分到同方向包围点（最小转场）
+    const double tgtLat = 39.9, tgtLon = 116.4, R = 150.0;
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.905, 116.400),   // 北
+        mkVehicle(2, 39.900, 116.406),   // 东
+        mkVehicle(3, 39.895, 116.400),   // 南
+        mkVehicle(4, 39.900, 116.394),   // 西
+    };
+    const QMap<int, GeoPoint> asg = encircle(v, tgtLat, tgtLon, R);
+    QVERIFY(asg[1].lat > tgtLat && std::abs(asg[1].lon - tgtLon) < 1e-3);  // 北机→北点
+    QVERIFY(asg[2].lon > tgtLon && std::abs(asg[2].lat - tgtLat) < 1e-3);  // 东机→东点
+    QVERIFY(asg[3].lat < tgtLat && std::abs(asg[3].lon - tgtLon) < 1e-3);  // 南机→南点
+    QVERIFY(asg[4].lon < tgtLon && std::abs(asg[4].lat - tgtLat) < 1e-3);  // 西机→西点
+}
+
+void TstTactics::encircle_degenerate()
+{
+    QVERIFY(encircle({}, 39.9, 116.4, 100.0).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TstTactics)
