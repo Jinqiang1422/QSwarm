@@ -2,6 +2,7 @@
 
 #include "FormationController.h"
 #include "SwarmMissionPlanner.h"
+#include "SwarmTactics.h"
 #include "SwarmAIAgent.h"
 #include "SwarmTaskController.h"
 #include "SwarmTaskLibrary.h"
@@ -566,7 +567,8 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
         QStringLiteral("land"), QStringLiteral("rtl"), QStringLiteral("pause"),
         QStringLiteral("start_mission"), QStringLiteral("disarm"), QStringLiteral("emergency_disarm"),
         QStringLiteral("start_formation"), QStringLiteral("stop_formation"),
-        QStringLiteral("plan_coverage"), QStringLiteral("clear_missions")
+        QStringLiteral("plan_coverage"), QStringLiteral("clear_missions"),
+        QStringLiteral("plan_tactic")
     };
 
     QList<SwarmAction> plan;
@@ -700,6 +702,52 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
                          : assignMode == QStringLiteral("cbba") ? tr("（CBBA 分布式分配）") : QString());
         } else if (type == QStringLiteral("clear_missions")) {
             action.description = tr("清空各机任务");
+        } else if (type == QStringLiteral("plan_tactic")) {
+            // 协同战术规划：跟踪/围捕/拦截/巡逻（规划建议级，输出方案供操作员确认）
+            static const QSet<QString> kScenarios = {
+                QStringLiteral("track"), QStringLiteral("encircle"),
+                QStringLiteral("intercept"), QStringLiteral("patrol")
+            };
+            const QString scenario = obj.value(QStringLiteral("scenario")).toString();
+            if (!kScenarios.contains(scenario)) {
+                warnings.append(tr("未知战术场景「%1」，已忽略").arg(scenario));
+                continue;
+            }
+            action.params[QStringLiteral("scenario")] = scenario;
+            if (scenario == QStringLiteral("patrol")) {
+                QVariantList poly;
+                for (const QJsonValue &pt : obj.value(QStringLiteral("polygon")).toArray()) {
+                    const QJsonArray a = pt.toArray();
+                    if (a.count() >= 2) {
+                        poly.append(QVariant(QVariantList{a.at(0).toDouble(), a.at(1).toDouble()}));
+                    }
+                }
+                if (poly.count() < 3) {
+                    warnings.append(tr("巡逻多边形至少需 3 个顶点，已忽略"));
+                    continue;
+                }
+                action.params[QStringLiteral("polygon")] = poly;
+                action.description = tr("巡逻规划：%1 顶点周界均分").arg(poly.count());
+            } else {
+                const double tLat = obj.value(QStringLiteral("target_lat")).toDouble();
+                const double tLon = obj.value(QStringLiteral("target_lon")).toDouble();
+                if (qAbs(tLat) < 1e-9 && qAbs(tLon) < 1e-9) {
+                    warnings.append(tr("战术场景「%1」缺目标坐标，已忽略").arg(scenario));
+                    continue;
+                }
+                action.params[QStringLiteral("target_lat")] = tLat;
+                action.params[QStringLiteral("target_lon")] = tLon;
+                if (scenario == QStringLiteral("intercept")) {
+                    action.params[QStringLiteral("target_speed")]    = obj.value(QStringLiteral("target_speed")).toDouble(0.0);
+                    action.params[QStringLiteral("target_heading")]  = obj.value(QStringLiteral("target_heading")).toDouble(0.0);
+                    action.params[QStringLiteral("intercept_speed")] = qBound(1.0, obj.value(QStringLiteral("intercept_speed")).toDouble(20.0), 100.0);
+                    action.description = tr("拦截规划：预测碰撞拦截点");
+                } else {
+                    action.params[QStringLiteral("radius")] = qBound(10.0, obj.value(QStringLiteral("radius")).toDouble(150.0), 5000.0);
+                    action.description = (scenario == QStringLiteral("track")) ? tr("环绕跟踪规划：定半径观测")
+                                                                              : tr("包围规划：环形合围");
+                }
+            }
         }
 
         plan.append(action);
@@ -770,9 +818,74 @@ void SwarmManager::executeActions(const QList<SwarmAction> &actions, const QStri
                 p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString());
         } else if (type == QStringLiteral("clear_missions")) {
             _missionPlanner->clearAllMissions();
+        } else if (type == QStringLiteral("plan_tactic")) {
+            _executeTactic(p);
         }
     }
     emit swarmCommandFeedback(tr("动作序列已执行（%1 项）").arg(actions.count()));
+}
+
+// ---------------------------------------------------------------------------
+// 协同战术规划：跟踪/围捕/拦截/巡逻（规划建议级 L1，输出方案经 swarmCommandFeedback）
+// ---------------------------------------------------------------------------
+void SwarmManager::_executeTactic(const QVariantMap &p)
+{
+    const QString scenario = p.value(QStringLiteral("scenario")).toString();
+    const QList<SwarmTypes::VehicleState> states = _vehicleStates();
+    if (states.isEmpty()) {
+        emit swarmCommandFeedback(tr("战术规划：当前没有可用无人机"));
+        return;
+    }
+
+    if (scenario == QStringLiteral("track")) {
+        const double R = p.value(QStringLiteral("radius")).toDouble();
+        const QList<SwarmTactics::GeoPoint> ring = SwarmTactics::standoffRing(
+            p.value(QStringLiteral("target_lat")).toDouble(),
+            p.value(QStringLiteral("target_lon")).toDouble(), R, states.count());
+        emit swarmCommandFeedback(tr("环绕跟踪规划：%1 机以半径 %2 米相位均分观测（首点 %3, %4）")
+                                      .arg(ring.count()).arg(R, 0, 'f', 0)
+                                      .arg(ring.isEmpty() ? 0.0 : ring.first().lat, 0, 'f', 6)
+                                      .arg(ring.isEmpty() ? 0.0 : ring.first().lon, 0, 'f', 6));
+    } else if (scenario == QStringLiteral("encircle")) {
+        const double R = p.value(QStringLiteral("radius")).toDouble();
+        const QMap<int, SwarmTactics::GeoPoint> asg = SwarmTactics::encircle(
+            states, p.value(QStringLiteral("target_lat")).toDouble(),
+            p.value(QStringLiteral("target_lon")).toDouble(), R);
+        emit swarmCommandFeedback(tr("包围规划：%1 机在半径 %2 米环上就近分配合围点")
+                                      .arg(asg.count()).arg(R, 0, 'f', 0));
+    } else if (scenario == QStringLiteral("intercept")) {
+        const SwarmTypes::VehicleState &ins = states.first();   // 首架为拦截机
+        SwarmTactics::MovingTarget tgt;
+        tgt.lat        = p.value(QStringLiteral("target_lat")).toDouble();
+        tgt.lon        = p.value(QStringLiteral("target_lon")).toDouble();
+        tgt.speedMps   = p.value(QStringLiteral("target_speed")).toDouble();
+        tgt.headingDeg = p.value(QStringLiteral("target_heading")).toDouble();
+        const double v = p.value(QStringLiteral("intercept_speed")).toDouble();
+        const SwarmTactics::InterceptSolution sol = SwarmTactics::intercept(ins.lat, ins.lon, v, tgt);
+        if (sol.feasible) {
+            emit swarmCommandFeedback(tr("拦截规划：%1 号机航向 %2°、约 %3 秒于 (%4, %5) 拦截目标")
+                                          .arg(ins.id).arg(sol.headingDeg, 0, 'f', 0)
+                                          .arg(sol.timeS, 0, 'f', 0)
+                                          .arg(sol.lat, 0, 'f', 6).arg(sol.lon, 0, 'f', 6));
+        } else {
+            emit swarmCommandFeedback(tr("拦截规划：%1 号机速度不足，无法拦截该目标").arg(ins.id));
+        }
+    } else if (scenario == QStringLiteral("patrol")) {
+        QList<QPair<double, double>> poly;
+        for (const QVariant &pt : p.value(QStringLiteral("polygon")).toList()) {
+            const QVariantList xy = pt.toList();
+            if (xy.count() >= 2) {
+                poly.append({xy.at(0).toDouble(), xy.at(1).toDouble()});
+            }
+        }
+        const QMap<int, QList<SwarmTactics::GeoPoint>> plan = SwarmTactics::partitionPatrol(states, poly);
+        int totalPts = 0;
+        for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
+            totalPts += it.value().count();
+        }
+        emit swarmCommandFeedback(tr("巡逻规划：%1 机沿 %2 边周界均分为共 %3 个巡逻点")
+                                      .arg(plan.count()).arg(poly.count()).arg(totalPts));
+    }
 }
 
 void SwarmManager::_vehicleAdded(Vehicle *vehicle)

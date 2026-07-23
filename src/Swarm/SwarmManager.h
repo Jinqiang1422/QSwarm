@@ -222,6 +222,8 @@ private:
 
     /// 目标机状态快照（选中集合优先，否则全体在线），供约束引擎/估算器
     QList<SwarmTypes::VehicleState> _vehicleStates() const;
+    /// plan_tactic 协同战术规划执行（跟踪/围捕/拦截/巡逻，输出方案经 swarmCommandFeedback）
+    void _executeTactic(const QVariantMap &params);
     /// 加载围栏/空域配置（AppDataLocation/SwarmConfig/fences.json；缺失时写默认）
     SwarmConstraintChecker::Config _constraintConfig() const;
 

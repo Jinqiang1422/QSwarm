@@ -209,7 +209,10 @@ QString SwarmAIAgent::_systemPromptTools() const
         "要求“分布式/去中心/一致性分配”或强调抗通信中断时用 cbba。\n"
         "11. 态势类请求（摘要/问答/告警处置建议）：仅依据 [态势摘要] 中给出的事实作答，"
         "每个事实性陈述必须标注来源角标——[遥测]（机体状态）、[感知]（检测/融合航迹）、"
-        "[推测]（规则推导）；摘要中没有的数字不得编造，不确定就说“暂无数据”。"
+        "[推测]（规则推导）；摘要中没有的数字不得编造，不确定就说“暂无数据”。\n"
+        "12. 协同战术 plan_tactic（规划建议级，输出方案供操作员确认）：环绕/盘旋观测某目标→scenario=track；"
+        "包围/合围/收缩围捕某目标→encircle；拦截/迎击/截击移动目标→intercept（须给 target_speed 与 target_heading）；"
+        "沿边界/多边形周界巡逻→patrol（给 polygon 顶点 [[lat,lon],...]）。track/encircle/intercept 须给 target_lat/target_lon。"
     );
 }
 
@@ -322,6 +325,18 @@ QJsonArray SwarmAIAgent::_toolsJson() const
                         "altitude":{"type":"number","description":"作业高度（米），缺省 30"},
                         "assign":{"type":"string","enum":["sequential","auction","cbba"],"description":"条带分配方式：sequential=按机号升序（缺省）；auction=集中式拍卖，总转场里程最优；cbba=分布式一致性拍卖，各机本地决策、抗通信中断"}
                     },"required":["length","width"]})")));
+    tools.append(fn(QStringLiteral("plan_tactic"),
+                    QStringLiteral("集群协同战术规划（输出方案供操作员确认，不直接下发）：track 环绕跟踪 / encircle 包围合围 / intercept 拦截预测 / patrol 周界巡逻"),
+                    params(R"({"type":"object","properties":{
+                        "scenario":{"type":"string","enum":["track","encircle","intercept","patrol"],"description":"战术场景：track=定半径环绕观测；encircle=环形合围（就近分配）；intercept=碰撞三角拦截预测；patrol=多边形周界均分巡逻"},
+                        "target_lat":{"type":"number","description":"目标纬度（track/encircle/intercept 必填）"},
+                        "target_lon":{"type":"number","description":"目标经度（track/encircle/intercept 必填）"},
+                        "radius":{"type":"number","description":"环绕/包围半径（米），track/encircle 用，缺省 150"},
+                        "target_speed":{"type":"number","description":"目标速度（m/s），intercept 用，缺省 0"},
+                        "target_heading":{"type":"number","description":"目标航向（度，北起），intercept 用，缺省 0"},
+                        "intercept_speed":{"type":"number","description":"拦截机速度（m/s），intercept 用，缺省 20"},
+                        "polygon":{"type":"array","description":"巡逻多边形顶点 [[lat,lon],...]（patrol 必填，≥3 顶点）","items":{"type":"array","items":{"type":"number"}}}
+                    },"required":["scenario"]})")));
     tools.append(fn(QStringLiteral("clear_missions"), QStringLiteral("清空各机任务"), noParams));
 
     // 多阶段任务编排

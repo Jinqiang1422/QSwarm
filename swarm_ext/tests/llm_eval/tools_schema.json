@@ -227,6 +227,65 @@
   {
     "type": "function",
     "function": {
+      "name": "plan_tactic",
+      "description": "集群协同战术规划（输出方案供操作员确认，不直接下发）：track 环绕跟踪 / encircle 包围合围 / intercept 拦截预测 / patrol 周界巡逻",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "type": "string",
+            "enum": [
+              "track",
+              "encircle",
+              "intercept",
+              "patrol"
+            ],
+            "description": "战术场景：track=定半径环绕观测；encircle=环形合围（就近分配）；intercept=碰撞三角拦截预测；patrol=多边形周界均分巡逻"
+          },
+          "target_lat": {
+            "type": "number",
+            "description": "目标纬度（track/encircle/intercept 必填）"
+          },
+          "target_lon": {
+            "type": "number",
+            "description": "目标经度（track/encircle/intercept 必填）"
+          },
+          "radius": {
+            "type": "number",
+            "description": "环绕/包围半径（米），track/encircle 用，缺省 150"
+          },
+          "target_speed": {
+            "type": "number",
+            "description": "目标速度（m/s），intercept 用，缺省 0"
+          },
+          "target_heading": {
+            "type": "number",
+            "description": "目标航向（度，北起），intercept 用，缺省 0"
+          },
+          "intercept_speed": {
+            "type": "number",
+            "description": "拦截机速度（m/s），intercept 用，缺省 20"
+          },
+          "polygon": {
+            "type": "array",
+            "description": "巡逻多边形顶点 [[lat,lon],...]（patrol 必填，≥3 顶点）",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "required": [
+          "scenario"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "clear_missions",
       "description": "清空各机任务",
       "parameters": {
