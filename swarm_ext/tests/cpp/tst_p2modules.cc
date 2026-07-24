@@ -54,6 +54,9 @@ private slots:
     void allocator_cbbaInCompare();
     void allocator_cbbaBundleCoversAll();
     void allocator_cbbaBundleCapacity();
+    void allocator_moreVehiclesThanTargets();
+    void allocator_emptyInput();
+    void allocator_bothBeatSequentialReversed();
 
 private:
     static SwarmAction coverageAt(double length, double width, double spacing,
@@ -566,6 +569,41 @@ void TestP2Modules::allocator_cbbaBundleCapacity()
         }
     }
     QCOMPARE(covered.count(), 6);
+}
+
+// === 分配底座健壮性补测(第三轮 QA) ===
+
+void TestP2Modules::allocator_moreVehiclesThanTargets()
+{
+    // 非对称:3 机 2 目标 → 至多分配 2 机,无重复目标(暴露 qMin 截断行为)
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}, {2, 50, 0}, {3, 100, 0}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 0, 0}, {102, 100, 0}};
+    const auto a = alloc.auctionAssign(vs, ts);
+    QVERIFY2(a.count() <= 2, "目标仅 2 个,至多分配 2 机");
+    QSet<int> used;
+    for (auto it = a.constBegin(); it != a.constEnd(); ++it) used.insert(it.value());
+    QCOMPARE(used.count(), a.count());            // 无重复目标
+}
+
+void TestP2Modules::allocator_emptyInput()
+{
+    SwarmTaskAllocator alloc;
+    QVERIFY(alloc.auctionAssign({}, {}).isEmpty());
+    QVERIFY(alloc.cbbaAssign({{1, 0, 0}}, {}).isEmpty());          // 0 目标
+    QVERIFY(alloc.sequentialAssign({}, {{101, 0, 0}}).isEmpty());  // 0 机
+}
+
+void TestP2Modules::allocator_bothBeatSequentialReversed()
+{
+    // 反转布局:auction 与 cbba 总里程都应不劣于顺序基线
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> vs = {{1, 0, 0}, {2, 0, 100}, {3, 0, 200}};
+    const QList<SwarmTaskAllocator::Node> ts = {{101, 0, 200}, {102, 0, 100}, {103, 0, 0}};
+    const QVariantMap cmp = alloc.compare(vs, ts);
+    const double seq = cmp.value(QStringLiteral("seq_total_m")).toDouble();
+    QVERIFY2(cmp.value(QStringLiteral("auction_total_m")).toDouble() <= seq + 1e-6, "auction 不劣于顺序");
+    QVERIFY2(cmp.value(QStringLiteral("cbba_total_m")).toDouble()    <= seq + 1e-6, "cbba 不劣于顺序");
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)
