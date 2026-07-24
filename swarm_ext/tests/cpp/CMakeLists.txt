@@ -80,3 +80,19 @@ target_include_directories(tst_tactics PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_tactics PRIVATE Qt6::Core Qt6::Test)
 
 add_test(NAME tactics COMMAND tst_tactics)
+
+# --- 端到端安全闸门链集成测试(防注入 + 约束 + 自主分级) ---
+add_executable(tst_pipeline
+    tst_pipeline.cc
+    ${SWARM_SRC}/SwarmInputFilter.cc
+    ${SWARM_SRC}/SwarmInputFilter.h
+    ${SWARM_SRC}/SwarmConstraintChecker.cc
+    ${SWARM_SRC}/SwarmConstraintChecker.h
+    ${SWARM_SRC}/SwarmAutonomy.h
+    ${SWARM_SRC}/SwarmAction.h
+    ${SWARM_SRC}/SwarmTypes.h
+)
+target_include_directories(tst_pipeline PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_pipeline PRIVATE Qt6::Core Qt6::Test)
+
+add_test(NAME pipeline COMMAND tst_pipeline)
