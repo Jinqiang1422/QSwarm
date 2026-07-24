@@ -72,9 +72,16 @@ public:
                                  int &bands, double &sweepDistanceM);
 
 private:
+    struct CoverageArea { double lat = 0.0; double lon = 0.0; double lengthM = 0.0; double widthM = 0.0; };
+
     void _checkFence(const SwarmAction &action, const Config &cfg,
                      double mapCenterLat, double mapCenterLon, QList<Violation> &out) const;
     void _checkBattery(const SwarmAction &action, const QList<SwarmTypes::VehicleState> &vehicles,
                        const Config &cfg, double mapCenterLat, double mapCenterLon,
                        QList<Violation> &out) const;
+    void _checkTakeoffAlt(const SwarmAction &action, const Config &cfg, QList<Violation> &out) const;
+    void _checkComm(const SwarmAction &action, const Config &cfg,
+                    double mapCenterLat, double mapCenterLon, QList<Violation> &out) const;
+    void _checkSpacing(const SwarmAction &action, const Config &cfg, QList<Violation> &out) const;
+    void _checkDeconflict(const QList<CoverageArea> &areas, QList<Violation> &out) const;
 };

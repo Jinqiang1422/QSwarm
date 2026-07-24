@@ -189,68 +189,65 @@ void SwarmConstraintChecker::_checkBattery(const SwarmAction &action,
 // ---------------------------------------------------------------------------
 // 主检查
 // ---------------------------------------------------------------------------
-QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(
-        const QList<SwarmAction> &plan,
-        const QList<SwarmTypes::VehicleState> &vehicles,
-        const Config &cfg,
-        double mapCenterLat, double mapCenterLon) const
+void SwarmConstraintChecker::_checkTakeoffAlt(const SwarmAction &action, const Config &cfg,
+                                              QList<Violation> &out) const
 {
-    QList<Violation> out;
-
-    QList<QPair<double, double>> coverageCenters;   // 用于多区重叠检查
-    for (const SwarmAction &action : plan) {
-        const QString &type = action.type;
-        const QVariantMap &p = action.params;
-
-        if (type == QStringLiteral("takeoff")) {
-            const double alt = p.value(QStringLiteral("altitude"), 30.0).toDouble();
-            if (cfg.maxAltitudeM > 0.0 && alt > cfg.maxAltitudeM) {
-                out.append({QStringLiteral("error"), QStringLiteral("fence"),
-                            QStringLiteral("起飞高度 %1 米超过围栏上限 %2 米").arg(alt).arg(cfg.maxAltitudeM),
-                            QStringLiteral("降低高度至 %1 米以下").arg(cfg.maxAltitudeM)});
-            }
-        } else if (type == QStringLiteral("plan_coverage")) {
-            _checkFence(action, cfg, mapCenterLat, mapCenterLon, out);
-            _checkBattery(action, vehicles, cfg, mapCenterLat, mapCenterLon, out);
-            const double cLat = p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble();
-            const double cLon = p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble();
-            coverageCenters.append({cLat, cLon});
-            // 链路覆盖：区域中心 + 半对角 距集结点
-            const double halfDiag = qSqrt(qPow(p.value(QStringLiteral("length"), 0.0).toDouble() / 2.0, 2)
-                                          + qPow(p.value(QStringLiteral("width"), 0.0).toDouble() / 2.0, 2));
-            const double homeLat = (cfg.homeLat != 0.0) ? cfg.homeLat : mapCenterLat;
-            const double homeLon = (cfg.homeLon != 0.0) ? cfg.homeLon : mapCenterLon;
-            const double range = SwarmTypes::haversineM(homeLat, homeLon, cLat, cLon) + halfDiag;
-            if (range > cfg.commRangeM * 1.5) {
-                out.append({QStringLiteral("error"), QStringLiteral("comm"),
-                            QStringLiteral("最远作业点 %1 米，远超链路半径 %2 米")
-                                .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
-                            QStringLiteral("缩小作业半径/前移指控点/增设中继")});
-            } else if (range > cfg.commRangeM) {
-                out.append({QStringLiteral("warning"), QStringLiteral("comm"),
-                            QStringLiteral("最远作业点 %1 米，超出链路半径 %2 米")
-                                .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
-                            QStringLiteral("建议前移指控点或增设链路中继")});
-            }
-        } else if (type == QStringLiteral("start_formation")) {
-            const double spacing = p.value(QStringLiteral("spacing"), 15.0).toDouble();
-            if (spacing < cfg.minSeparationM) {
-                out.append({QStringLiteral("error"), QStringLiteral("spacing"),
-                            QStringLiteral("编队间距 %1 米低于安全下限 %2 米").arg(spacing).arg(cfg.minSeparationM),
-                            QStringLiteral("增大间距至 %1 米以上").arg(cfg.minSeparationM)});
-            } else if (spacing < cfg.minSeparationM * 2.0) {
-                out.append({QStringLiteral("warning"), QStringLiteral("spacing"),
-                            QStringLiteral("编队间距 %1 米接近下限").arg(spacing),
-                            QStringLiteral("建议间距 ≥ %1 米").arg(cfg.minSeparationM * 2.0)});
-            }
-        }
+    const double alt = action.params.value(QStringLiteral("altitude"), 30.0).toDouble();
+    if (cfg.maxAltitudeM > 0.0 && alt > cfg.maxAltitudeM) {
+        out.append({QStringLiteral("error"), QStringLiteral("fence"),
+                    QStringLiteral("起飞高度 %1 米超过围栏上限 %2 米").arg(alt).arg(cfg.maxAltitudeM),
+                    QStringLiteral("降低高度至 %1 米以下").arg(cfg.maxAltitudeM)});
     }
+}
 
-    // 多作业区重叠（去冲突）
-    for (int i = 0; i < coverageCenters.count(); i++) {
-        for (int j = i + 1; j < coverageCenters.count(); j++) {
-            const double d = SwarmTypes::haversineM(coverageCenters[i].first, coverageCenters[i].second,
-                                                    coverageCenters[j].first, coverageCenters[j].second);
+void SwarmConstraintChecker::_checkComm(const SwarmAction &action, const Config &cfg,
+                                        double mapCenterLat, double mapCenterLon,
+                                        QList<Violation> &out) const
+{
+    const QVariantMap &p = action.params;
+    const double cLat = p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble();
+    const double cLon = p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble();
+    // 链路覆盖：区域中心 + 半对角 距集结点
+    const double halfDiag = qSqrt(qPow(p.value(QStringLiteral("length"), 0.0).toDouble() / 2.0, 2)
+                                  + qPow(p.value(QStringLiteral("width"), 0.0).toDouble() / 2.0, 2));
+    const double homeLat = (cfg.homeLat != 0.0) ? cfg.homeLat : mapCenterLat;
+    const double homeLon = (cfg.homeLon != 0.0) ? cfg.homeLon : mapCenterLon;
+    const double range = SwarmTypes::haversineM(homeLat, homeLon, cLat, cLon) + halfDiag;
+    if (range > cfg.commRangeM * 1.5) {
+        out.append({QStringLiteral("error"), QStringLiteral("comm"),
+                    QStringLiteral("最远作业点 %1 米，远超链路半径 %2 米")
+                        .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
+                    QStringLiteral("缩小作业半径/前移指控点/增设中继")});
+    } else if (range > cfg.commRangeM) {
+        out.append({QStringLiteral("warning"), QStringLiteral("comm"),
+                    QStringLiteral("最远作业点 %1 米，超出链路半径 %2 米")
+                        .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
+                    QStringLiteral("建议前移指控点或增设链路中继")});
+    }
+}
+
+void SwarmConstraintChecker::_checkSpacing(const SwarmAction &action, const Config &cfg,
+                                           QList<Violation> &out) const
+{
+    const double spacing = action.params.value(QStringLiteral("spacing"), 15.0).toDouble();
+    if (spacing < cfg.minSeparationM) {
+        out.append({QStringLiteral("error"), QStringLiteral("spacing"),
+                    QStringLiteral("编队间距 %1 米低于安全下限 %2 米").arg(spacing).arg(cfg.minSeparationM),
+                    QStringLiteral("增大间距至 %1 米以上").arg(cfg.minSeparationM)});
+    } else if (spacing < cfg.minSeparationM * 2.0) {
+        out.append({QStringLiteral("warning"), QStringLiteral("spacing"),
+                    QStringLiteral("编队间距 %1 米接近下限").arg(spacing),
+                    QStringLiteral("建议间距 ≥ %1 米").arg(cfg.minSeparationM * 2.0)});
+    }
+}
+
+void SwarmConstraintChecker::_checkDeconflict(const QList<CoverageArea> &areas,
+                                              QList<Violation> &out) const
+{
+    for (int i = 0; i < areas.count(); i++) {
+        for (int j = i + 1; j < areas.count(); j++) {
+            const double d = SwarmTypes::haversineM(areas.at(i).lat, areas.at(i).lon,
+                                                    areas.at(j).lat, areas.at(j).lon);
             if (d < 50.0) {
                 out.append({QStringLiteral("warning"), QStringLiteral("deconflict"),
                             QStringLiteral("两个作业区中心相距仅 %1 米，可能重叠").arg(d, 0, 'f', 0),
@@ -258,6 +255,34 @@ QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(
             }
         }
     }
+}
+
+QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(
+        const QList<SwarmAction> &plan,
+        const QList<SwarmTypes::VehicleState> &vehicles,
+        const Config &cfg,
+        double mapCenterLat, double mapCenterLon) const
+{
+    QList<Violation> out;
+    QList<CoverageArea> coverageAreas;   // 收集作业区用于多区重叠检查
+    for (const SwarmAction &action : plan) {
+        const QString &type = action.type;
+        if (type == QStringLiteral("takeoff")) {
+            _checkTakeoffAlt(action, cfg, out);
+        } else if (type == QStringLiteral("plan_coverage")) {
+            _checkFence(action, cfg, mapCenterLat, mapCenterLon, out);
+            _checkBattery(action, vehicles, cfg, mapCenterLat, mapCenterLon, out);
+            _checkComm(action, cfg, mapCenterLat, mapCenterLon, out);
+            const QVariantMap &p = action.params;
+            coverageAreas.append({p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble(),
+                                  p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble(),
+                                  p.value(QStringLiteral("length"), 0.0).toDouble(),
+                                  p.value(QStringLiteral("width"), 0.0).toDouble()});
+        } else if (type == QStringLiteral("start_formation")) {
+            _checkSpacing(action, cfg, out);
+        }
+    }
+    _checkDeconflict(coverageAreas, out);
     return out;
 }
 
