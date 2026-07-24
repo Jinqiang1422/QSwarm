@@ -37,6 +37,8 @@ private slots:
     void constraint_noFenceConfigSkips();
     void coverageGeometry_math();
     void config_jsonRoundTrip();
+    void constraint_largeAreasOverlapMissed();
+    void constraint_smallAreasNoFalsePositive();
     // estimator/allocator 边界加固
     void estimator_emptyPlan();
     void estimator_actionsAccumulate();
@@ -604,6 +606,32 @@ void TestP2Modules::allocator_bothBeatSequentialReversed()
     const double seq = cmp.value(QStringLiteral("seq_total_m")).toDouble();
     QVERIFY2(cmp.value(QStringLiteral("auction_total_m")).toDouble() <= seq + 1e-6, "auction 不劣于顺序");
     QVERIFY2(cmp.value(QStringLiteral("cbba_total_m")).toDouble()    <= seq + 1e-6, "cbba 不劣于顺序");
+}
+
+// === deconflict 语义补测(第四轮 QA:按区尺寸判重叠) ===
+
+void TestP2Modules::constraint_largeAreasOverlapMissed()
+{
+    // 两个 1000m 作业区中心相距 ~55m,必然重叠——修复前固定 50m 阈值漏报,现应报警
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1e9; cfg.enduranceMin = 1e6;   // 屏蔽 comm/battery,只看 deconflict
+    const auto v = checker.check({coverageAt(1000, 1000, 30, 39.9, 116.4),
+                                  coverageAt(1000, 1000, 30, 39.9005, 116.4)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY2(hasRule(v, QStringLiteral("deconflict"), QStringLiteral("warning")),
+             "两个 1km 作业区中心相距 55m 必然重叠,应报 deconflict(修复漏报)");
+}
+
+void TestP2Modules::constraint_smallAreasNoFalsePositive()
+{
+    // 两个 20m 作业区中心相距 ~43m,不重叠——修复前固定 50m 阈值误报,现应放行
+    SwarmConstraintChecker checker;
+    SwarmConstraintChecker::Config cfg;
+    cfg.commRangeM = 1e9; cfg.enduranceMin = 1e6;
+    const auto v = checker.check({coverageAt(20, 20, 5, 39.9, 116.4),
+                                  coverageAt(20, 20, 5, 39.9, 116.4005)}, fleet(4, 90.0), cfg, 39.9, 116.4);
+    QVERIFY2(!hasAnyRule(v, QStringLiteral("deconflict")),
+             "两个 20m 小区相距 43m 不重叠,不应误报(修复误报)");
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)

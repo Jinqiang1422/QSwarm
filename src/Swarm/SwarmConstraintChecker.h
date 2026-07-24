@@ -48,6 +48,10 @@ public:
         double enduranceMin   = 25.0;   ///< 满电续航（估算用）
         double reserveFactor  = 0.8;    ///< 可用电量安全系数（保留 20%）
         double minSeparationM = 3.0;    ///< 编队最小间距
+        double commWarnFactor    = 1.0;   ///< comm 告警系数(range > commRange×factor → warning)
+        double commErrorFactor   = 1.5;   ///< comm 阻断系数
+        double spacingWarnFactor = 2.0;   ///< 间距告警系数(< minSep×factor → warning)
+        double deconflictFactor  = 1.0;   ///< 重叠判定系数(中心距 < 半对角和×factor → 重叠)
     };
 
     /// 从 JSON 加载配置（fences.json）；缺失字段用默认值
@@ -83,5 +87,5 @@ private:
     void _checkComm(const SwarmAction &action, const Config &cfg,
                     double mapCenterLat, double mapCenterLon, QList<Violation> &out) const;
     void _checkSpacing(const SwarmAction &action, const Config &cfg, QList<Violation> &out) const;
-    void _checkDeconflict(const QList<CoverageArea> &areas, QList<Violation> &out) const;
+    void _checkDeconflict(const QList<CoverageArea> &areas, const Config &cfg, QList<Violation> &out) const;
 };

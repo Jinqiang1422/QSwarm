@@ -40,6 +40,10 @@ SwarmConstraintChecker::Config SwarmConstraintChecker::configFromJson(const QJso
     cfg.enduranceMin   = obj.value(QStringLiteral("endurance_min")).toDouble(cfg.enduranceMin);
     cfg.reserveFactor  = obj.value(QStringLiteral("reserve_factor")).toDouble(cfg.reserveFactor);
     cfg.minSeparationM = obj.value(QStringLiteral("min_separation_m")).toDouble(cfg.minSeparationM);
+    cfg.commWarnFactor    = obj.value(QStringLiteral("comm_warn_factor")).toDouble(cfg.commWarnFactor);
+    cfg.commErrorFactor   = obj.value(QStringLiteral("comm_error_factor")).toDouble(cfg.commErrorFactor);
+    cfg.spacingWarnFactor = obj.value(QStringLiteral("spacing_warn_factor")).toDouble(cfg.spacingWarnFactor);
+    cfg.deconflictFactor  = obj.value(QStringLiteral("deconflict_factor")).toDouble(cfg.deconflictFactor);
     return cfg;
 }
 
@@ -55,6 +59,10 @@ QJsonObject SwarmConstraintChecker::configToJson(const Config &cfg)
     obj[QStringLiteral("endurance_min")]    = cfg.enduranceMin;
     obj[QStringLiteral("reserve_factor")]   = cfg.reserveFactor;
     obj[QStringLiteral("min_separation_m")] = cfg.minSeparationM;
+    obj[QStringLiteral("comm_warn_factor")]    = cfg.commWarnFactor;
+    obj[QStringLiteral("comm_error_factor")]   = cfg.commErrorFactor;
+    obj[QStringLiteral("spacing_warn_factor")] = cfg.spacingWarnFactor;
+    obj[QStringLiteral("deconflict_factor")]   = cfg.deconflictFactor;
     return obj;
 }
 
@@ -213,12 +221,12 @@ void SwarmConstraintChecker::_checkComm(const SwarmAction &action, const Config 
     const double homeLat = (cfg.homeLat != 0.0) ? cfg.homeLat : mapCenterLat;
     const double homeLon = (cfg.homeLon != 0.0) ? cfg.homeLon : mapCenterLon;
     const double range = SwarmTypes::haversineM(homeLat, homeLon, cLat, cLon) + halfDiag;
-    if (range > cfg.commRangeM * 1.5) {
+    if (range > cfg.commRangeM * cfg.commErrorFactor) {
         out.append({QStringLiteral("error"), QStringLiteral("comm"),
                     QStringLiteral("最远作业点 %1 米，远超链路半径 %2 米")
                         .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
                     QStringLiteral("缩小作业半径/前移指控点/增设中继")});
-    } else if (range > cfg.commRangeM) {
+    } else if (range > cfg.commRangeM * cfg.commWarnFactor) {
         out.append({QStringLiteral("warning"), QStringLiteral("comm"),
                     QStringLiteral("最远作业点 %1 米，超出链路半径 %2 米")
                         .arg(range, 0, 'f', 0).arg(cfg.commRangeM, 0, 'f', 0),
@@ -234,7 +242,7 @@ void SwarmConstraintChecker::_checkSpacing(const SwarmAction &action, const Conf
         out.append({QStringLiteral("error"), QStringLiteral("spacing"),
                     QStringLiteral("编队间距 %1 米低于安全下限 %2 米").arg(spacing).arg(cfg.minSeparationM),
                     QStringLiteral("增大间距至 %1 米以上").arg(cfg.minSeparationM)});
-    } else if (spacing < cfg.minSeparationM * 2.0) {
+    } else if (spacing < cfg.minSeparationM * cfg.spacingWarnFactor) {
         out.append({QStringLiteral("warning"), QStringLiteral("spacing"),
                     QStringLiteral("编队间距 %1 米接近下限").arg(spacing),
                     QStringLiteral("建议间距 ≥ %1 米").arg(cfg.minSeparationM * 2.0)});
@@ -242,15 +250,21 @@ void SwarmConstraintChecker::_checkSpacing(const SwarmAction &action, const Conf
 }
 
 void SwarmConstraintChecker::_checkDeconflict(const QList<CoverageArea> &areas,
-                                              QList<Violation> &out) const
+                                              const Config &cfg, QList<Violation> &out) const
 {
+    // 按作业区实际尺寸判重叠：中心距 < (两区半对角之和)×系数 视为重叠,
+    // 修复原固定 50m 阈值的大区漏报 / 小区误报。
     for (int i = 0; i < areas.count(); i++) {
         for (int j = i + 1; j < areas.count(); j++) {
             const double d = SwarmTypes::haversineM(areas.at(i).lat, areas.at(i).lon,
                                                     areas.at(j).lat, areas.at(j).lon);
-            if (d < 50.0) {
+            const double halfDiagI = 0.5 * qSqrt(qPow(areas.at(i).lengthM, 2) + qPow(areas.at(i).widthM, 2));
+            const double halfDiagJ = 0.5 * qSqrt(qPow(areas.at(j).lengthM, 2) + qPow(areas.at(j).widthM, 2));
+            const double threshold = (halfDiagI + halfDiagJ) * cfg.deconflictFactor;
+            if (d < threshold) {
                 out.append({QStringLiteral("warning"), QStringLiteral("deconflict"),
-                            QStringLiteral("两个作业区中心相距仅 %1 米，可能重叠").arg(d, 0, 'f', 0),
+                            QStringLiteral("两作业区中心相距 %1 米 < 安全间隔 %2 米，可能重叠")
+                                .arg(d, 0, 'f', 0).arg(threshold, 0, 'f', 0),
                             QStringLiteral("拉大区中心间距或合并为一个作业区")});
             }
         }
@@ -282,7 +296,7 @@ QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(
             _checkSpacing(action, cfg, out);
         }
     }
-    _checkDeconflict(coverageAreas, out);
+    _checkDeconflict(coverageAreas, cfg, out);
     return out;
 }
 
