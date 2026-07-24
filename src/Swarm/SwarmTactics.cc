@@ -8,6 +8,38 @@
 
 namespace SwarmTactics {
 
+namespace {
+// 把拍卖结果规整为无冲突满射：每个目标至多分一次，拍卖有效分配优先采纳，
+// 缺失/冲突的机按顺序补第一个未用目标，杜绝退化几何下的重复分配。
+QList<int> resolveAssignment(const QList<SwarmTypes::VehicleState> &vehicles,
+                             const QMap<int, int> &assign, int nTargets)
+{
+    const int n = vehicles.count();
+    QList<int>  result(n, -1);
+    QList<bool> used(nTargets, false);
+    for (int i = 0; i < n; i++) {           // 第一遍：采纳无冲突的拍卖分配
+        const int t = assign.value(vehicles.at(i).id, -1);
+        if (t >= 0 && t < nTargets && !used[t]) {
+            result[i] = t;
+            used[t] = true;
+        }
+    }
+    int next = 0;
+    for (int i = 0; i < n; i++) {            // 第二遍：未分配机顺序补未用目标
+        if (result[i] < 0) {
+            while (next < nTargets && used[next]) {
+                next++;
+            }
+            if (next < nTargets) {
+                result[i] = next;
+                used[next] = true;
+            }
+        }
+    }
+    return result;
+}
+}  // namespace
+
 // ============================================================================
 // 场景③ 跟踪：Standoff 环绕观测
 // ============================================================================
@@ -56,10 +88,10 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
         pNodes.append({i, e, nth});   // 包围点 Node id = 环索引
     }
     const QMap<int, int> assign = allocator.auctionAssign(vNodes, pNodes);
+    const QList<int> resolved = resolveAssignment(vehicles, assign, ring.size());
     for (int i = 0; i < n; i++) {
-        const int vid  = vehicles.at(i).id;
-        const int pIdx = assign.value(vid, i);   // 缺省回退同序
-        out.insert(vid, ring.at(pIdx));
+        const int pIdx = (resolved.at(i) >= 0) ? resolved.at(i) : i;
+        out.insert(vehicles.at(i).id, ring.at(pIdx));
     }
     return out;
 }
@@ -173,11 +205,11 @@ QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicle
         lNodes.append({i, e, nth});
     }
     const QMap<int, int> assign = allocator.auctionAssign(vNodes, lNodes);
+    const QList<int> resolved = resolveAssignment(vehicles, assign, laneCenters.size());
     for (int i = 0; i < n; i++) {
-        const int vid  = vehicles.at(i).id;
-        const int lIdx = assign.value(vid, i);
+        const int lIdx = (resolved.at(i) >= 0) ? resolved.at(i) : i;
         SearchLane lane;
-        lane.vehicleId   = vid;
+        lane.vehicleId   = vehicles.at(i).id;
         lane.center      = laneCenters.at(lIdx);
         lane.laneWidthM  = laneW;
         lane.laneLengthM = lengthM;
