@@ -163,6 +163,24 @@ InterceptSolution intercept(double insLat, double insLon, double vMps,
     return sol;
 }
 
+// 从机群中挑选距目标最近的机作为拦截机（供接入层选择，避免首架随意指派）
+int pickInterceptor(const QList<SwarmTypes::VehicleState> &vehicles, double tgtLat, double tgtLon)
+{
+    if (vehicles.isEmpty()) {
+        return -1;
+    }
+    int    bestId   = vehicles.first().id;
+    double bestDist = SwarmTypes::haversineM(vehicles.first().lat, vehicles.first().lon, tgtLat, tgtLon);
+    for (int i = 1; i < vehicles.count(); i++) {
+        const double d = SwarmTypes::haversineM(vehicles.at(i).lat, vehicles.at(i).lon, tgtLat, tgtLon);
+        if (d < bestDist) {
+            bestDist = d;
+            bestId   = vehicles.at(i).id;
+        }
+    }
+    return bestId;
+}
+
 // ============================================================================
 // 场景① 协同搜索：矩形区域按机数分区 + 拍卖就近分配
 // ============================================================================

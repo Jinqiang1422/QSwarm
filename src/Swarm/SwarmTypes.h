@@ -86,4 +86,13 @@ inline bool pointInPolygon(double lat, double lon, const QList<QPair<double, dou
     return inside;
 }
 
+/// 经纬度是否在合法地理范围内（[-90,90]×[-180,180]，且非 (0,0) 占位）
+inline bool isValidLatLon(double lat, double lon)
+{
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
+        return false;
+    }
+    return !(std::abs(lat) < 1e-9 && std::abs(lon) < 1e-9);   // (0,0) 视为无效占位
+}
+
 } // namespace SwarmTypes

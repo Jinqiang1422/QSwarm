@@ -69,6 +69,11 @@ private slots:
     void patrol_segmentsContiguous();
     void patrol_fewerSamplesThanVehicles();
     void allocator_cbbaNoWorseThanSequential();
+
+    // ---- R2 接入边界纯函数 ----
+    void interceptor_picksNearest();
+    void interceptor_singleAndEmpty();
+    void latLon_validation();
 };
 
 // ============================================================================
@@ -459,6 +464,28 @@ void TstTactics::allocator_cbbaNoWorseThanSequential()
     const double seq  = cmp.value(QStringLiteral("seq_total_m")).toDouble();
     const double cbba = cmp.value(QStringLiteral("cbba_total_m")).toDouble();
     QVERIFY2(cbba <= seq + 1e-6, "CBBA 总里程应不劣于顺序基线");
+}
+
+// ============================================================================
+// R2 接入边界纯函数:拦截机选择 / 坐标校验
+// ============================================================================
+void TstTactics::interceptor_picksNearest()
+{
+    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, 39.99, 116.4), mkVehicle(2, 39.901, 116.4) };
+    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 2);      // 2号(39.901)比1号(39.99)距目标更近
+}
+void TstTactics::interceptor_singleAndEmpty()
+{
+    const QList<SwarmTypes::VehicleState> v{ mkVehicle(7, 39.99, 116.4) };
+    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 7);      // 单机
+    QCOMPARE(pickInterceptor({}, 39.9, 116.4), -1);    // 空列表
+}
+void TstTactics::latLon_validation()
+{
+    QVERIFY2(!SwarmTypes::isValidLatLon(200.0, 116.4), "纬度超范围应拒绝");
+    QVERIFY2(!SwarmTypes::isValidLatLon(39.9, 999.0), "经度超范围应拒绝");
+    QVERIFY2(!SwarmTypes::isValidLatLon(0.0, 0.0), "(0,0) 占位应拒绝");
+    QVERIFY2( SwarmTypes::isValidLatLon(39.9, 116.4), "合法坐标应通过");
 }
 
 QTEST_GUILESS_MAIN(TstTactics)

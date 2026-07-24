@@ -77,6 +77,10 @@ double solveQuadraticEarliestPositive(double a, double b, double c);
 InterceptSolution intercept(double insLat, double insLon, double vMps,
                             const MovingTarget &tgt);
 
+/// 从机群中挑选距目标最近的机作为拦截机，返回其 id；空列表返回 -1。
+int pickInterceptor(const QList<SwarmTypes::VehicleState> &vehicles,
+                    double tgtLat, double tgtLon);
+
 // ---- 场景① 协同搜索：区域分区 ----
 /// 矩形区域（中心 center、沿 angleDeg 航向长 lengthM、垂直宽 widthM）按机数沿宽度切条带，
 /// 每机分一条带，用拍卖法把机就近分配到条带以减少进场转场。
