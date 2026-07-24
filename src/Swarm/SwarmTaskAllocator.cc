@@ -210,6 +210,37 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
         }
         bundle[ag] = bundle[ag].mid(0, idx);
     };
+    // 为 agent i 找"能赢(得分 > 当前 winning-bid y[j])且最优插入(里程增量最小)"的任务。
+    // 把原 Phase1 内层的双重 for(任务×插入位置)抽出，主循环得以降为单层。
+    struct Bid { int task = -1; int pos = 0; double score = 0.0; };
+    const auto findBestBid = [&](int i) -> Bid {
+        const double base = pathCost(i, path[i]);
+        Bid best;
+        best.score = -kLarge;
+        for (int j = 0; j < nt; j++) {
+            if (bundle[i].contains(j)) {
+                continue;
+            }
+            double bestInc = kLarge;
+            int pos = path[i].size();
+            for (int p = 0; p <= path[i].size(); p++) {   // 最优插入位置
+                QList<int> tmp = path[i];
+                tmp.insert(p, j);
+                const double inc = pathCost(i, tmp) - base;
+                if (inc < bestInc) {
+                    bestInc = inc;
+                    pos = p;
+                }
+            }
+            const double s = -bestInc;   // 里程增量越小得分越高
+            if (s > y[j] && s > best.score) {
+                best.score = s;
+                best.task  = j;
+                best.pos   = pos;
+            }
+        }
+        return best;
+    };
 
     int guard = 0;
     const int maxIter = (na * nt + na) * 2 + 20;
@@ -219,41 +250,17 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
         // Phase 1: bundle-building —— 每机贪心加"能赢"的最优插入任务
         for (int i = 0; i < na; i++) {
             while (bundle[i].size() < cap) {
-                const double base = pathCost(i, path[i]);
-                int bestJ = -1, bestPos = 0;
-                double bestScore = -kLarge;
-                for (int j = 0; j < nt; j++) {
-                    if (bundle[i].contains(j)) {
-                        continue;
-                    }
-                    double bestInc = kLarge;
-                    int pos = path[i].size();
-                    for (int p = 0; p <= path[i].size(); p++) {
-                        QList<int> tmp = path[i];
-                        tmp.insert(p, j);
-                        const double inc = pathCost(i, tmp) - base;
-                        if (inc < bestInc) {
-                            bestInc = inc;
-                            pos = p;
-                        }
-                    }
-                    const double s = -bestInc;   // 里程增量越小得分越高
-                    if (s > y[j] && s > bestScore) {
-                        bestScore = s;
-                        bestJ = j;
-                        bestPos = pos;
-                    }
-                }
-                if (bestJ < 0) {
+                const Bid b = findBestBid(i);
+                if (b.task < 0) {
                     break;
                 }
-                if (z[bestJ] >= 0 && z[bestJ] != i) {
-                    releaseFrom(z[bestJ], bestJ);   // 顶替原赢家
+                if (z[b.task] >= 0 && z[b.task] != i) {
+                    releaseFrom(z[b.task], b.task);   // 顶替原赢家
                 }
-                bundle[i].append(bestJ);
-                path[i].insert(bestPos, bestJ);
-                y[bestJ] = bestScore;
-                z[bestJ] = i;
+                bundle[i].append(b.task);
+                path[i].insert(b.pos, b.task);
+                y[b.task] = b.score;
+                z[b.task] = i;
                 changed = true;
             }
         }
