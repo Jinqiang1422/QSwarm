@@ -4,6 +4,53 @@
 
 #include <limits>
 
+namespace {
+
+double nodeDist(const SwarmTaskAllocator::Node &a, const SwarmTaskAllocator::Node &b)
+{
+    return qSqrt(qPow(a.x - b.x, 2) + qPow(a.y - b.y, 2));
+}
+
+// 拍卖法：机 i 对所有目标的最优/次优净价值(净价值 = -成本 - 价格)
+struct NetBid { int target = -1; double best = 0.0; double second = 0.0; };
+NetBid findBestNetValue(int i, const QList<QList<double>> &cost, const QList<double> &price, int n)
+{
+    NetBid r;
+    r.best   = -std::numeric_limits<double>::max();
+    r.second = -std::numeric_limits<double>::max();
+    for (int j = 0; j < n; j++) {
+        const double value = -cost.at(i).at(j) - price.at(j);
+        if (value > r.best) {
+            r.second = r.best;
+            r.best   = value;
+            r.target = j;
+        } else if (value > r.second) {
+            r.second = value;
+        }
+    }
+    return r;
+}
+
+// CBBA：机 i 能赢(负里程得分 > winBid[j])的最高得分任务;无则 task=-1
+struct WinTask { int task = -1; double score = 0.0; };
+WinTask bestWinnableTask(int i, const QList<SwarmTaskAllocator::Node> &V,
+                         const QList<SwarmTaskAllocator::Node> &T,
+                         const QList<double> &winBid, int nt)
+{
+    WinTask r;
+    r.score = -std::numeric_limits<double>::max();
+    for (int j = 0; j < nt; j++) {
+        const double s = -nodeDist(V.at(i), T.at(j));
+        if (s > winBid.at(j) && s > r.score) {
+            r.score = s;
+            r.task  = j;
+        }
+    }
+    return r;
+}
+
+}  // namespace
+
 QMap<int, int> SwarmTaskAllocator::sequentialAssign(const QList<Node> &vehicles,
                                                     const QList<Node> &targets) const
 {
@@ -24,14 +71,20 @@ QMap<int, int> SwarmTaskAllocator::auctionAssign(const QList<Node> &vehicles,
     if (n <= 0) {
         return out;
     }
+    if (vehicles.count() != targets.count()) {   // 契约要求对称；非对称时超出部分被忽略
+        qWarning("SwarmTaskAllocator::auctionAssign 机数(%d)≠目标数(%d)，仅分配前 %d 个",
+                 int(vehicles.count()), int(targets.count()), n);
+    }
+    if (n == 1) {   // 单目标短路：避免次优净价值缺失导致出价溢出为 inf
+        out.insert(vehicles.first().id, targets.first().id);
+        return out;
+    }
 
     // 成本矩阵（欧氏距离）
     QList<QList<double>> cost(n, QList<double>(n, 0.0));
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
-            const double dx = vehicles.at(i).x - targets.at(j).x;
-            const double dy = vehicles.at(i).y - targets.at(j).y;
-            cost[i][j] = qSqrt(dx * dx + dy * dy);
+            cost[i][j] = nodeDist(vehicles.at(i), targets.at(j));
         }
     }
 
@@ -49,34 +102,21 @@ QMap<int, int> SwarmTaskAllocator::auctionAssign(const QList<Node> &vehicles,
     const int maxRounds = 100000;
     while (!unassigned.isEmpty() && guard++ < maxRounds) {
         const int i = unassigned.takeFirst();
-
-        // 净价值 = -成本 - 价格；找最优与次优
-        double bestValue = -std::numeric_limits<double>::max();
-        double secondValue = -std::numeric_limits<double>::max();
-        int bestTarget = -1;
-        for (int j = 0; j < n; j++) {
-            const double value = -cost[i][j] - price[j];
-            if (value > bestValue) {
-                secondValue = bestValue;
-                bestValue   = value;
-                bestTarget  = j;
-            } else if (value > secondValue) {
-                secondValue = value;
-            }
-        }
-        if (bestTarget < 0) {
+        const NetBid b = findBestNetValue(i, cost, price, n);
+        if (b.target < 0) {
             break;
         }
-        // 出价 = 当前价格 + (最优 - 次优) + epsilon
-        const double bid = price[bestTarget] + (bestValue - secondValue) + epsilon;
-        price[bestTarget] = bid;
-        if (owner[bestTarget] >= 0) {
-            const int prev = owner[bestTarget];
-            assignment[prev] = -1;
-            unassigned.append(prev);    // 原得主重新竞争
+        price[b.target] = price[b.target] + (b.best - b.second) + epsilon;   // 出价
+        if (owner[b.target] >= 0) {
+            assignment[owner[b.target]] = -1;
+            unassigned.append(owner[b.target]);    // 原得主重新竞争
         }
-        owner[bestTarget] = i;
-        assignment[i] = bestTarget;
+        owner[b.target] = i;
+        assignment[i]   = b.target;
+    }
+    if (!unassigned.isEmpty()) {   // 达最大轮次仍未分配完 = 病态输入,返回部分分配
+        qWarning("SwarmTaskAllocator::auctionAssign 达最大轮次仍有 %d 机未分配（返回部分分配）",
+                 int(unassigned.count()));
     }
 
     for (int i = 0; i < n; i++) {
@@ -100,17 +140,14 @@ QMap<int, int> SwarmTaskAllocator::cbbaAssign(const QList<Node> &vehicles,
     if (na <= 0 || nt <= 0) {
         return out;
     }
+    if (na != nt) {   // 契约要求对称；一对一场景非对称时部分机/目标无法配对
+        qWarning("SwarmTaskAllocator::cbbaAssign 机数(%d)≠目标数(%d)", int(na), int(nt));
+    }
 
     const double kLarge = std::numeric_limits<double>::max();
     QList<double> winBid(nt, -kLarge);   // y:每任务当前最高投标(=负里程)
     QList<int>    winner(nt, -1);         // z:每任务当前赢家(机索引)
     QList<int>    assigned(na, -1);       // 每机赢得的任务索引(-1=无)
-
-    const auto score = [&](int i, int j) {
-        const double dx = vehicles.at(i).x - targets.at(j).x;
-        const double dy = vehicles.at(i).y - targets.at(j).y;
-        return -qSqrt(dx * dx + dy * dy);
-    };
 
     int guard = 0;
     const int maxIter = na * nt + na + 10;
@@ -121,28 +158,22 @@ QMap<int, int> SwarmTaskAllocator::cbbaAssign(const QList<Node> &vehicles,
             if (assigned[i] >= 0) {
                 continue;   // 已持有任务,不再投标(除非下轮被顶替释放)
             }
-            // bundle-building:选"能赢"(得分超过当前 winning-bid)的最高得分任务
-            int bestJ = -1;
-            double bestScore = -kLarge;
-            for (int j = 0; j < nt; j++) {
-                const double s = score(i, j);
-                if (s > winBid[j] && s > bestScore) {
-                    bestScore = s;
-                    bestJ = j;
-                }
-            }
-            if (bestJ < 0) {
+            const WinTask w = bestWinnableTask(i, vehicles, targets, winBid, nt);
+            if (w.task < 0) {
                 continue;
             }
             // consensus:更高投标顶替原赢家 → 原赢家释放该任务(下轮重投)
-            if (winner[bestJ] >= 0 && winner[bestJ] != i) {
-                assigned[winner[bestJ]] = -1;
+            if (winner[w.task] >= 0 && winner[w.task] != i) {
+                assigned[winner[w.task]] = -1;
             }
-            winBid[bestJ] = bestScore;
-            winner[bestJ] = i;
-            assigned[i]   = bestJ;
+            winBid[w.task] = w.score;
+            winner[w.task] = i;
+            assigned[i]    = w.task;
             changed = true;
         }
+    }
+    if (guard > maxIter) {   // guard 耗尽 = 未收敛,返回当前(可能次优/不完整)分配
+        qWarning("SwarmTaskAllocator::cbbaAssign 达最大迭代(%d)仍未收敛（返回当前分配）", int(maxIter));
     }
 
     for (int i = 0; i < na; i++) {
