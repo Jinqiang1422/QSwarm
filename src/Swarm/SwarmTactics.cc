@@ -67,6 +67,30 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
 // ============================================================================
 // 场景⑤ 拦截：碰撞三角预测（匀速直线目标）
 // ============================================================================
+double solveQuadraticEarliestPositive(double a, double b, double c)
+{
+    const double kEps = 1e-9;
+    if (std::abs(a) < kEps) {          // a≈0：退化为线性方程 b·t + c = 0
+        if (std::abs(b) < kEps) {
+            return -1.0;
+        }
+        const double t = -c / b;
+        return (t > 0.0) ? t : -1.0;
+    }
+    const double disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) {
+        return -1.0;                   // 无实根
+    }
+    const double sq = std::sqrt(disc);
+    double t = -1.0;
+    for (const double r : {(-b + sq) / (2.0 * a), (-b - sq) / (2.0 * a)}) {
+        if (r > 0.0 && (t < 0.0 || r < t)) {   // 取最小正根 = 最早拦截
+            t = r;
+        }
+    }
+    return t;
+}
+
 InterceptSolution intercept(double insLat, double insLon, double vMps,
                             const MovingTarget &tgt)
 {
@@ -87,28 +111,7 @@ InterceptSolution intercept(double insLat, double insLon, double vMps,
     const double b = 2.0 * (tE * vE + tN * vN);
     const double c = tE * tE + tN * tN;
 
-    double t = -1.0;
-    const double kEps = 1e-9;
-    if (std::abs(a) < kEps) {
-        // 双方速度相等：退化为线性方程
-        if (std::abs(b) > kEps) {
-            const double cand = -c / b;
-            if (cand > 0.0) {
-                t = cand;
-            }
-        }
-    } else {
-        const double disc = b * b - 4.0 * a * c;
-        if (disc >= 0.0) {
-            const double sq = std::sqrt(disc);
-            const double roots[2] = {(-b + sq) / (2.0 * a), (-b - sq) / (2.0 * a)};
-            for (const double cand : roots) {   // 取最小正根 = 最早拦截
-                if (cand > 0.0 && (t < 0.0 || cand < t)) {
-                    t = cand;
-                }
-            }
-        }
-    }
+    const double t = solveQuadraticEarliestPositive(a, b, c);
     if (t <= 0.0) {
         return sol;   // 追不上（速度不足或目标远离）
     }

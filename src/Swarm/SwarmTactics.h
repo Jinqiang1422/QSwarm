@@ -68,6 +68,10 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
                              double tgtLat, double tgtLon, double radiusM);
 
 // ---- 场景⑤ 拦截：碰撞三角预测 ----
+/// 解二次方程 a·t²+b·t+c=0，返回最小正实根;无正实根返回 -1（a≈0 时退化为线性方程）。
+/// 独立纯函数，供拦截碰撞三角求解，便于穷举边界验证。
+double solveQuadraticEarliestPositive(double a, double b, double c);
+
 /// 拦截机 (insLat,insLon) 以速度 vMps 拦截匀速直线目标 tgt，解碰撞三角求最早拦截点。
 /// 无正实根（速度不足追不上）时 feasible=false。
 InterceptSolution intercept(double insLat, double insLon, double vMps,
