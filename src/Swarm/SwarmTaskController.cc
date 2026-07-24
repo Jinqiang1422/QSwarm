@@ -180,6 +180,17 @@ void SwarmTaskController::_enterStage(int index)
         {QStringLiteral("action_count"), stage.actions.count()}
     });
 
+    // 推进前用实时机况重校验约束:运行中电量下降/机离线导致 error 则暂停(而非盲目下发)
+    if (_swarmManager->planHasConstraintError(stage.actions)) {
+        emit taskFeedback(tr("阶段 %1/%2「%3」推进受阻：实时约束校验发现 error（如电量不足），任务暂停")
+                              .arg(index + 1).arg(_stages.count()).arg(stage.name));
+        SwarmAuditLogger::instance()->logTaskEvent(QStringLiteral("stage_blocked_by_constraint"), {
+            {QStringLiteral("index"), index + 1}, {QStringLiteral("name"), stage.name}
+        });
+        _setStateText(tr("已暂停：阶段 %1 实时约束校验未通过").arg(index + 1));
+        return;
+    }
+
     // 执行本阶段动作（统一管线）
     _swarmManager->executeActions(stage.actions, QStringLiteral("task"));
 

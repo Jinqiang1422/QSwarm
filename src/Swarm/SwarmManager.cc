@@ -295,6 +295,15 @@ QVariantList SwarmManager::checkConstraints(const QList<SwarmAction> &plan, doub
     return out;
 }
 
+bool SwarmManager::planHasConstraintError(const QList<SwarmAction> &actions) const
+{
+    // 用实时机况重校验:电量/规模类约束不依赖坐标,坐标类约束在任务创建时已校验且
+    // 不随运行变化,故 mapCenter 传 0(主要抓运行中电量下降/机离线导致的 error)。
+    SwarmConstraintChecker checker;
+    const auto violations = checker.check(actions, _vehicleStates(), _constraintConfig(), 0.0, 0.0);
+    return SwarmConstraintChecker::hasError(violations);
+}
+
 QVariantMap SwarmManager::estimatePlan(const QList<SwarmAction> &plan, double mapLat, double mapLon)
 {
     SwarmRehearsalEstimator estimator;
@@ -763,6 +772,19 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
 // ---------------------------------------------------------------------------
 void SwarmManager::executeActions(const QList<SwarmAction> &actions, const QString &origin)
 {
+    // 纵深防御兜底闸门:任何入口(含 task 状态机自动推进)在 L1 档位一律拒绝下发,
+    // 防止运行中降级自主等级或新增入口绕过前置 autonomy 闸门。
+    QString gateReason;
+    if (aiExecutionBlocked(&gateReason)) {
+        emit swarmCommandFeedback(tr("下发被安全闸门拦截：%1（来源 %2）").arg(gateReason, origin));
+        SwarmAuditLogger::instance()->log(QStringLiteral("safety"), QStringLiteral("execution_gate_blocked"), {
+            {QStringLiteral("reason"),  gateReason},
+            {QStringLiteral("origin"),  origin},
+            {QStringLiteral("actions"), actions.count()}
+        });
+        return;
+    }
+
     MultiVehicleManager *mvm = MultiVehicleManager::instance();
 
     SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("action_sequence"), {

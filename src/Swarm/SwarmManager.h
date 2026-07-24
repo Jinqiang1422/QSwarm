@@ -150,6 +150,8 @@ public:
 
     /// 约束校验：返回违例项列表（QVariantList of {severity, rule, message, suggestion}），并写审计
     QVariantList checkConstraints(const QList<SwarmAction> &plan, double mapLat, double mapLon);
+    /// 用实时机况重校验计划是否含 error 级约束违例(供状态机推进前的重校验)
+    bool planHasConstraintError(const QList<SwarmAction> &actions) const;
 
     /// 解析式仿真预演：估算 {duration_min, distance_km, battery_margin_pct, summary, notes}
     QVariantMap estimatePlan(const QList<SwarmAction> &plan, double mapLat, double mapLon);
