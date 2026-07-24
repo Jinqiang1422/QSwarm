@@ -39,8 +39,6 @@ QString SwarmInputFilter::_sanitize(const QString &text) const
 
 SwarmInputFilter::Verdict SwarmInputFilter::check(const QString &text, const QString &source) const
 {
-    Q_UNUSED(source);
-
     struct Pattern {
         QRegularExpression re;
         QString            desc;
@@ -107,6 +105,7 @@ SwarmInputFilter::Verdict SwarmInputFilter::check(const QString &text, const QSt
     };
 
     Verdict verdict;
+    verdict.source    = source;   // 语义标注,供审计溯源
     verdict.sanitized = _sanitize(text);
 
     for (const Pattern &pattern : patterns) {

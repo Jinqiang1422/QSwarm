@@ -11,6 +11,10 @@
  * 适用对象：外部信息（目标上报文本、第三方数据等，P3 感知接入后为主）与
  * 操作员输入（操作员可信但仍记录可疑模式，防误粘贴注入载荷）。
  *
+ * 定位：本模块是纵深防御的第一道（基于正则黑名单的模式识别），无法穷尽注入变体
+ * （同义改写可绕过），须与统一校验闸门（SwarmConstraintChecker）、自主分级
+ * （SwarmAutonomy）并用，不可作为唯一安全防线。
+ *
  * 仅依赖 QtCore，可脱离 QGC 独立单元测试（tests/cpp）。
  *
  ****************************************************************************/
@@ -31,6 +35,7 @@ public:
         QStringList matched;                            ///< 命中的模式描述
         QString     sanitized;                          ///< 清洗后的文本
         int         score = 0;                          ///< 累计权重分
+        QString     source;                             ///< 输入来源语义标注(operator/telemetry/external),供审计溯源
     };
 
     static SwarmInputFilter *instance();
