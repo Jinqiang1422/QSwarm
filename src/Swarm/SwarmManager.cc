@@ -22,6 +22,8 @@
 #include "QmlObjectListModel.h"
 #include "QGCApplication.h"
 
+#include <cmath>
+
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -718,7 +720,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
                 QVariantList poly;
                 for (const QJsonValue &pt : obj.value(QStringLiteral("polygon")).toArray()) {
                     const QJsonArray a = pt.toArray();
-                    if (a.count() >= 2) {
+                    if (a.count() >= 2 && SwarmTypes::isValidLatLon(a.at(0).toDouble(), a.at(1).toDouble())) {
                         poly.append(QVariant(QVariantList{a.at(0).toDouble(), a.at(1).toDouble()}));
                     }
                 }
@@ -731,15 +733,16 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray &actionsJson,
             } else {
                 const double tLat = obj.value(QStringLiteral("target_lat")).toDouble();
                 const double tLon = obj.value(QStringLiteral("target_lon")).toDouble();
-                if (qAbs(tLat) < 1e-9 && qAbs(tLon) < 1e-9) {
-                    warnings.append(tr("战术场景「%1」缺目标坐标，已忽略").arg(scenario));
+                if (!SwarmTypes::isValidLatLon(tLat, tLon)) {   // 拦截 LLM 幻觉/缺失坐标
+                    warnings.append(tr("战术场景「%1」目标坐标非法或缺失，已忽略").arg(scenario));
                     continue;
                 }
                 action.params[QStringLiteral("target_lat")] = tLat;
                 action.params[QStringLiteral("target_lon")] = tLon;
                 if (scenario == QStringLiteral("intercept")) {
-                    action.params[QStringLiteral("target_speed")]    = obj.value(QStringLiteral("target_speed")).toDouble(0.0);
-                    action.params[QStringLiteral("target_heading")]  = obj.value(QStringLiteral("target_heading")).toDouble(0.0);
+                    action.params[QStringLiteral("target_speed")]    = qBound(0.0, obj.value(QStringLiteral("target_speed")).toDouble(0.0), 340.0);
+                    const double hdg = std::fmod(obj.value(QStringLiteral("target_heading")).toDouble(0.0), 360.0);
+                    action.params[QStringLiteral("target_heading")]  = (hdg < 0.0) ? hdg + 360.0 : hdg;
                     action.params[QStringLiteral("intercept_speed")] = qBound(1.0, obj.value(QStringLiteral("intercept_speed")).toDouble(20.0), 100.0);
                     action.description = tr("拦截规划：预测碰撞拦截点");
                 } else {
@@ -861,12 +864,17 @@ void SwarmManager::_executeTactic(const QVariantMap &p)
                                       .arg(pts.join(QStringLiteral("、")))
                                       .arg(asg.count() > 3 ? tr(" 等") : QString()));
     } else if (scenario == QStringLiteral("intercept")) {
-        const SwarmTypes::VehicleState &ins = states.first();   // 首架为拦截机
         SwarmTactics::MovingTarget tgt;
         tgt.lat        = p.value(QStringLiteral("target_lat")).toDouble();
         tgt.lon        = p.value(QStringLiteral("target_lon")).toDouble();
         tgt.speedMps   = p.value(QStringLiteral("target_speed")).toDouble();
         tgt.headingDeg = p.value(QStringLiteral("target_heading")).toDouble();
+        const int insId = SwarmTactics::pickInterceptor(states, tgt.lat, tgt.lon);   // 选距目标最近机
+        const SwarmTypes::VehicleState *insPtr = nullptr;
+        for (const SwarmTypes::VehicleState &vs : states) {
+            if (vs.id == insId) { insPtr = &vs; break; }
+        }
+        const SwarmTypes::VehicleState &ins = insPtr ? *insPtr : states.first();
         const double v = p.value(QStringLiteral("intercept_speed")).toDouble();
         const SwarmTactics::InterceptSolution sol = SwarmTactics::intercept(ins.lat, ins.lon, v, tgt);
         if (sol.feasible) {
