@@ -851,8 +851,15 @@ void SwarmManager::_executeTactic(const QVariantMap &p)
         const QMap<int, SwarmTactics::GeoPoint> asg = SwarmTactics::encircle(
             states, p.value(QStringLiteral("target_lat")).toDouble(),
             p.value(QStringLiteral("target_lon")).toDouble(), R);
-        emit swarmCommandFeedback(tr("包围规划：%1 机在半径 %2 米环上就近分配合围点")
-                                      .arg(asg.count()).arg(R, 0, 'f', 0));
+        QStringList pts;   // 回传实际合围点坐标(前若干个),让方案可见而非只报计数
+        for (auto it = asg.constBegin(); it != asg.constEnd() && pts.size() < 3; ++it) {
+            pts.append(tr("%1号→(%2, %3)").arg(it.key())
+                           .arg(it.value().lat, 0, 'f', 6).arg(it.value().lon, 0, 'f', 6));
+        }
+        emit swarmCommandFeedback(tr("包围规划：%1 机在半径 %2 米环上就近分配合围点；%3%4")
+                                      .arg(asg.count()).arg(R, 0, 'f', 0)
+                                      .arg(pts.join(QStringLiteral("、")))
+                                      .arg(asg.count() > 3 ? tr(" 等") : QString()));
     } else if (scenario == QStringLiteral("intercept")) {
         const SwarmTypes::VehicleState &ins = states.first();   // 首架为拦截机
         SwarmTactics::MovingTarget tgt;
@@ -880,11 +887,18 @@ void SwarmManager::_executeTactic(const QVariantMap &p)
         }
         const QMap<int, QList<SwarmTactics::GeoPoint>> plan = SwarmTactics::partitionPatrol(states, poly);
         int totalPts = 0;
+        QStringList segs;   // 回传各机巡逻段的起点坐标(前若干个)
         for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
             totalPts += it.value().count();
+            if (segs.size() < 3 && !it.value().isEmpty()) {
+                segs.append(tr("%1号守%2点自(%3, %4)").arg(it.key()).arg(it.value().count())
+                                .arg(it.value().first().lat, 0, 'f', 6)
+                                .arg(it.value().first().lon, 0, 'f', 6));
+            }
         }
-        emit swarmCommandFeedback(tr("巡逻规划：%1 机沿 %2 边周界均分为共 %3 个巡逻点")
-                                      .arg(plan.count()).arg(poly.count()).arg(totalPts));
+        emit swarmCommandFeedback(tr("巡逻规划：%1 机沿 %2 边周界均分共 %3 巡逻点；%4")
+                                      .arg(plan.count()).arg(poly.count()).arg(totalPts)
+                                      .arg(segs.join(QStringLiteral("、"))));
     }
 }
 
