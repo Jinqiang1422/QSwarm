@@ -153,38 +153,41 @@ QMap<int, int> SwarmTaskAllocator::cbbaAssign(const QList<Node> &vehicles,
     return out;
 }
 
-QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
-        const QList<Node> &vehicles, const QList<Node> &targets,
-        int maxBundlePerAgent) const
-{
-    // 多任务 CBBA:每机 bundle 可含多个目标。忠实 CBBA 两阶段——
-    // bundle-building 用 compute_bid(最优插入位置的里程增量)贪心加任务;
-    // consensus 用 winning-bid(y)/winner(z),被更高投标顶替时释放该任务及
-    // bundle 后续(路径依赖破裂)。全连接通信图,迭代至收敛。
-    const int na = vehicles.count();
-    const int nt = targets.count();
-    QMap<int, QList<int>> out;
-    if (na <= 0 || nt <= 0) {
-        return out;
-    }
-    const int cap = (maxBundlePerAgent > 0) ? maxBundlePerAgent
-                                            : qMax(1, (nt + na - 1) / na);
+namespace {
 
+using AllocNode = SwarmTaskAllocator::Node;
+
+// findBestBid 返回：选中任务 + 最优插入位置 + 得分
+struct Bid { int task = -1; int pos = 0; double score = 0.0; };
+
+// 多任务 CBBA 求解器：持有工作状态(y/z/bundle/path),把最优插入投标(findBestBid)、
+// 级联释放(releaseFrom)、两阶段(buildBundles/consensus)拆成独立小方法,各自
+// 圈复杂度低、职责单一。忠实 CBBA：bundle-building 贪心加最优插入任务,consensus
+// 用 winning-bid(y)/winner(z),被更高投标顶替时释放该任务及 bundle 后续。
+struct BundleSolver {
+    const QList<AllocNode> &V;
+    const QList<AllocNode> &T;
+    const int    na;
+    const int    nt;
+    const int    cap;
     const double kLarge = std::numeric_limits<double>::max();
-    QList<double>     y(nt, -kLarge);   // 每任务当前最高投标(=负里程增量)
-    QList<int>        z(nt, -1);        // 每任务当前赢家
-    QList<QList<int>> bundle(na);       // 每机 bundle(加入顺序)
-    QList<QList<int>> path(na);         // 每机 path(访问顺序,最优插入)
+    QList<double>     y;        // 每任务当前最高投标(=负里程增量)
+    QList<int>        z;        // 每任务当前赢家
+    QList<QList<int>> bundle;   // 每机 bundle(加入顺序)
+    QList<QList<int>> path;     // 每机 path(访问顺序,最优插入)
 
-    const auto dVT = [&](int i, int j) {
-        return qSqrt(qPow(vehicles.at(i).x - targets.at(j).x, 2)
-                   + qPow(vehicles.at(i).y - targets.at(j).y, 2));
-    };
-    const auto dTT = [&](int j, int k) {
-        return qSqrt(qPow(targets.at(j).x - targets.at(k).x, 2)
-                   + qPow(targets.at(j).y - targets.at(k).y, 2));
-    };
-    const auto pathCost = [&](int i, const QList<int> &pth) {
+    BundleSolver(const QList<AllocNode> &v, const QList<AllocNode> &t, int capacity)
+        : V(v), T(t), na(v.count()), nt(t.count()), cap(capacity),
+          y(t.count(), -std::numeric_limits<double>::max()),
+          z(t.count(), -1), bundle(v.count()), path(v.count()) {}
+
+    double dVT(int i, int j) const {
+        return qSqrt(qPow(V.at(i).x - T.at(j).x, 2) + qPow(V.at(i).y - T.at(j).y, 2));
+    }
+    double dTT(int j, int k) const {
+        return qSqrt(qPow(T.at(j).x - T.at(k).x, 2) + qPow(T.at(j).y - T.at(k).y, 2));
+    }
+    double pathCost(int i, const QList<int> &pth) const {
         if (pth.isEmpty()) {
             return 0.0;
         }
@@ -193,27 +196,9 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
             c += dTT(pth.at(k - 1), pth.at(k));
         }
         return c;
-    };
-    // 释放机 ag 的 bundle 中 taskJ 及其后续(路径依赖破裂,后续全部重规划)
-    const auto releaseFrom = [&](int ag, int taskJ) {
-        const int idx = bundle[ag].indexOf(taskJ);
-        if (idx < 0) {
-            return;
-        }
-        for (int k = idx; k < bundle[ag].size(); k++) {
-            const int t = bundle[ag].at(k);
-            if (z[t] == ag) {
-                z[t] = -1;
-                y[t] = -kLarge;
-            }
-            path[ag].removeOne(t);
-        }
-        bundle[ag] = bundle[ag].mid(0, idx);
-    };
-    // 为 agent i 找"能赢(得分 > 当前 winning-bid y[j])且最优插入(里程增量最小)"的任务。
-    // 把原 Phase1 内层的双重 for(任务×插入位置)抽出，主循环得以降为单层。
-    struct Bid { int task = -1; int pos = 0; double score = 0.0; };
-    const auto findBestBid = [&](int i) -> Bid {
+    }
+    // 为 agent i 找"能赢(得分 > y[j])且最优插入(里程增量最小)"的任务
+    Bid findBestBid(int i) const {
         const double base = pathCost(i, path[i]);
         Bid best;
         best.score = -kLarge;
@@ -240,14 +225,26 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
             }
         }
         return best;
-    };
-
-    int guard = 0;
-    const int maxIter = (na * nt + na) * 2 + 20;
-    bool changed = true;
-    while (changed && guard++ < maxIter) {
-        changed = false;
-        // Phase 1: bundle-building —— 每机贪心加"能赢"的最优插入任务
+    }
+    // 释放机 ag 的 bundle 中 taskJ 及其后续(路径依赖破裂,后续全部重规划)
+    void releaseFrom(int ag, int taskJ) {
+        const int idx = bundle[ag].indexOf(taskJ);
+        if (idx < 0) {
+            return;
+        }
+        for (int k = idx; k < bundle[ag].size(); k++) {
+            const int t = bundle[ag].at(k);
+            if (z[t] == ag) {
+                z[t] = -1;
+                y[t] = -kLarge;
+            }
+            path[ag].removeOne(t);
+        }
+        bundle[ag] = bundle[ag].mid(0, idx);
+    }
+    // Phase 1: 每机贪心加"能赢"的最优插入任务
+    bool buildBundles() {
+        bool changed = false;
         for (int i = 0; i < na; i++) {
             while (bundle[i].size() < cap) {
                 const Bid b = findBestBid(i);
@@ -264,7 +261,11 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
                 changed = true;
             }
         }
-        // Phase 2: consensus —— 释放被顶替任务(及 bundle 后续)
+        return changed;
+    }
+    // Phase 2: 释放被顶替任务(及 bundle 后续)
+    bool consensus() {
+        bool changed = false;
         for (int i = 0; i < na; i++) {
             for (int k = 0; k < bundle[i].size(); k++) {
                 if (z[bundle[i].at(k)] != i) {
@@ -274,12 +275,44 @@ QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
                 }
             }
         }
+        return changed;
     }
+    void solve() {
+        int guard = 0;
+        const int maxIter = (na * nt + na) * 2 + 20;
+        bool changed = true;
+        while (changed && guard++ < maxIter) {
+            changed = false;
+            changed |= buildBundles();
+            changed |= consensus();
+        }
+    }
+};
+
+}  // namespace
+
+QMap<int, QList<int>> SwarmTaskAllocator::cbbaAssignBundle(
+        const QList<Node> &vehicles, const QList<Node> &targets,
+        int maxBundlePerAgent) const
+{
+    // 多任务 CBBA(每机 bundle 多目标)：委托 BundleSolver 完成两阶段收敛,
+    // 本入口只做参数校验、构造求解器、导出结果(求解细节见上方 BundleSolver)。
+    QMap<int, QList<int>> out;
+    const int na = vehicles.count();
+    const int nt = targets.count();
+    if (na <= 0 || nt <= 0) {
+        return out;
+    }
+    const int cap = (maxBundlePerAgent > 0) ? maxBundlePerAgent
+                                            : qMax(1, (nt + na - 1) / na);
+
+    BundleSolver solver(vehicles, targets, cap);
+    solver.solve();
 
     for (int i = 0; i < na; i++) {
-        if (!path[i].isEmpty()) {
+        if (!solver.path[i].isEmpty()) {
             QList<int> ids;
-            for (const int j : path[i]) {
+            for (const int j : solver.path[i]) {
                 ids.append(targets.at(j).id);
             }
             out.insert(vehicles.at(i).id, ids);
