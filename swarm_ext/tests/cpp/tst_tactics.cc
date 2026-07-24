@@ -8,6 +8,7 @@
 
 #include "SwarmTactics.h"
 #include "SwarmTypes.h"
+#include "SwarmTaskAllocator.h"
 
 #include <cmath>
 
@@ -55,6 +56,19 @@ private slots:
     void patrol_partitionsPerimeter();
     void patrol_pointsWithinBounds();
     void patrol_degenerate();
+
+    // ---- D5 补强:纯函数 / 边界 / 健壮性 ----
+    void solveQuadratic_twoRootsEarliest();
+    void solveQuadratic_linearDegenerate();
+    void solveQuadratic_noRealRoot();
+    void solveQuadratic_negativeRootsRejected();
+    void intercept_equalSpeedLinear();
+    void encircle_singleVehicle();
+    void encircle_assignmentBijective();
+    void search_assignmentBijective();
+    void patrol_segmentsContiguous();
+    void patrol_fewerSamplesThanVehicles();
+    void allocator_cbbaNoWorseThanSequential();
 };
 
 // ============================================================================
@@ -311,6 +325,140 @@ void TstTactics::patrol_degenerate()
     QVERIFY(partitionPatrol({}, poly, 12).isEmpty());                       // 无机
     const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.9, 116.4)};
     QVERIFY(partitionPatrol(v, {{39.9, 116.4}}, 12).isEmpty());             // 顶点 < 2
+}
+
+// ============================================================================
+// D5 补强:solveQuadratic 纯函数穷举
+// ============================================================================
+void TstTactics::solveQuadratic_twoRootsEarliest()
+{
+    // (t-2)(t-5)=t²-7t+10 → 根 2、5,取最早正根 2
+    QVERIFY(std::abs(solveQuadraticEarliestPositive(1.0, -7.0, 10.0) - 2.0) < 1e-9);
+}
+void TstTactics::solveQuadratic_linearDegenerate()
+{
+    QVERIFY(std::abs(solveQuadraticEarliestPositive(0.0, 2.0, -10.0) - 5.0) < 1e-9); // 2t-10=0→5
+    QCOMPARE(solveQuadraticEarliestPositive(0.0, 0.0, 3.0), -1.0);                    // a=b=0 无解
+}
+void TstTactics::solveQuadratic_noRealRoot()
+{
+    QCOMPARE(solveQuadraticEarliestPositive(1.0, 0.0, 1.0), -1.0);   // t²+1=0 判别式<0
+}
+void TstTactics::solveQuadratic_negativeRootsRejected()
+{
+    QCOMPARE(solveQuadraticEarliestPositive(1.0, 7.0, 10.0), -1.0);  // 根 -2、-5 全负
+}
+
+// ============================================================================
+// D5 补强:intercept 等速线性分支
+// ============================================================================
+void TstTactics::intercept_equalSpeedLinear()
+{
+    // 目标正东 1000m 以 10m/s 迎面向西飞来,拦截机 10m/s(等速→a≈0 线性分支)
+    double tLat, tLon;
+    SwarmTypes::destinationPoint(39.9, 116.4, 90.0, 1000.0, tLat, tLon);
+    MovingTarget tgt; tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 10.0; tgt.headingDeg = 270.0;
+    const InterceptSolution s = intercept(39.9, 116.4, 10.0, tgt);
+    QVERIFY2(s.feasible, "等速迎面目标应可拦截(线性分支)");
+    QVERIFY2(std::abs(s.timeS - 50.0) < 1.0, "迎面等速相遇 t≈dist/(v+vt)=50s");
+}
+
+// ============================================================================
+// D5 补强:encircle 单机 / 双射(验证 B3 无冲突)
+// ============================================================================
+void TstTactics::encircle_singleVehicle()
+{
+    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, 39.905, 116.4) };
+    const QMap<int, GeoPoint> asg = encircle(v, 39.9, 116.4, 100.0);
+    QCOMPARE(asg.size(), 1);
+    QVERIFY(std::abs(SwarmTypes::haversineM(39.9, 116.4, asg[1].lat, asg[1].lon) - 100.0) < 1.0);
+}
+void TstTactics::encircle_assignmentBijective()
+{
+    QList<SwarmTypes::VehicleState> v;
+    for (int i = 0; i < 8; i++) {
+        double la, lo;
+        SwarmTypes::destinationPoint(39.9, 116.4, i * 45.0, 300.0, la, lo);
+        v.append(mkVehicle(i + 1, la, lo));
+    }
+    const QMap<int, GeoPoint> asg = encircle(v, 39.9, 116.4, 100.0);
+    QCOMPARE(asg.size(), 8);
+    QList<GeoPoint> pts;                                    // 8 个分配点两两不同 = 双射
+    for (auto it = asg.constBegin(); it != asg.constEnd(); ++it) {
+        for (const GeoPoint &p : pts) {
+            QVERIFY2(SwarmTypes::haversineM(p.lat, p.lon, it.value().lat, it.value().lon) > 1.0,
+                     "各机应分到唯一包围点(B3 无冲突)");
+        }
+        pts.append(it.value());
+    }
+}
+void TstTactics::search_assignmentBijective()
+{
+    // 5 机全在区域中心(退化几何,拍卖易冲突)——B3 应补成唯一条带分配
+    QList<SwarmTypes::VehicleState> v;
+    for (int i = 0; i < 5; i++) v.append(mkVehicle(i + 1, 39.9, 116.4));
+    const QList<SearchLane> lanes = partitionSearch(v, 39.9, 116.4, 1000.0, 500.0, 0.0);
+    QCOMPARE(lanes.size(), 5);
+    for (int i = 0; i < lanes.size(); i++) {
+        for (int j = i + 1; j < lanes.size(); j++) {
+            QVERIFY2(SwarmTypes::haversineM(lanes[i].center.lat, lanes[i].center.lon,
+                                            lanes[j].center.lat, lanes[j].center.lon) > 1.0,
+                     "退化几何下各机仍应分到唯一条带(B3 无冲突)");
+        }
+    }
+}
+
+// ============================================================================
+// D5 补强:patrol 段连续性 / M<n(抓 off-by-one 与静默空段)
+// ============================================================================
+void TstTactics::patrol_segmentsContiguous()
+{
+    const QList<QPair<double, double>> poly{
+        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
+    };
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
+    };
+    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 16);
+    int total = 0;
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) total += it.value().size();
+    QCOMPARE(total, 16);
+    // 机1段末点 与 机2段首点 应弧长连续衔接(间距 ≈ 单采样步长)
+    const double perim = 2.0 * (SwarmTypes::haversineM(39.90, 116.40, 39.90, 116.41)
+                              + SwarmTypes::haversineM(39.90, 116.41, 39.91, 116.41));
+    const double step = perim / 16.0;
+    const GeoPoint a = plan[1].last(), b = plan[2].first();
+    QVERIFY2(SwarmTypes::haversineM(a.lat, a.lon, b.lat, b.lon) < step * 2.0,
+             "相邻机段应弧长连续衔接(抓 off-by-one)");
+}
+void TstTactics::patrol_fewerSamplesThanVehicles()
+{
+    const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}};
+    const QList<SwarmTypes::VehicleState> v{
+        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
+    };
+    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 2);   // M=2 < n=4
+    QCOMPARE(plan.size(), 4);
+    int nonEmpty = 0;
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) if (!it.value().isEmpty()) nonEmpty++;
+    QCOMPARE(nonEmpty, 2);    // 记录当前行为:仅 2 机有点,不崩溃
+}
+
+// ============================================================================
+// D5 补强:CBBA 最优性(抓逻辑反转变异)
+// ============================================================================
+void TstTactics::allocator_cbbaNoWorseThanSequential()
+{
+    // 反转场景:机与目标序相反,CBBA 应显著优于顺序基线
+    SwarmTaskAllocator alloc;
+    const QList<SwarmTaskAllocator::Node> V{{1, 0, 0}, {2, 0, 100}, {3, 0, 200}};
+    const QList<SwarmTaskAllocator::Node> T{{10, 0, 200}, {20, 0, 100}, {30, 0, 0}};
+    const QVariantMap cmp = alloc.compare(V, T);
+    const double seq  = cmp.value(QStringLiteral("seq_total_m")).toDouble();
+    const double cbba = cmp.value(QStringLiteral("cbba_total_m")).toDouble();
+    QVERIFY2(cbba <= seq + 1e-6, "CBBA 总里程应不劣于顺序基线");
 }
 
 QTEST_GUILESS_MAIN(TstTactics)
