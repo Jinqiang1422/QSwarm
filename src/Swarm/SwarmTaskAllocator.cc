@@ -1,6 +1,7 @@
 #include "SwarmTaskAllocator.h"
 
 #include <QtCore/QtMath>
+#include <QtCore/QHash>
 
 #include <limits>
 
@@ -357,16 +358,19 @@ double SwarmTaskAllocator::assignmentCost(const QMap<int, int> &assignment,
                                           const QList<Node> &targets,
                                           double &maxCost)
 {
+    QHash<int, const Node *> vById, tById;   // 预索引消除按 id 的 O(n²) 线性查找
+    for (const Node &node : vehicles) { vById.insert(node.id, &node); }
+    for (const Node &node : targets)  { tById.insert(node.id, &node); }
+
     double total = 0.0;
     maxCost = 0.0;
     for (auto it = assignment.constBegin(); it != assignment.constEnd(); ++it) {
-        const Node *v = nullptr, *t = nullptr;
-        for (const Node &node : vehicles) { if (node.id == it.key())   { v = &node; break; } }
-        for (const Node &node : targets)  { if (node.id == it.value()) { t = &node; break; } }
+        const Node *v = vById.value(it.key(), nullptr);
+        const Node *t = tById.value(it.value(), nullptr);
         if (!v || !t) {
             continue;
         }
-        const double d = qSqrt(qPow(v->x - t->x, 2) + qPow(v->y - t->y, 2));
+        const double d = nodeDist(*v, *t);
         total += d;
         maxCost = qMax(maxCost, d);
     }
