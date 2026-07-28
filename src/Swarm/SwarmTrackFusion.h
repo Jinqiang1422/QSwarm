@@ -59,6 +59,7 @@ public:
         double dropMs         = 10000;  ///< 超过则删除
         int    minHits        = 2;      ///< tentative→confirmed 所需命中
         double speedDamp      = 0.4;    ///< 速度融合阻尼（防瞬时跳变）
+        double minConfidence  = 0.2;    ///< 感知输入置信度门槛（低于则丢弃）
     };
 
     SwarmTrackFusion();
@@ -79,6 +80,9 @@ public:
     /// 含 tentative 的全量（诊断/测试用）
     QList<FusedTrack> allTracks() const { return _tracks; }
 
+    /// 因坐标非法/置信度不足被感知校验闸门丢弃的航迹累计数（供审计/诊断）
+    int rejectedCount() const { return _rejectedCount; }
+
     /// 类别名（与 mavlink/swarm_perception.xml 对齐）
     static QString categoryName(int category);
 
@@ -91,4 +95,5 @@ private:
     double              _refLat = 0.0, _refLon = 0.0;
     bool                _refSet = false;
     int                 _nextFusedId = 1;
+    int                 _rejectedCount = 0;
 };

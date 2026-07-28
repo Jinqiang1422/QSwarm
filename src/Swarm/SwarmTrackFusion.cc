@@ -72,6 +72,12 @@ void SwarmTrackFusion::_localToGeo(double eastM, double northM, double &lat, dou
 
 int SwarmTrackFusion::ingest(const TrackReport &r, qint64 monoMs)
 {
+    // 感知输入校验闸门(纵深防御):丢弃非法坐标/低置信航迹,防伪造或污染的外部
+    // 航迹进入融合 → COP → LLM 态势解读(与指挥侧输入闸门对称);须在设参考点前拦截。
+    if (!SwarmTypes::isValidLatLon(r.lat, r.lon) || r.confidence < _cfg.minConfidence) {
+        _rejectedCount++;
+        return -1;
+    }
     if (!_refSet) {
         setReference(r.lat, r.lon);
     }
