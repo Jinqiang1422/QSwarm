@@ -36,6 +36,8 @@ private slots:
     void fusion_crossSensorMerge();
     void fusion_separateTargets();
     void fusion_lifecycle();
+    void fusion_rejectsInvalidLatLon();
+    void fusion_dropsLowConfidence();
     void videoHub_pixelToGeo();
     void videoHub_timestamp();
     void event_batteryOffline();
@@ -230,6 +232,26 @@ void tst_p3modules::bridge_wireDecode()
     // 丢首帧的孤立尾帧：容错按单帧尝试，本例应解析失败返回空
     SwarmTunnel::Reassembly rx3;
     QVERIFY(SwarmTunnel::parseDatagram(dg2, rx3).isEmpty());
+}
+
+// 感知输入校验闸门(第七轮):非法坐标/低置信航迹应被丢弃,防污染态势与 LLM
+void tst_p3modules::fusion_rejectsInvalidLatLon()
+{
+    SwarmTrackFusion fusion;
+    fusion.ingest(makeReport(1, 1, 999.0, 116.4), 1000);   // lat 非法
+    fusion.ingest(makeReport(2, 1, 39.9, 999.0), 1000);    // lon 非法
+    QVERIFY2(fusion.allTracks().isEmpty(), "非法坐标航迹应被感知校验闸门丢弃");
+    QCOMPARE(fusion.rejectedCount(), 2);
+}
+
+void tst_p3modules::fusion_dropsLowConfidence()
+{
+    SwarmTrackFusion fusion;
+    fusion.ingest(makeReport(1, 1, 39.9, 116.4, 0.0, 0.0, 0.05), 1000);   // conf 0.05 < 门槛 0.2
+    QVERIFY2(fusion.allTracks().isEmpty(), "低置信度航迹应被门槛过滤");
+    QCOMPARE(fusion.rejectedCount(), 1);
+    fusion.ingest(makeReport(2, 1, 39.9, 116.4, 0.0, 0.0, 0.8), 1100);    // 门槛之上放行
+    QCOMPARE(fusion.allTracks().count(), 1);
 }
 
 QTEST_GUILESS_MAIN(tst_p3modules)

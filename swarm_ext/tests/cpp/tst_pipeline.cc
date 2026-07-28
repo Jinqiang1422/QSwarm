@@ -12,6 +12,7 @@
 #include "SwarmAutonomy.h"
 #include "SwarmAction.h"
 #include "SwarmTypes.h"
+#include "SwarmTrackFusion.h"
 
 class TstPipeline : public QObject
 {
@@ -23,6 +24,7 @@ private slots:
     void l1_blocksExecution();
     void cleanPlan_passesAllGates();
     void batteryLow_flaggedForTaskRecheck();
+    void perceptionFlowsToDigest();
 };
 
 // 第一道:注入文本应在输入闸门被拦(不进入 LLM 与下发)
@@ -85,6 +87,24 @@ void TstPipeline::batteryLow_flaggedForTaskRecheck()
     lowBatt.append(v);
     QVERIFY2(SwarmConstraintChecker::hasError(chk.check({cov}, lowBatt, cfg, 39.9, 116.4)),
              "大区 + 5% 电量应产生 battery error,task 推进应据此暂停");
+}
+
+// 感知侧端到端契约:伪造航迹被感知闸门拦,合法航迹贯通到融合清单(COP/digest 的输入)
+void TstPipeline::perceptionFlowsToDigest()
+{
+    SwarmTrackFusion fusion;
+    SwarmTrackFusion::TrackReport bad;
+    bad.trackId = 1; bad.lat = 999.0; bad.lon = 116.4; bad.confidence = 0.9;   // 伪造坐标
+    fusion.ingest(bad, 1000);
+    QVERIFY2(fusion.allTracks().isEmpty(), "伪造坐标应被感知闸门拦,不进态势");
+    QCOMPARE(fusion.rejectedCount(), 1);
+
+    SwarmTrackFusion::TrackReport ok;
+    ok.trackId = 2; ok.sensorId = 1; ok.category = 1;
+    ok.lat = 39.9; ok.lon = 116.4; ok.confidence = 0.8;
+    fusion.ingest(ok, 1000);
+    fusion.ingest(ok, 1100);   // 命中 2 次 → confirmed,进 tracks()
+    QCOMPARE(fusion.tracks().count(), 1);   // 合法航迹贯通到融合清单(下游 COP/digest 的输入)
 }
 
 QTEST_GUILESS_MAIN(TstPipeline)
