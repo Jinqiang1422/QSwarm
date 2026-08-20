@@ -7,7 +7,7 @@ private slots:
     void flightModeOverrideReleases();
     void expiresAfterTtl();
     void perVehicleIndependent();
-    void operatorModeClassification();
+    void autonomousModeClassification();
     void manualOverrideRecovers();
 };
 
@@ -22,7 +22,7 @@ void TstLease::grantsAndAutomates() {
 void TstLease::flightModeOverrideReleases() {
     SwarmControlLease l;
     l.requestLease(1, "t1", "alice", 1000);
-    l.onFlightModeChanged(1, "Position");                   // 操作员手动直控 → 接管
+    l.setManualOverride(1, true);                           // 操作员手动直控 → 接管
     QCOMPARE(l.stateOf(1), SwarmControlLease::MANUAL_OVERRIDE);
     QVERIFY(!l.canAutomate(1, 1000));
 }
@@ -38,19 +38,23 @@ void TstLease::perVehicleIndependent() {
     SwarmControlLease l;
     l.requestLease(1, "t", "a", 1000);
     l.requestLease(2, "t", "a", 1000);
-    l.onFlightModeChanged(1, "Position");                   // 只接管 1 号(操作员直控)
+    l.setManualOverride(1, true);                           // 只接管 1 号(操作员直控)
     QVERIFY(!l.canAutomate(1, 1000));
     QVERIFY( l.canAutomate(2, 1000));
 }
-void TstLease::operatorModeClassification() {
-    QVERIFY( SwarmControlLease::isOperatorMode("Position"));     // 操作员直控
-    QVERIFY( SwarmControlLease::isOperatorMode("Manual"));
-    QVERIFY( SwarmControlLease::isOperatorMode("完全未知模式")); // 未知 → 保守接管
-    QVERIFY(!SwarmControlLease::isOperatorMode("Mission"));      // 自主
-    QVERIFY(!SwarmControlLease::isOperatorMode("Offboard"));
-    QVERIFY(!SwarmControlLease::isOperatorMode("Hold"));         // 自主(修复:不再误判接管)
-    QVERIFY(!SwarmControlLease::isOperatorMode("RTL"));
-    QVERIFY(!SwarmControlLease::isOperatorMode("任务"));         // 中文 Mission → 自主(i18n 修复)
+void TstLease::autonomousModeClassification() {
+    // 模拟 Vehicle 规范访问器返回的实际 zh_CN 译名(取自 qgc_source_zh_CN.ts),验证 locale 安全:
+    const QStringList autos = {
+        QStringLiteral("任务"), QStringLiteral("等待"),
+        QStringLiteral("返航Return"), QStringLiteral("降落"),
+    };
+    QVERIFY( SwarmControlLease::isAutonomousMode("任务", autos));          // Mission(中文)→自主
+    QVERIFY( SwarmControlLease::isAutonomousMode("等待", autos));          // Hold(中文,pauseAll 场景)→自主
+    QVERIFY( SwarmControlLease::isAutonomousMode("返航Return", autos));    // RTL(中英串接)→自主
+    QVERIFY( SwarmControlLease::isAutonomousMode("降落", autos));
+    QVERIFY(!SwarmControlLease::isAutonomousMode("定点Position", autos));  // 操作员定点接管 → 让路
+    QVERIFY(!SwarmControlLease::isAutonomousMode("板外Offboard", autos));  // 不在自主集 → 让路
+    QVERIFY(!SwarmControlLease::isAutonomousMode(QString(), autos));       // 空 → 非自主
 }
 
 void TstLease::manualOverrideRecovers() {

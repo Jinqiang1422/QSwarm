@@ -1,6 +1,7 @@
 #pragma once
 #include <QtCore/QMap>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 
 // per-vehicle 控制租约状态机(纯 QtCore,可独立单测)。
 // 语义:自动化路径下发前对涉及机 requestLease;操作员在 QGC 切飞行模式即自动释放。
@@ -19,18 +20,22 @@ public:
 
     QString requestLease(int vehicleId, const QString &taskId, const QString &op,
                          qint64 nowMs, qint64 ttlMs = 300000);
-    void onFlightModeChanged(int vehicleId, const QString &mode);
-    /// 直接设置/解除某机的人工接管态(overridden=true→MANUAL_OVERRIDE;false→若当前
-    /// 接管则解除为 OBSERVE_ONLY,可重新申请)。供集成层用固件规范模式判断后调用。
+    /// 设置/解除某机的人工接管态。overridden=true→MANUAL_OVERRIDE;false→若当前接管则
+    /// 解除为 OBSERVE_ONLY。解除后需自动化环下一轮 requestLease(由 executeActions 负责)
+    /// 才会重新 canAutomate。集成层应在 flightModeChanged 时用 Vehicle 规范飞行模式访问器
+    /// + isAutonomousMode 判定 overridden,保证 locale 安全。
     void setManualOverride(int vehicleId, bool overridden);
     bool canAutomate(int vehicleId, qint64 nowMs) const;
     void release(int vehicleId);
     void expireCheck(qint64 nowMs);
     State stateOf(int vehicleId) const;
 
-    /// 飞行模式是否属操作员接管模式:自主模式白名单(Mission/Hold/Takeoff/Land/RTL/
-    /// Offboard,中英双语覆盖 PX4 本地化译名)之外一律保守视为接管(含未知模式)。
-    static bool isOperatorMode(const QString &mode);
+    /// mode 是否属于给定的自主模式集合。集成层从 Vehicle 的 missionFlightMode()/
+    /// pauseFlightMode()/rtlFlightMode()/smartRTLFlightMode()/landFlightMode()/
+    /// followFlightMode() 等规范访问器取集合——它们与 flightMode() 同 tr() 上下文、
+    /// locale 一致。集合外(操作员手动直控 / Offboard 外部控制 / 未知)视为让路。
+    /// 不在本地化显示名上硬编码字面量(会随语言失配)。
+    static bool isAutonomousMode(const QString &mode, const QStringList &autonomousModes);
 
 private:
     QMap<int, Lease> _leases;

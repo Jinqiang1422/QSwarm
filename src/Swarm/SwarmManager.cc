@@ -953,10 +953,15 @@ void SwarmManager::_vehicleAdded(Vehicle *vehicle)
 {
     if (vehicle) {
         connect(vehicle, &Vehicle::flightModeChanged, this, [this, vehicle](const QString &mode){
-            // 用固件规范任务模式串判断是否 Swarm 自主控制,避免本地化字符串失配;
-            // 其余委托 isOperatorMode 自主白名单。切回自主会解除接管(可恢复)。
-            const bool autonomous = (mode == vehicle->missionFlightMode())
-                                  || !SwarmControlLease::isOperatorMode(mode);
+            // 用 Vehicle 规范飞行模式访问器(与 flightMode() 同 tr() 上下文,locale 安全)
+            // 构成自主模式集;集合外(操作员手动直控 / Offboard 外部控制 / 未知)让出租约。
+            // 切回自主模式即解除接管(可恢复)。
+            const QStringList autoModes = {
+                vehicle->missionFlightMode(), vehicle->pauseFlightMode(),
+                vehicle->rtlFlightMode(),     vehicle->smartRTLFlightMode(),
+                vehicle->landFlightMode(),    vehicle->followFlightMode(),
+            };
+            const bool autonomous = SwarmControlLease::isAutonomousMode(mode, autoModes);
             _lease.setManualOverride(vehicle->id(), !autonomous);
         });
     }
