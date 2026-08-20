@@ -93,6 +93,8 @@ add_executable(tst_pipeline
     ${SWARM_SRC}/SwarmTypes.h
     ${SWARM_SRC}/SwarmTrackFusion.cc
     ${SWARM_SRC}/SwarmTrackFusion.h
+    ${SWARM_SRC}/SwarmControlLease.cc
+    ${SWARM_SRC}/SwarmControlLease.h
 )
 target_include_directories(tst_pipeline PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_pipeline PRIVATE Qt6::Core Qt6::Test)

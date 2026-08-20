@@ -13,6 +13,7 @@
 #include "SwarmAction.h"
 #include "SwarmTypes.h"
 #include "SwarmTrackFusion.h"
+#include "SwarmControlLease.h"
 
 class TstPipeline : public QObject
 {
@@ -25,6 +26,7 @@ private slots:
     void cleanPlan_passesAllGates();
     void batteryLow_flaggedForTaskRecheck();
     void perceptionFlowsToDigest();
+    void leaseGatesAutomation();
 };
 
 // 第一道:注入文本应在输入闸门被拦(不进入 LLM 与下发)
@@ -105,6 +107,17 @@ void TstPipeline::perceptionFlowsToDigest()
     fusion.ingest(ok, 1000);
     fusion.ingest(ok, 1100);   // 命中 2 次 → confirmed,进 tracks()
     QCOMPARE(fusion.tracks().count(), 1);   // 合法航迹贯通到融合清单(下游 COP/digest 的输入)
+}
+
+// 控制租约端到端契约:人工接管的机 canAutomate=false,未接管的机不受影响(逐机粒度)
+void TstPipeline::leaseGatesAutomation()
+{
+    SwarmControlLease lease;
+    lease.requestLease(1, "task", "op", 1000);
+    lease.requestLease(2, "task", "op", 1000);
+    lease.onFlightModeChanged(1, "Hold");                   // 1 号被接管
+    QVERIFY2(!lease.canAutomate(1, 1000), "被接管机不可自动化");
+    QVERIFY2( lease.canAutomate(2, 1000), "未接管机不受影响");
 }
 
 QTEST_GUILESS_MAIN(TstPipeline)
