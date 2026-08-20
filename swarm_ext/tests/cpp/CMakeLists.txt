@@ -98,3 +98,13 @@ target_include_directories(tst_pipeline PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_pipeline PRIVATE Qt6::Core Qt6::Test)
 
 add_test(NAME pipeline COMMAND tst_pipeline)
+
+# --- 控制租约(per-vehicle 状态机 + 飞行模式释放) ---
+add_executable(tst_lease
+    tst_lease.cc
+    ${SWARM_SRC}/SwarmControlLease.cc
+    ${SWARM_SRC}/SwarmControlLease.h
+)
+target_include_directories(tst_lease PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_lease PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME lease COMMAND tst_lease)

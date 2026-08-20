@@ -17,6 +17,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         SwarmAutonomy.h
         SwarmConstraintChecker.cc
         SwarmConstraintChecker.h
+        SwarmControlLease.cc
+        SwarmControlLease.h
         SwarmCOPModel.cc
         SwarmCOPModel.h
         SwarmEventDetector.cc
