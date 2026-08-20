@@ -28,6 +28,7 @@
 #include "SwarmAction.h"
 #include "SwarmAutonomy.h"
 #include "SwarmConstraintChecker.h"
+#include "SwarmControlLease.h"
 #include "SwarmEventDetector.h"
 #include "SwarmTrackFusion.h"
 #include "SwarmTypes.h"
@@ -233,6 +234,7 @@ private:
     int                  _takeoffStaggerMs  = 2500;     ///< 起飞指令机间间隔（安全关键，默认更大）
     int                  _autonomyLevel     = 2;        ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
     QStringList          _l3AllowedTypes;               ///< L3 限定域自主白名单（动作类型）
+    SwarmControlLease    _lease;                        ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     FormationController  *_formation        = nullptr;
     SwarmMissionPlanner  *_missionPlanner   = nullptr;
     SwarmAIAgent         *_aiAgent          = nullptr;

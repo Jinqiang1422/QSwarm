@@ -472,7 +472,16 @@ QList<Vehicle *> SwarmManager::_targetVehicles() const
         }
     }
     std::sort(result.begin(), result.end(), [](const Vehicle *a, const Vehicle *b) { return a->id() < b->id(); });
-    return result;
+
+    // 逐机租约闸门：已被操作员手动接管（MANUAL_OVERRIDE）的机剔除，不再参与自动下发。
+    QList<Vehicle *> gated;
+    for (Vehicle *v : result) {
+        if (v && _lease.stateOf(v->id()) == SwarmControlLease::MANUAL_OVERRIDE) {
+            continue;   // 已人工接管的机，跳过自动下发
+        }
+        gated.append(v);
+    }
+    return gated;
 }
 
 void SwarmManager::_forEachVehicleStaggered(const QString &commandName, int staggerMs, const std::function<void(Vehicle *)> &action)
@@ -785,6 +794,14 @@ void SwarmManager::executeActions(const QList<SwarmAction> &actions, const QStri
         return;
     }
 
+    // 对本次下发涉及的目标机申请控制租约（人工接管的机已在 _targetVehicles 过滤，此处再守一道）。
+    const qint64 leaseNowMs = QDateTime::currentMSecsSinceEpoch();
+    for (Vehicle *v : _targetVehicles()) {
+        if (v && _lease.stateOf(v->id()) != SwarmControlLease::MANUAL_OVERRIDE) {
+            _lease.requestLease(v->id(), origin, QStringLiteral("swarm"), leaseNowMs);
+        }
+    }
+
     MultiVehicleManager *mvm = MultiVehicleManager::instance();
 
     SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("action_sequence"), {
@@ -934,7 +951,11 @@ void SwarmManager::_executeTactic(const QVariantMap &p)
 
 void SwarmManager::_vehicleAdded(Vehicle *vehicle)
 {
-    Q_UNUSED(vehicle);
+    if (vehicle) {
+        connect(vehicle, &Vehicle::flightModeChanged, this, [this, vehicle](const QString &mode){
+            _lease.onFlightModeChanged(vehicle->id(), mode);
+        });
+    }
     emit vehicleCountChanged();
 }
 
