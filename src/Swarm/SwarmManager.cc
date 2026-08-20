@@ -953,7 +953,11 @@ void SwarmManager::_vehicleAdded(Vehicle *vehicle)
 {
     if (vehicle) {
         connect(vehicle, &Vehicle::flightModeChanged, this, [this, vehicle](const QString &mode){
-            _lease.onFlightModeChanged(vehicle->id(), mode);
+            // 用固件规范任务模式串判断是否 Swarm 自主控制,避免本地化字符串失配;
+            // 其余委托 isOperatorMode 自主白名单。切回自主会解除接管(可恢复)。
+            const bool autonomous = (mode == vehicle->missionFlightMode())
+                                  || !SwarmControlLease::isOperatorMode(mode);
+            _lease.setManualOverride(vehicle->id(), !autonomous);
         });
     }
     emit vehicleCountChanged();

@@ -1,6 +1,8 @@
 #include "SwarmPersistence.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -8,6 +10,7 @@
 
 bool SwarmPersistence::saveTasks(const QString &path, const QList<TaskRecord> &tasks)
 {
+    QDir().mkpath(QFileInfo(path).absolutePath());   // 确保目录存在,避免依赖调用顺序
     QJsonArray arr;
     for (const TaskRecord &t : tasks) {
         arr.append(QJsonObject{

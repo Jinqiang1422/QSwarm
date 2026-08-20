@@ -115,7 +115,7 @@ void TstPipeline::leaseGatesAutomation()
     SwarmControlLease lease;
     lease.requestLease(1, "task", "op", 1000);
     lease.requestLease(2, "task", "op", 1000);
-    lease.onFlightModeChanged(1, "Hold");                   // 1 号被接管
+    lease.onFlightModeChanged(1, "Position");               // 1 号被操作员直控接管
     QVERIFY2(!lease.canAutomate(1, 1000), "被接管机不可自动化");
     QVERIFY2( lease.canAutomate(2, 1000), "未接管机不受影响");
 }

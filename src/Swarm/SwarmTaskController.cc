@@ -327,7 +327,8 @@ void SwarmTaskController::_finish(bool success, const QString &message)
     _setStateText(success ? tr("已完成") : tr("已中止/失败"));
     emit taskFeedback(message);
     emit taskFinished(success, message);
-    _persistState();
+    // 任务已终结(完成/中止),清除持久化记录,避免重启时被误报为"未完成任务"
+    SwarmPersistence::saveTasks(taskPersistPath(), {});
 }
 
 void SwarmTaskController::_persistState()

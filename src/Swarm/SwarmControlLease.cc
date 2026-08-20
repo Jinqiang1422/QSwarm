@@ -16,15 +16,21 @@ QString SwarmControlLease::requestLease(int vehicleId, const QString &taskId,
 
 void SwarmControlLease::onFlightModeChanged(int vehicleId, const QString &mode)
 {
-    if (!isOperatorMode(mode)) {
-        return;
-    }
+    setManualOverride(vehicleId, isOperatorMode(mode));
+}
+
+void SwarmControlLease::setManualOverride(int vehicleId, bool overridden)
+{
     auto it = _leases.find(vehicleId);
-    if (it != _leases.end()) {
-        it->state = MANUAL_OVERRIDE;
-    } else {
-        Lease ls; ls.vehicleId = vehicleId; ls.state = MANUAL_OVERRIDE;
-        _leases.insert(vehicleId, ls);
+    if (overridden) {
+        if (it != _leases.end()) {
+            it->state = MANUAL_OVERRIDE;
+        } else {
+            Lease ls; ls.vehicleId = vehicleId; ls.state = MANUAL_OVERRIDE;
+            _leases.insert(vehicleId, ls);
+        }
+    } else if (it != _leases.end() && it->state == MANUAL_OVERRIDE) {
+        it->state = OBSERVE_ONLY;   // 操作员交还控制 → 解除接管,可重新申请租约
     }
 }
 
@@ -62,13 +68,19 @@ SwarmControlLease::State SwarmControlLease::stateOf(int vehicleId) const
 
 bool SwarmControlLease::isOperatorMode(const QString &mode)
 {
-    static const QStringList kAutomation = {
-        QStringLiteral("Mission"), QStringLiteral("Offboard")
+    // 自主/系统模式白名单(中英双语,覆盖 PX4 本地化译名):这些不算操作员接管。
+    // 其余(操作员手动直控模式如 Position/Manual,及未知模式)保守视为接管。
+    static const QStringList kAutonomous = {
+        QStringLiteral("Mission"), QStringLiteral("Hold"),   QStringLiteral("Takeoff"),
+        QStringLiteral("Land"),    QStringLiteral("Return"), QStringLiteral("Offboard"),
+        QStringLiteral("Loiter"),  QStringLiteral("RTL"),
+        QStringLiteral("任务"),    QStringLiteral("悬停"),   QStringLiteral("起飞"),
+        QStringLiteral("降落"),    QStringLiteral("返航"),   QStringLiteral("保持")
     };
-    for (const QString &a : kAutomation) {
+    for (const QString &a : kAutonomous) {
         if (mode.compare(a, Qt::CaseInsensitive) == 0) {
-            return false;
+            return false;   // 自主模式 → 非接管
         }
     }
-    return true;
+    return true;   // 操作员手动模式 + 未知 → 保守视为接管
 }

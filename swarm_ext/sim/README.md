@@ -15,9 +15,11 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 
 控制租约（`SwarmControlLease`）与任务持久化（`SwarmPersistence`）的核心安全逻辑已由容器
 单测覆盖（`tst_lease` / `tst_persistence` / `tst_pipeline::leaseGatesAutomation`），不依赖 SITL：
-- 操作员在 QGC 切飞行模式（Hold/RTL/Position 等非 Mission/Offboard）→ 该机租约立即释放、
-  Swarm 跳过对其自动下发（逐机粒度，其余机不受影响）
-- 重启后 RUNNING 任务恢复为 PAUSED 待确认，租约不持久化（回 OBSERVE_ONLY）
+- 操作员在 QGC 切到手动直控模式（Position/Manual 等，中英双语判定，未知模式保守视为接管）→
+  该机租约立即释放、Swarm 跳过对其自动下发（逐机粒度，其余机不受影响）；切回自主模式
+  （Mission/Hold/RTL/Takeoff 等）解除接管，可重新申请（可恢复）
+- 集成层用固件规范的 `missionFlightMode()` 判定 Mission，避免本地化字符串失配
+- 重启后 RUNNING 任务恢复为 PAUSED 待确认，已完成/中止任务清除持久化、租约不持久化（回 OBSERVE_ONLY）
 
 SITL 多机闭环验收（多机识别 / 任务不串机 / 重启不恢复）脚本就绪，受阻于 headless 服务器
 GL/gz 环境，待有显示/仿真环境执行。
