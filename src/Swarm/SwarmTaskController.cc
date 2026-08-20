@@ -9,12 +9,20 @@
 #include "Fact.h"
 #include "QmlObjectListModel.h"
 #include "QGCApplication.h"
+#include "SwarmPersistence.h"
 
 #include <QtCore/QDateTime>
+#include <QtCore/QStandardPaths>
 
 namespace {
     constexpr int kDefaultTimeoutSec = 600;
     constexpr int kDefaultGraceSec   = 3;
+
+    QString taskPersistPath()
+    {
+        return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+             + QStringLiteral("/SwarmConfig/tasks.json");
+    }
 }
 
 SwarmTaskController::SwarmTaskController(SwarmManager *swarmManager)
@@ -27,6 +35,14 @@ SwarmTaskController::SwarmTaskController(SwarmManager *swarmManager)
         qgcApp()->showAppMessage(message);
     });
     _setStateText(tr("空闲"));
+
+    // 启动恢复：重启前未完成（RUNNING 已被 loadTasks 归一为 PAUSED）的任务不自动续飞，仅告警待确认
+    const auto restored = SwarmPersistence::loadTasks(taskPersistPath());
+    for (const auto &t : restored) {
+        if (t.status == QStringLiteral("PAUSED") && !t.id.isEmpty()) {
+            emit taskFeedback(tr("检测到重启前未完成任务「%1」，已暂停，请确认后重新启动").arg(t.id));
+        }
+    }
 }
 
 SwarmTaskController::~SwarmTaskController() = default;
@@ -136,6 +152,7 @@ bool SwarmTaskController::startTask(const QString &taskName, const QList<Stage> 
 
     _enterStage(0);
     _tickTimer.start();
+    _persistState();
     return true;
 }
 
@@ -212,6 +229,7 @@ void SwarmTaskController::_enterStage(int index)
         }
     }
     emit taskChanged();
+    _persistState();
 }
 
 void SwarmTaskController::_tick()
@@ -309,6 +327,17 @@ void SwarmTaskController::_finish(bool success, const QString &message)
     _setStateText(success ? tr("已完成") : tr("已中止/失败"));
     emit taskFeedback(message);
     emit taskFinished(success, message);
+    _persistState();
+}
+
+void SwarmTaskController::_persistState()
+{
+    SwarmPersistence::TaskRecord r;
+    r.id      = _taskName;
+    r.type    = QStringLiteral("MULTISTAGE");
+    r.status  = running() ? QStringLiteral("RUNNING") : QStringLiteral("PAUSED");
+    r.version = 1;
+    SwarmPersistence::saveTasks(taskPersistPath(), { r });
 }
 
 void SwarmTaskController::_setStateText(const QString &text)

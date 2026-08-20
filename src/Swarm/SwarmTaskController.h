@@ -99,6 +99,7 @@ private:
     void _finish(bool success, const QString &message);
     bool _conditionMet(const Stage &stage);
     void _setStateText(const QString &text);
+    void _persistState();
 
     SwarmManager *_swarmManager = nullptr;
 
