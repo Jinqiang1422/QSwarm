@@ -108,3 +108,13 @@ add_executable(tst_lease
 target_include_directories(tst_lease PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_lease PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME lease COMMAND tst_lease)
+
+# --- 任务持久化(JSON 原子写 + RUNNING→PAUSED 恢复) ---
+add_executable(tst_persistence
+    tst_persistence.cc
+    ${SWARM_SRC}/SwarmPersistence.cc
+    ${SWARM_SRC}/SwarmPersistence.h
+)
+target_include_directories(tst_persistence PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_persistence PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME persistence COMMAND tst_persistence)

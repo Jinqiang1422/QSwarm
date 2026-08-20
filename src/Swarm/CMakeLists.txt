@@ -27,6 +27,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         SwarmInputFilter.h
         SwarmPerceptionBridge.cc
         SwarmPerceptionBridge.h
+        SwarmPersistence.cc
+        SwarmPersistence.h
         SwarmRehearsalEstimator.cc
         SwarmRehearsalEstimator.h
         SwarmSituationDigest.cc
