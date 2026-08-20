@@ -70,7 +70,9 @@
 | 模板库 | SwarmTaskLibrary:**9 套模板**(区域搜索/编队巡逻/扇形扫掠/平行网格/接力值守/会合集结/快速出动/编队巡航/全员返航) | ✅ |
 | 约束校验闸门 | SwarmConstraintChecker:**10 规则**(空域围栏/航程电量/去冲突/链路覆盖/载荷匹配),error 阻断 + warning 提示 | 单测加固 ✅ |
 | 仿真预演 | SwarmRehearsalEstimator:解析式时长/里程/电量裕度估算 | 单测 ✅ |
-| 拍卖分配 | SwarmTaskAllocator:Bertsekas auction,ε-最优,反转场景转场里程降 95% | 单测 ✅ |
+| 拍卖分配 | SwarmTaskAllocator:Bertsekas auction / CBBA 分布式,反转场景转场里程降 95% | 单测 ✅ |
+| 控制租约 | SwarmControlLease:per-vehicle 控制权状态机,QGC 切飞行模式即释放、逐机粒度跳过下发 | 单测 ✅ |
+| 任务持久化 | SwarmPersistence:任务态 JSON 原子快照,重启 RUNNING→PAUSED 待确认、租约不持久化 | 单测 ✅ |
 
 ### 🖥️ 人机界面(FlyView 集成)
 
