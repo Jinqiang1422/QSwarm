@@ -62,13 +62,30 @@ if [[ -z "${DISPLAY:-}" ]]; then
 fi
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe   # 无 GPU 时软件渲染
 
+# ---- gz 资源环境（关键！直接调 px4 二进制 + `-w` 独立工作目录时，rcS 不会自动
+#      source rootfs/gz_env.sh，缺失会导致 gz_bridge "Service call timed out.
+#      Check GZ_SIM_RESOURCE_PATH" → spawn model 失败 → 无 heartbeat）----
+GZ_ENV="$BUILD/rootfs/gz_env.sh"
+if [[ -f "$GZ_ENV" ]]; then
+    export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}"   # 防 set -u 下 gz_env.sh 报 unbound
+    # shellcheck disable=SC1090
+    set +u; source "$GZ_ENV"; set -u
+    echo "[launch] 已加载 gz 环境：$GZ_ENV"
+else
+    export PX4_GZ_MODELS="$PX4_DIR/Tools/simulation/gz/models"
+    export PX4_GZ_WORLDS="$PX4_DIR/Tools/simulation/gz/worlds"
+    export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}:$PX4_GZ_MODELS:$PX4_GZ_WORLDS"
+    echo "[launch] gz_env.sh 缺失，已手动设 GZ_SIM_RESOURCE_PATH"
+fi
+
 mkdir -p "$WORK_DIR"
 PIDS=()
 cleanup() {
     echo "[launch] 停止全部 SITL 实例..."
     for pid in "${PIDS[@]:-}"; do [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true; done
     pkill -f "$BUILD/bin/px4" 2>/dev/null || true
-    pkill -f 'gz sim' 2>/dev/null || true
+    # gz server 是独立 ruby 进程(px4 退出后仍存活)，按命令行清理(脚本自身命令行不含 'gz sim'，安全)
+    for gzpid in $(ps -eo pid,args | grep '[g]z sim' | awk '{print $1}'); do kill -9 "$gzpid" 2>/dev/null || true; done
     [[ -n "$XVFB_PID" ]] && kill "$XVFB_PID" 2>/dev/null || true
     wait 2>/dev/null || true
 }
