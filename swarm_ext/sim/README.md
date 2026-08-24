@@ -11,6 +11,8 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 | `launch_swarm_sitl.sh` | 一键拉起 N 机 PX4 SITL（v2 修正版，默认 4 机，gz 后端，内置 Xvfb + 软件 GL + heartbeat 就绪探测 + 负载预警） |
 | `scenarios/*.json` | 6 个场景定义：时间线动作 + 故障注入 + 通过准则 |
 | `run_scenario.py` | 场景运行器：MAVLink 驱动、故障注入、时延实测、JSON 报告 |
+| `run_official_sitl.sh` | **官方 PX4 SITL docker 方案**：拉官方镜像 + 源码副本 fresh build，打通起飞(本机固件环境受阻的推荐路径，见测试流程 §9) |
+| `新功能验收checklist.md` | 控制租约 / 任务持久化两项新功能的可勾选验收单(A 6 例 / B 5 例) |
 
 ## 控制安全与可靠性（Lattice 安全收尾）
 
