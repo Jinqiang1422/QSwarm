@@ -239,3 +239,11 @@ done
 
 ### 8.5 小结
 SITL 从"完全受阻"推进到：**环境跑通(单机+多机 4/4) + 测试驱动通路验证 + 一键中止 ≤1s 实测达标**。剩余起飞阻塞是 PX4 SITL 飞控层的独立问题，已诊断清楚并给出方向。
+
+### 8.6 方向 1(换后端)尝试记录(2026-08-24)
+按 §8.4 方向 1 尝试用其他仿真后端绕过 gz 的 arm 阻塞，结果两后端各有障碍、且**共同栽在 PX4 v1.15.4 的 arming**：
+
+- **gazebo-classic(iris)**：编译先卡在 `gazebo_aruco_plugin` 缺 `opencv2/aruco.hpp`(实际在 `/usr/include/opencv4/`，用 `CPLUS_INCLUDE_PATH=/usr/include/opencv4` 兜底编过)；但启动时 iris **spawn 失败**——`sitl_run.sh` 用 `gz model --spawn-file`(gazebo-classic 11 语法)，而本机 `/usr/bin/gz` 是 **new Gazebo Sim 7.9** 的 `gz`(命令冲突)，iris 未 spawn、gzserver 空转、px4 一直等 TCP 4560。属双 gazebo 共存冲突。
+- **jmavsim(iris)**：ant 编译 + 启动**成功**，px4 `Startup script returned successfully`、mavlink 连通；但 arm 被 PX4 拒——`ACK cmd=400 result=1`(TEMPORARILY_REJECTED)，日志 `ekf2 missing data`(启动瞬态)；等到 `GPS fix=3 sats=10` 后 arm 仍拒。
+
+**结论强化**：gz(yaw estimate error) 与 jmavsim(arm temporarily rejected) 拒因不同，但**都卡在 PX4 v1.15.4 SITL 的 arming preflight**——根因在 **PX4 固件/参数层，非仿真后端、非集群软件**。彻底打通起飞需 PX4 SITL 专门调试(EKF/arming 参数深挖，或换 PX4 版本/airframe)，属独立于集群软件的固件任务。**集群软件测试的核心(gz 多机 4/4 + 一键中止 ≤1s)已由 §8.2/8.3 达成，不受此阻塞影响。**
