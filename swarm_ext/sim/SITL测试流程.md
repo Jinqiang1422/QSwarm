@@ -278,3 +278,13 @@ python3 run_scenario.py scenarios/01_area_search.json    --report /tmp/r01.json
 
 ### 9.4 预期与边界
 官方环境下 iris 应能正常 arm→takeoff→mission→rtl，从而解锁 L1 飞行场景(01/02) 与 L2 编队/租约用例。**集群软件侧(`src/Swarm/` + `run_scenario.py` + 场景定义)无需任何改动**——只是把机队跑在干净的固件环境里。一键中止 ≤1s 等 §8.3 已达成的指标可在此环境复测确认。
+
+### 9.5 一键回归(全场景 + 汇总报告)
+机队就绪后，`regression.py` 一键跑完 `scenarios/` 全部场景并汇总(复用 `run_scenario.py` 驱动)：
+
+```bash
+python3 regression.py                    # 全跑(机队须 8 机、场景 fleet=8)
+python3 regression.py --only 01,05       # 只跑指定场景
+python3 regression.py --dry-run          # 不连机队，仅校验场景定义 + 自检脚本
+```
+产出 `/tmp/sitl_regression/SUMMARY.md`(Markdown 汇总表：各场景 PASS/FAIL + 一键中止时延 / 故障隔离在线计数等关键指标) + 各场景 `report_*.json`；**退出码 0=全过 / 1=有失败**，可直接接 CI。单场景异常不中断整轮。本会话已 `--dry-run` 自检：6 场景解析全过、汇总格式正确。
