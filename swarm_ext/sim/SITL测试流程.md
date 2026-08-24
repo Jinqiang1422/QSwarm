@@ -247,3 +247,32 @@ SITL 从"完全受阻"推进到：**环境跑通(单机+多机 4/4) + 测试驱�
 - **jmavsim(iris)**：ant 编译 + 启动**成功**，px4 `Startup script returned successfully`、mavlink 连通；但 arm 被 PX4 拒——`ACK cmd=400 result=1`(TEMPORARILY_REJECTED)，日志 `ekf2 missing data`(启动瞬态)；等到 `GPS fix=3 sats=10` 后 arm 仍拒。
 
 **结论强化**：gz(yaw estimate error) 与 jmavsim(arm temporarily rejected) 拒因不同，但**都卡在 PX4 v1.15.4 SITL 的 arming preflight**——根因在 **PX4 固件/参数层，非仿真后端、非集群软件**。彻底打通起飞需 PX4 SITL 专门调试(EKF/arming 参数深挖，或换 PX4 版本/airframe)，属独立于集群软件的固件任务。**集群软件测试的核心(gz 多机 4/4 + 一键中止 ≤1s)已由 §8.2/8.3 达成，不受此阻塞影响。**
+
+---
+
+## 9. 官方 PX4 SITL 环境(打通起飞的推荐路径)
+
+§8.6 证明起飞阻塞在**本机 PX4 环境的非标准因素**(用 miniconda 的 cmake 编译 / 环境含 ROS noetic 污染 / 系统 new Gazebo Sim 7.9 与 gazebo-classic 的 `gz` 命令冲突)，而非集群软件。官方 `px4io/px4-dev-simulation-focal` 镜像的工具链/依赖/参数是 PX4 CI 验证过的、arm 与起飞正常，是打通飞行场景的推荐路径。
+
+### 9.1 一键脚本
+`run_official_sitl.sh`：拉官方镜像 → rsync 源码副本(排除本机 build) → 容器内 fresh build → 起 gazebo-classic iris，mavlink 经 `--network host` 直达宿主 14550。
+
+```bash
+cd swarm_ext/sim
+tmux new -s sitl                          # 长任务(镜像 GB + fresh build ~20min)，建议 tmux
+./run_official_sitl.sh                     # 容器内跑 SITL，机队就绪后保持
+# 另开终端(或 tmux 分屏):
+python3 run_scenario.py scenarios/01_area_search.json  --report /tmp/r01.json
+python3 run_scenario.py scenarios/05_emergency_stop.json --report /tmp/r05.json
+```
+
+### 9.2 关键设计
+- **源码副本**(rsync 排除 `/build/`)：避免本机 miniconda cmake / ROS 污染的产物与官方容器工具链冲突，容器 fresh build 干净。
+- **`--network host`**：容器 SITL 的 mavlink UDP 直达宿主 14550，宿主的 `run_scenario.py` / 定制 QGC 直接连(SITL headless 无 X11，无 §6.2 GUI 的串号风险)。
+- **gazebo-classic**：容器自带 gazebo11 + 匹配的 `gz` 工具，无本机 new-gz 命令冲突。
+
+### 9.3 多机
+容器内用 PX4 自带 `Tools/simulation/gazebo-classic/sitl_multiple_run.sh -n 4 -m iris`，或按 `launch_swarm_sitl.sh` 思路在官方容器内起多实例。先单机验证 arm/起飞通过，再扩到 4/8。
+
+### 9.4 预期与边界
+官方环境下 iris 应能正常 arm→takeoff→mission→rtl，从而解锁 L1 飞行场景(01/02) 与 L2 编队/租约用例。**集群软件侧(`src/Swarm/` + `run_scenario.py` + 场景定义)无需任何改动**——只是把机队跑在干净的固件环境里。一键中止 ≤1s 等 §8.3 已达成的指标可在此环境复测确认。
