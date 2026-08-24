@@ -260,10 +260,12 @@ SITL 从"完全受阻"推进到：**环境跑通(单机+多机 4/4) + 测试驱�
 ```bash
 cd swarm_ext/sim
 tmux new -s sitl                          # 长任务(镜像 GB + fresh build ~20min)，建议 tmux
-./run_official_sitl.sh                     # 容器内跑 SITL，机队就绪后保持
-# 另开终端(或 tmux 分屏):
-python3 run_scenario.py scenarios/01_area_search.json  --report /tmp/r01.json
+./run_official_sitl.sh                     # 单机；机队就绪后保持
+# 或多机(第 2 参数 = 机数)：
+# ./run_official_sitl.sh ~/PX4-Autopilot 4 # 4 机
+# 另开终端(或 tmux 分屏)，机队就绪后跑场景(场景 fleet 与机数一致)：
 python3 run_scenario.py scenarios/05_emergency_stop.json --report /tmp/r05.json
+python3 run_scenario.py scenarios/01_area_search.json    --report /tmp/r01.json
 ```
 
 ### 9.2 关键设计
@@ -271,8 +273,8 @@ python3 run_scenario.py scenarios/05_emergency_stop.json --report /tmp/r05.json
 - **`--network host`**：容器 SITL 的 mavlink UDP 直达宿主 14550，宿主的 `run_scenario.py` / 定制 QGC 直接连(SITL headless 无 X11，无 §6.2 GUI 的串号风险)。
 - **gazebo-classic**：容器自带 gazebo11 + 匹配的 `gz` 工具，无本机 new-gz 命令冲突。
 
-### 9.3 多机
-容器内用 PX4 自带 `Tools/simulation/gazebo-classic/sitl_multiple_run.sh -n 4 -m iris`，或按 `launch_swarm_sitl.sh` 思路在官方容器内起多实例。先单机验证 arm/起飞通过，再扩到 4/8。
+### 9.3 多机(脚本已内置)
+`run_official_sitl.sh <src> <N>` 第 2 参数 >1 时自动走多机：容器内 `make px4_sitl_default gazebo-classic` 编插件 → Xvfb 兜住 `sitl_multiple_run.sh` 末尾硬起的 `gzclient`(该脚本无 HEADLESS 判断) → 起 N 机 gazebo-classic iris。各实例 **GCS mavlink 统一发宿主 14550(sysid=1+i，如 4 机为 2–5)**，`run_scenario.py` 单入口 `udpin:14550` 全收、按 sysid 区分——与 §8.2 gz 4/4 的聚合机制一致，场景 `fleet` 设为 N 即可。建议先 `./run_official_sitl.sh ~/PX4-Autopilot 1` 单机验证 arm/起飞通过，再扩到 4/8。
 
 ### 9.4 预期与边界
 官方环境下 iris 应能正常 arm→takeoff→mission→rtl，从而解锁 L1 飞行场景(01/02) 与 L2 编队/租约用例。**集群软件侧(`src/Swarm/` + `run_scenario.py` + 场景定义)无需任何改动**——只是把机队跑在干净的固件环境里。一键中止 ≤1s 等 §8.3 已达成的指标可在此环境复测确认。
