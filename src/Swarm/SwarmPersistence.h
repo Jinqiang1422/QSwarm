@@ -7,15 +7,18 @@
 class SwarmPersistence
 {
 public:
-    struct TaskRecord {
+    struct TaskRecord
+    {
         QString id;
         QString type;
         QString assignee;
-        QString approvalStatus;    ///< PENDING / APPROVED / REJECTED
-        QString status;            ///< DRAFT / RUNNING / PAUSED / SUCCEEDED / ...
-        int     version = 1;
+        QString approvalStatus;  ///< PENDING / APPROVED / REJECTED
+        QString status;          ///< DRAFT / RUNNING / PAUSED / SUCCEEDED / ...
+        int version = 1;
     };
 
-    static bool saveTasks(const QString &path, const QList<TaskRecord> &tasks);
-    static QList<TaskRecord> loadTasks(const QString &path);
+    static bool saveTasks(const QString& path, const QList<TaskRecord>& tasks);
+    /// 加载任务；发现 RUNNING 时归一为 PAUSED 并原子写回，避免后续启动重复恢复同一运行态。
+    /// recoveryPersisted 在无需写回或写回成功时为 true。
+    static QList<TaskRecord> loadTasks(const QString& path, bool* recoveryPersisted = nullptr);
 };
