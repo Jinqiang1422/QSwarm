@@ -225,14 +225,14 @@ Rectangle {
                         if (_mvm.vehicles.count > 0) {
                             var leaderId = _mvm.vehicles.get(Math.max(0, leaderCombo.currentIndex)).id
                             _swarm.formation.formationType = formationTypeCombo.currentIndex
-                            _swarm.formation.start(leaderId)
+                            _swarm.startFormation(leaderId)
                         }
                     }
                 }
                 QGCButton {
                     text:    qsTr("停止编队")
                     enabled: _swarm.formation.active
-                    onClicked: _swarm.formation.stop()
+                    onClicked: _swarm.stopFormation()
                 }
                 QGCLabel {
                     text: _swarm.formation.statusText
@@ -266,14 +266,14 @@ Rectangle {
                     text: qsTr("生成并上传")
                     onClicked: {
                         _swarm.missionPlanner.surveySpacing = parseFloat(spacingPlanField.text)
-                        _swarm.missionPlanner.planAndUploadCoverage(
+                        _swarm.planAndUploadCoverage(
                             QGroundControl.flightMapPosition,
                             parseFloat(areaLengthField.text),
                             parseFloat(areaWidthField.text),
                             parseFloat(areaAngleField.text))
                     }
                 }
-                QGCButton { text: qsTr("清空任务"); onClicked: _swarm.missionPlanner.clearAllMissions() }
+                QGCButton { text: qsTr("清空任务"); onClicked: _swarm.clearAllMissions() }
                 QGCButton { text: qsTr("开始任务"); onClicked: _swarm.startMissionAll() }
             }
         }

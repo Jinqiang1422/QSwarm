@@ -24,6 +24,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QTimer>
 #include <QtQmlIntegration/QtQmlIntegration>
+#include <functional>
 
 class Vehicle;
 
@@ -33,42 +34,56 @@ class FormationController : public QObject
     QML_ELEMENT
     QML_UNCREATABLE("")
 
-    Q_PROPERTY(FormationType    formationType       READ formationType      WRITE setFormationType      NOTIFY formationTypeChanged)
-    Q_PROPERTY(double           spacingMeters       READ spacingMeters      WRITE setSpacingMeters      NOTIFY spacingMetersChanged)
-    Q_PROPERTY(double           verticalStepMeters  READ verticalStepMeters WRITE setVerticalStepMeters NOTIFY verticalStepMetersChanged)
-    Q_PROPERTY(bool             active              READ active                                         NOTIFY activeChanged)
-    Q_PROPERTY(int              leaderVehicleId     READ leaderVehicleId                                NOTIFY leaderVehicleIdChanged)
-    Q_PROPERTY(int              followerCount       READ followerCount                                  NOTIFY followerCountChanged)
-    Q_PROPERTY(QString          statusText          READ statusText                                     NOTIFY statusTextChanged)
+    Q_PROPERTY(FormationType formationType READ formationType WRITE setFormationType NOTIFY formationTypeChanged)
+    Q_PROPERTY(double spacingMeters READ spacingMeters WRITE setSpacingMeters NOTIFY spacingMetersChanged)
+    Q_PROPERTY(
+        double verticalStepMeters READ verticalStepMeters WRITE setVerticalStepMeters NOTIFY verticalStepMetersChanged)
+    Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+    Q_PROPERTY(int leaderVehicleId READ leaderVehicleId NOTIFY leaderVehicleIdChanged)
+    Q_PROPERTY(int followerCount READ followerCount NOTIFY followerCountChanged)
+    Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
 
 public:
-    explicit FormationController(QObject *parent = nullptr);
+    explicit FormationController(QObject* parent = nullptr);
     ~FormationController();
 
-    enum FormationType {
-        FormationWedge = 0,     ///< 楔形（V 字）
-        FormationColumn,        ///< 纵队
-        FormationLine,          ///< 横队
-        FormationCircle         ///< 环形
+    enum FormationType
+    {
+        FormationWedge = 0,  ///< 楔形（V 字）
+        FormationColumn,     ///< 纵队
+        FormationLine,       ///< 横队
+        FormationCircle      ///< 环形
     };
     Q_ENUM(FormationType)
 
     FormationType formationType() const { return _formationType; }
+
     void setFormationType(FormationType type);
-    double spacingMeters() const       { return _spacingMeters; }
+
+    double spacingMeters() const { return _spacingMeters; }
+
     void setSpacingMeters(double spacing);
-    double verticalStepMeters() const  { return _verticalStepMeters; }
+
+    double verticalStepMeters() const { return _verticalStepMeters; }
+
     void setVerticalStepMeters(double step);
-    bool   active() const              { return _active; }
-    int    leaderVehicleId() const     { return _leaderVehicleId; }
-    int    followerCount() const       { return _followerCount; }
-    QString statusText() const         { return _statusText; }
+
+    bool active() const { return _active; }
+
+    int leaderVehicleId() const { return _leaderVehicleId; }
+
+    int followerCount() const { return _followerCount; }
+
+    QString statusText() const { return _statusText; }
 
     /// 以 leaderVehicleId 为长机开始编队。长机由人工/任务驾驶，僚机自动跟随队形。
     Q_INVOKABLE bool start(int leaderVehicleId);
 
     /// 停止编队，僚机原地悬停
     Q_INVOKABLE void stop();
+
+    /// 设置逐机自动控制许可判定。SwarmManager 集成时采用 fail-closed 租约判定。
+    void setVehicleAutomationAllowedCallback(std::function<bool(int)> callback);
 
 signals:
     void formationTypeChanged();
@@ -87,20 +102,21 @@ private:
     /// @param distanceMeters   相对长机的水平距离
     /// @param azimuthOffsetDeg 相对长机航向的方位角偏移（0=正前方, 90=右侧, 180=正后方）
     /// @param altitudeStepMeters 相对长机的高度增量
-    void _formationOffset(int followerIndex, int totalFollowers,
-                          double &distanceMeters, double &azimuthOffsetDeg, double &altitudeStepMeters) const;
+    void _formationOffset(int followerIndex, int totalFollowers, double& distanceMeters, double& azimuthOffsetDeg,
+                          double& altitudeStepMeters) const;
 
-    void _setStatusText(const QString &text);
+    void _setStatusText(const QString& text);
 
-    FormationType _formationType      = FormationWedge;
-    double        _spacingMeters      = 10.0;
-    double        _verticalStepMeters = 3.0;
-    int           _updateIntervalMs   = 1000;       ///< 队形目标点更新周期
-    double        _minAirborneAltMeters = 1.5;      ///< 判定僚机已离地的相对高度阈值
+    FormationType _formationType = FormationWedge;
+    double _spacingMeters = 10.0;
+    double _verticalStepMeters = 3.0;
+    int _updateIntervalMs = 1000;        ///< 队形目标点更新周期
+    double _minAirborneAltMeters = 1.5;  ///< 判定僚机已离地的相对高度阈值
 
-    QTimer        _updateTimer;
-    bool          _active          = false;
-    int           _leaderVehicleId = 0;
-    int           _followerCount   = 0;
-    QString       _statusText;
+    QTimer _updateTimer;
+    bool _active = false;
+    int _leaderVehicleId = 0;
+    int _followerCount = 0;
+    QString _statusText;
+    std::function<bool(int)> _vehicleAutomationAllowed;
 };
