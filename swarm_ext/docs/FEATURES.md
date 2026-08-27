@@ -1,7 +1,7 @@
 # 无人机集群指挥控制平台 — 功能总结
 
 > 基于开源 QGroundControl 的「大模型 + 无人机集群」指挥控制平台
-> 快照日期:2026-07-23 · 分支 `feature/swarm-extension` · 30 commit
+> 验证更新:2026-08-25 · 工作树基于 QGroundControl master + PX4 v1.15.4 SITL
 
 ---
 
@@ -27,7 +27,7 @@
 | P1 ① 编译 | 官方 Docker 打通整机编译,产物 633M,Swarm 全编入 |
 | P1 ② 评测 | Kimi-K2.6 真实意图解析 88%,评测判定 4 缺陷全诊断+校准 |
 | P1 ④ CI | 4 作业接入 .github/workflows |
-| P1 ③ SITL | 诊断受阻于服务器仿真环境(GL/图形),已记录待续 |
+| P1 ③ SITL | 1/4/8 机递进飞行闭环；6 个隔离场景报告通过，8 机暂停 ACK max 16.3ms |
 | P2 | 约束/预演/拍卖三模块测试 8→27 slot,29 PASS |
 
 ---
@@ -71,8 +71,8 @@
 | 约束校验闸门 | SwarmConstraintChecker:**10 规则**(空域围栏/航程电量/去冲突/链路覆盖/载荷匹配),error 阻断 + warning 提示 | 单测加固 ✅ |
 | 仿真预演 | SwarmRehearsalEstimator:解析式时长/里程/电量裕度估算 | 单测 ✅ |
 | 拍卖分配 | SwarmTaskAllocator:Bertsekas auction / CBBA 分布式,反转场景转场里程降 95% | 单测 ✅ |
-| 控制租约 | SwarmControlLease:per-vehicle 控制权状态机,集成层用 Vehicle 规范飞行模式访问器判定自主(locale 安全),操作员手动直控/Offboard/未知模式即释放、逐机粒度跳过下发,切回自主可恢复 | 单测 ✅ |
-| 任务持久化 | SwarmPersistence:任务态 JSON 原子快照(自建目录),重启 RUNNING→PAUSED 待确认、终结任务清除、租约不持久化 | 单测 ✅ |
+| 控制租约 | SwarmControlLease:per-vehicle 控制权状态机,集成层用 Vehicle 规范飞行模式访问器判定自主(locale 安全),排队/触发双检并覆盖持续编队与任务上传,人工接管逐机让路,切回自主可恢复 | 单测 ✅ |
+| 任务持久化 | SwarmPersistence:任务态 JSON 原子快照(自建目录),重启 RUNNING→PAUSED 写回并显示待确认态、终结任务清除、租约不持久化 | 单测 ✅ |
 
 ### 🖥️ 人机界面(FlyView 集成)
 
@@ -91,7 +91,7 @@
 | L3 规划 | 任务分解 / 时序编排 / 约束引擎 / 多候选 / 拍卖分配 | ✅ |
 | L2 融合 | 遥测汇聚 / 航迹融合 / 事件检测 / COP | ✅(代码就绪) |
 | L1 链路 | LinkManager / MultiVehicleManager 复用 + 自定义 MAVLink | ✅ |
-| L0 平台 | PX4 SITL 场景库(6 场景) | ⚠️ 仿真环境受阻 |
+| L0 平台 | PX4 SITL 场景库(6 场景) | ✅ L1/MAVLink 实测；QGC L2 联调待续 |
 
 ---
 
@@ -103,10 +103,13 @@
 - 单元测试:**29 PASS / 0 FAIL**(P1 自主分级/防注入/审计 + P2 约束/预演/拍卖) ✅
 - CI:4 作业(cpp-tests / llm-eval-sanity / scenario-sanity / perception-service)守护回归 ✅
 - 运行时:进程启动、SwarmManager 初始化、QML 加载全程零 Swarm 报错 ✅
+- PX4 SITL:官方源码 v1.15.4 的 1/4/8 机递进闭环通过；6 个隔离场景均 `pass=true`，8 机暂停
+  ACK max **16.3ms**，单机故障后余下 7/7 返航，链路退化离线/恢复 7→8 ✅
 
 **遗留 / 待续**
-- SITL 8 机实测:服务器仿真环境 GL/图形受阻(需 Xvfb+软件 GL 或换机)
-- GUI 可视化:同源(headless 服务器无正常显示环境)
+- SITL L2 边界:场景 01/02 的覆盖规划与楔形几何尚未由定制 QGC 自动驱动；场景 06 尚未自动
+  断言 COP 渲染、地理误差和接收端端到端时延（航迹批次数与发送心跳已断言）
+- GUI/L2 验收:headless 截图诊断脚本已准备，完整交互用例仍需可用显示环境
 - P2 量化验证:约束一次通过率 / 规划耗时对比(依赖运行环境)
 - 务实裁剪功能:围栏可视化编辑 / Plan 视图深度互通 / SSE 流式输出 / 载荷建模
 

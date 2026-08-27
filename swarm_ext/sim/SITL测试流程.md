@@ -1,7 +1,7 @@
 # 集群指控软件 · PX4 SITL 测试流程
 
 > 面向对象:测试/集成工程师
-> 版本:2026-08-21 · 分支 `main`
+> 版本:2026-08-25 · 分支 `main`
 > 配套资产:`launch_swarm_sitl.sh`(拉起机队,v2 修正版)、`run_scenario.py`(场景驱动)、`scenarios/*.json`(6 场景)
 
 ---
@@ -56,7 +56,8 @@ cd /media/hello/data1/Jinqiang/QGC/qgroundcontrol/swarm_ext/sim
 |---|---|---|
 | 单机 heartbeat | 出现 `机 sysid=1 在线` | 看 `/tmp/px4_swarm_sitl/inst_0/px4.log`:若卡在 `gz_bridge` 无后续、或大量刷屏 → 多为负载过高/lockstep 卡;若 `xcb`/GL 报错 → Xvfb/软件 GL 未生效 |
 
-**本会话已验证**:单机 `make px4_sitl gz_x500` 可启动、`gz_bridge` 连通世界(`world: default, model name: x500_0`);未在本机跑通多机(因本机被 YOLO 训练占满,按约定不占用资源)。**多机 STANDALONE 就绪需首次在空闲环境按此冒烟逐步验证(1→4→8)。**
+**当前已验证**:官方 PX4 v1.15.4 源码构建已完成单机完整飞行、4 机完整飞行和 8/8 heartbeat；
+6 个 8 机场景采用逐场景全新机队执行并全部产出 `pass=true` 报告，详见 §8.7。
 
 ---
 
@@ -64,21 +65,28 @@ cd /media/hello/data1/Jinqiang/QGC/qgroundcontrol/swarm_ext/sim
 
 **前置**:`./launch_swarm_sitl.sh 8` 起 8 机并确认 `就绪 8/8`。另开终端运行下列场景。每个场景产出 JSON 报告,`pass=true` 为通过。
 
+严格验收时，**每个飞行场景使用一套全新机队**：启动 8 机 → 只跑一个场景 → 停止全部实例 →
+重新启动后再跑下一个。PX4 估计器、预检和故障注入状态会跨场景保留，共用一套机队顺序跑完会
+污染后续结果。`regression.py --dry-run` 可一次检查所有定义；在线回归须由外层负责逐场景重启。
+
 ```bash
-cd .../swarm_ext/sim
-for s in scenarios/*.json; do
-  python3 run_scenario.py "$s" --report "/tmp/report_$(basename "$s" .json).json"
-done
+# 终端 A：每个场景前重新执行
+WORK_DIR=/tmp/qgc_sitl_case_01 ./launch_swarm_sitl.sh 8 ~/PX4-Autopilot gz
+
+# 终端 B：本轮只执行一个场景
+python3 run_scenario.py scenarios/01_area_search.json \
+  --report /tmp/report_01_area_search.json
+# 场景结束后在终端 A 停止机队，再用新 WORK_DIR 启动下一场景
 ```
 
 | # | 场景 | 目的 | 关键动作 | 通过判据 |
 |---|---|---|---|---|
-| 01 | `01_area_search` | 起飞→覆盖→完成→返航闭环 | wait_all_online → arm → takeoff → wait_airborne → rtl → wait_disarmed_or_low | 全程步骤 ok、总耗时 < `max_total_sec` |
-| 02 | `02_formation_cruise` | 机队楔形巡航收敛保持 | takeoff → 保持 → 观测 | 全机在空、无掉线 |
-| 03 | `03_single_fault` | 单机故障隔离 | `kill_instance` 杀 1 架 → `check_online_count` | 其余机在线数正确、离线机可见 |
-| 04 | `04_link_degrade` | 链路退化与恢复 | `freeze_instance`(SIGSTOP/CONT) | 冻结期遥测超时、恢复后重新在线 |
+| 01 | `01_area_search` | 区域搜索飞行骨架 | 8 机起飞→保持→RTL | 全机越过高度门槛并落地；覆盖航线上传属 L2 |
+| 02 | `02_formation_cruise` | 编队巡航飞行骨架 | 8 机起飞→保持→RTL | 全机越过高度门槛并落地；楔形几何属 L2 |
+| 03 | `03_single_fault` | 单机故障隔离 | 安全移除模型后 `kill_instance` → `check_online_count` | 余下 7/7 在线、返航、落地 |
+| 04 | `04_link_degrade` | GCS 链路退化与恢复 | `degrade_mavlink` 丢弃目标源端口 UDP 20s | 目标离线、余下 7 在线、目标恢复后 8/8 |
 | 05 | `05_emergency_stop` | **一键中止时延**(验收) | `measure_pause_latency` 全体 DO_REPOSITION → COMMAND_ACK | **各机 ACK 时延 ≤ 1000ms**、`pause_latency.pass=true` |
-| 06 | `06_perception_feed` | 感知链路馈送 | `perception_feed` 跑感知服务→UDP 15600 | 服务进程正常退出、无异常 |
+| 06 | `06_perception_feed` | 感知链路馈送 | `perception_feed` 跑感知服务→UDP 15600 | 航迹批次≥25、发送心跳≥1Hz；误差/接收时延属 L2 |
 
 > **验收重点场景 05**:`report.pause_latency.per_vehicle_ms` 即"一键中止响应 ≤1s"的实测证据。`--dry-run` 可只校验场景定义不连机队。
 
@@ -120,7 +128,7 @@ done
   - 步骤⑤:2 号机**恢复**接受自动下发(解除接管)。
   - locale 无关:界面语言切中文时行为一致(判定走固件规范飞行模式访问器,非字符串)。
 
-> 📋 逐条可勾选验收见 `新功能验收checklist.md` **A 节**(A1 让路 / A2 逐机粒度 / A3 交还恢复 / A4 locale 安全 / A5 不误让路 / A6 AI 路径守门)。
+> 📋 逐条可勾选验收见 `新功能验收checklist.md` **A 节**(A1 让路 / A2 逐机粒度 / A3 交还恢复 / A4 locale 安全 / A5 不误让路 / A6 AI 路径守门 / A7 延时与持续控制复检)。
 
 ### 4.6 任务持久化与重启恢复 ★新
 - **目的**:多阶段任务运行中软件重启,不自动续飞、恢复为待确认。
@@ -160,7 +168,7 @@ done
 | 指标 | 目标 | 来源 | 层 |
 |---|---|---|---|
 | 一键中止响应时延 | 各机 ACK ≤ **1s** | 场景 05 `pause_latency` | L1 |
-| 单机故障隔离 | 杀 1 机,其余在线数正确 | 场景 03 | L1 |
+| 单机故障隔离 | 安全移除模型并杀 1 机,其余在线数正确 | 场景 03 | L1 |
 | 多机不串号 | N 机 sysid 1..N 独立接入、指令不串机 | 冒烟就绪计数 + L2 观察 | L1+L2 |
 | 编队几何收敛 | 僚机收敛到设定队形/间距 | 4.2 | L2 |
 | 约束 error 拦截 | 超围栏/电量不足计划被挂起不下发 | 4.4 | L2 |
@@ -181,8 +189,10 @@ done
 ### 6.2 headless 看 QGC 界面(L2 可选方案)
 无物理显示器时,可 `Xvfb :99 + x11vnc -display :99 + noVNC` 远程查看 QGC 界面执行 L2。注意软件 GL 下 QtQuick 复杂场景性能有限。
 
-### 6.3 本机实测状态(2026-08-21)
-本机 40 核(load 12，YOLO 训练仅占约 11 核当量、仍有余量)已完成 SITL 实测,结果见 **§8**：单机/多机 heartbeat 全通、一键中止时延达标；起飞类场景受 PX4 arming 的 EKF yaw check 阻塞(PX4 SITL 飞控层，非集群软件缺陷，附解决方向)。
+### 6.3 本机实测状态(2026-08-25)
+本机 40 核、Gazebo Sim 7.9、PX4 `v1.15.4-4-g85df8c2281` 已完成 1/4/8 机递进测试。
+起飞预检偶有暂时拒绝，运行器通过有限重试并在全体预检通过后统一重新解锁解决；不是放宽 ACK
+判定。完整结果和证据边界见 §8.7。
 
 ---
 
@@ -190,13 +200,14 @@ done
 
 | 部分 | 现状 | 阻塞/依赖 |
 |---|---|---|
-| SITL 环境启动(单机/多机) | ✅ **实测通过**(4/4 秒级就绪) | 已修 GZ_SIM_RESOURCE_PATH，无阻塞 |
+| SITL 环境启动(单机/多机) | ✅ **实测通过**(1/4/8) | 已修 GZ_SIM_RESOURCE_PATH，无阻塞 |
 | run_scenario 驱动通路 | ✅ **实测通过**(命令下发+ACK+时延) | 无 |
-| 一键中止 ≤1s 时延 | ✅ **实测达标**(4 机 max 4.3ms) | 无 |
-| L1 飞行场景(起飞/编队/搜索/返航) | ⚠ **受阻** | PX4 arming EKF yaw check(见 §8.4) |
-| L2 QGC 应用用例(4.1–4.11) | 用例已设计、未执行 | 需显示环境 + 起飞可用 |
+| 一键中止 ≤1s 时延 | ✅ **实测达标**(8 机 max 16.3ms) | 无 |
+| L1 飞行场景 | ✅ **6/6 隔离报告通过** | 01/02 仅验证飞行骨架；06 已验航迹批次/发送心跳，未验 COP/接收时延 |
+| L2 QGC 应用用例(4.1–4.11) | 用例已设计、未执行 | 需可交互显示环境 |
 
-**结论**:SITL 环境本会话已**实测跑通**(推翻此前"受阻"结论)，可用于集群软件测试；地面/MAVLink 契约层(含一键中止 ≤1s 核心验收)已实测达标。**唯一遗留**是 PX4 v1.15 gz SITL 的 arming EKF yaw 检查阻挡起飞(飞控层，非集群软件问题)——解决后所有飞行场景(L1 飞行 + L2 编队/租约)即可执行，方向见 §8.4。
+**结论**:SITL 环境和 L1/MAVLink 契约层已跑通，8 机核心指标达标。仍不能据此宣称 QGC 内部
+SwarmManager 编队、覆盖规划、租约和 COP 界面已端到端通过；这些必须按 §4 执行 L2 联调。
 
 ---
 
@@ -248,6 +259,33 @@ SITL 从"完全受阻"推进到：**环境跑通(单机+多机 4/4) + 测试驱�
 
 **结论强化**：gz(yaw estimate error) 与 jmavsim(arm temporarily rejected) 拒因不同，但**都卡在 PX4 v1.15.4 SITL 的 arming preflight**——根因在 **PX4 固件/参数层，非仿真后端、非集群软件**。彻底打通起飞需 PX4 SITL 专门调试(EKF/arming 参数深挖，或换 PX4 版本/airframe)，属独立于集群软件的固件任务。**集群软件测试的核心(gz 多机 4/4 + 一键中止 ≤1s)已由 §8.2/8.3 达成，不受此阻塞影响。**
 
+### 8.7 起飞与 8 机隔离回归打通(2026-08-25，覆盖 §8.4–8.6 的旧阻塞结论)
+
+后续定位表明，主要问题在场景驱动器而非需要放宽 PX4 健康检查：旧 TAKEOFF 把相对高度当成
+AMSL 高度，并发送 0 经纬度；共享 UDP 上又会收到非目标实例的拒绝 ACK。修正为“当前 AMSL +
+相对目标高度”、正确 NaN 参数以及按目标 sysid 等待接受 ACK 后，单机和 4/8 机均能正常起飞。
+对启动期暂时预检拒绝采用 60 秒有限重试；若发生重试，全体在地面统一上锁/重新解锁，避免先解锁
+实例在等待时触发 PX4 预飞自动上锁。
+
+| 实测项 | 结果 | 关键证据 |
+|---|---|---|
+| 单机完整飞行 | PASS | arm→takeoff→>5m→RTL→落地，36.3s |
+| 4 机完整飞行 | PASS | 4/4 越过 5m并落地；暂停 ACK max 18.9ms |
+| 8 机场景 01 | PASS | 8/8 越过 25m并落地，80.4s |
+| 8 机场景 02 | PASS | 8/8 越过 30m并落地，106.4s |
+| 8 机场景 03 | PASS | sysid 3 消失后在线 7/7，余下 7 架返航，101.8s |
+| 8 机场景 04 | PASS | sysid 4 链路离线→恢复 7→8，全体返航，93.3s |
+| 8 机场景 05 | PASS | 暂停 ACK max **16.3ms**，73.4s |
+| 场景 06 | PASS | 148 航迹批次、30 心跳/30s，30.7s |
+
+故障注入也做了仿真适配：`SIGSTOP` 单个 PX4 或直接 kill 飞行中实例会破坏共享 Gazebo lockstep，
+甚至触发 ODE 崩溃。因此场景 04 改为只丢弃目标实例发往 14550 的 UDP；场景 03 在 kill 前先通过
+Gazebo remove 服务安全移除模型。两者都保留严格的离线/恢复/在线数断言。
+
+**证据边界**：01/02 尚未自动操作定制 QGC 的覆盖航线上传和楔形编队，06 尚未自动断言 QGC
+COP 渲染及 JSON 中的精度/时延阈值；这些仍属于 L2。严格飞行回归应逐场景重启全新机队，避免
+估计器、预检与故障状态跨场景污染。
+
 ---
 
 ## 9. 官方 PX4 SITL 环境(打通起飞的推荐路径)
@@ -256,6 +294,10 @@ SITL 从"完全受阻"推进到：**环境跑通(单机+多机 4/4) + 测试驱�
 
 ### 9.1 一键脚本
 `run_official_sitl.sh`：拉官方镜像 → rsync 源码副本(排除本机 build) → 容器内 fresh build → 起 gazebo-classic iris，mavlink 经 `--network host` 直达宿主 14550。
+
+`auto_official_test.sh [机数]` 可做官方 Docker 环境的共享机队连续试跑：循环拉取镜像、启动一个
+具名 SITL 容器、等待 heartbeat 后运行 `regression.py`。它适合冒烟和发现问题；严格验收仍须
+逐场景重启机队。退出清理只针对本次具名容器，不会终止同镜像的其他任务。
 
 ```bash
 cd swarm_ext/sim
@@ -277,7 +319,8 @@ python3 run_scenario.py scenarios/01_area_search.json    --report /tmp/r01.json
 `run_official_sitl.sh <src> <N>` 第 2 参数 >1 时自动走多机：容器内 `make px4_sitl_default gazebo-classic` 编插件 → Xvfb 兜住 `sitl_multiple_run.sh` 末尾硬起的 `gzclient`(该脚本无 HEADLESS 判断) → 起 N 机 gazebo-classic iris。各实例 **GCS mavlink 统一发宿主 14550(sysid=1+i，如 4 机为 2–5)**，`run_scenario.py` 单入口 `udpin:14550` 全收、按 sysid 区分——与 §8.2 gz 4/4 的聚合机制一致，场景 `fleet` 设为 N 即可。建议先 `./run_official_sitl.sh ~/PX4-Autopilot 1` 单机验证 arm/起飞通过，再扩到 4/8。
 
 ### 9.4 预期与边界
-官方环境下 iris 应能正常 arm→takeoff→mission→rtl，从而解锁 L1 飞行场景(01/02) 与 L2 编队/租约用例。**集群软件侧(`src/Swarm/` + `run_scenario.py` + 场景定义)无需任何改动**——只是把机队跑在干净的固件环境里。一键中止 ≤1s 等 §8.3 已达成的指标可在此环境复测确认。
+本地官方 PX4 源码构建的 gz 后端已完成 §8.7 的 L1 飞行闭环；Docker 官方镜像仍可作为干净工具链
+复测路径，但不是当前结果成立的前提。L2 编队/租约/COP 用例仍须启动定制 QGC 执行。
 
 ### 9.5 一键回归(全场景 + 汇总报告)
 机队就绪后，`regression.py` 一键跑完 `scenarios/` 全部场景并汇总(复用 `run_scenario.py` 驱动)：
@@ -288,3 +331,7 @@ python3 regression.py --only 01,05       # 只跑指定场景
 python3 regression.py --dry-run          # 不连机队，仅校验场景定义 + 自检脚本
 ```
 产出 `/tmp/sitl_regression/SUMMARY.md`(Markdown 汇总表：各场景 PASS/FAIL + 一键中止时延 / 故障隔离在线计数等关键指标) + 各场景 `report_*.json`；**退出码 0=全过 / 1=有失败**，可直接接 CI。单场景异常不中断整轮。本会话已 `--dry-run` 自检：6 场景解析全过、汇总格式正确。
+
+> 当前证据边界：本轮实际使用本机官方 PX4 源码 checkout/build；当前 Docker daemon 未发现
+> `px4io/px4-dev-simulation-focal:latest` 或 jammy 镜像。L1 的 1/4/8 机结果见 §8.7，Docker
+> 镜像路径尚未复测。在线多场景严格验收应由外层逐场景重启机队，不应复用一套机队连续执行。
