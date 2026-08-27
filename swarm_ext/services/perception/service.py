@@ -98,7 +98,8 @@ def run_scenario(scn: dict, sink, realtime: bool = False,
     trackers = {cam.sensor_id: MultiObjectTracker() for cam in cams}
     seq = 0
     t0 = time.time()
-    stats = {"frames": 0, "detections": 0, "track_msgs": 0, "bytes": 0}
+    stats = {"frames": 0, "detections": 0, "track_msgs": 0,
+             "heartbeats": 0, "bytes": 0}
 
     for f in range(frames):
         scenario_usec = int(f * dt * 1e6)      # 场景时间（真值插值用）
@@ -136,6 +137,7 @@ def run_scenario(scn: dict, sink, realtime: bool = False,
             for pt, payload in swarm_msgs.encode("heartbeat", hb, seq):
                 sink.send(pt, payload)
                 stats["bytes"] += len(payload)
+            stats["heartbeats"] += 1
         stats["frames"] += 1
         if realtime:
             time.sleep(max(0.0, t0 + (f + 1) * dt - time.time()))
@@ -170,7 +172,8 @@ def main(argv=None):
                          verbose=not args.quiet)
     sink.close()
     print(f"[service] 完成：{stats['frames']} 帧，{stats['detections']} 次检测，"
-          f"{stats['track_msgs']} 条航迹报文，{stats['bytes']} 字节")
+          f"{stats['track_msgs']} 条航迹报文，{stats['heartbeats']} 次心跳，"
+          f"{stats['bytes']} 字节")
     return 0
 
 

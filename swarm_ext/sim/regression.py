@@ -6,7 +6,8 @@
 生成 Markdown 汇总表(结果 / 耗时 / 一键中止时延等) + 退出码(全过 0 / 有failFAIL 1)。
 
 前置：SITL 机队已就绪(如 ./run_official_sitl.sh ~/PX4-Autopilot 8)，
-      场景 fleet 与实际机数一致；mavlink 聚合在宿主 14550。
+      场景 fleet 与实际机数一致；mavlink 聚合在宿主 14550。严格飞行验收应由外层为
+      每个场景重启全新机队；本脚本连续在线执行只适合明确接受跨场景状态复用的场合。
 
 用法：
   python3 regression.py                              # 全跑
@@ -34,6 +35,17 @@ def _metric_of(report: dict) -> str:
     for step in report.get("steps", []):
         if step.get("action", "").startswith("check_online_count") and "actual" in step:
             bits.append(f"在线 {step['actual']}/{step['expect']}")
+        if (step.get("action", "").startswith("degrade_mavlink")
+                and "online_during_drop" in step):
+            during = len(step.get("online_during_drop", []))
+            after = len(step.get("online_after_recovery", []))
+            bits.append(f"链路在线 {during}→{after}")
+        if step.get("action", "").startswith("perception_feed"):
+            stats = step.get("service_stats", {})
+            if stats:
+                bits.append(
+                    f"航迹批次 {stats.get('track_batches')}；"
+                    f"心跳 {stats.get('heartbeat_hz')}Hz")
     return "；".join(bits)
 
 
@@ -56,6 +68,22 @@ def main() -> None:
     if not scenarios:
         print("未找到匹配的场景 JSON", file=sys.stderr)
         sys.exit(2)
+
+    # kill_instance 会永久移除本轮中的一个 SITL 实例。将这类破坏性场景排到最后，
+    # 避免后续场景因机队已不完整而产生与被测功能无关的级联失败。
+    def is_destructive(path: Path) -> bool:
+        try:
+            scenario = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # 解析错误仍留给主循环生成正式失败报告
+            return False
+        return any(step.get("action") == "kill_instance"
+                   for step in scenario.get("steps", []))
+
+    scenarios.sort(key=lambda path: (is_destructive(path), path.name))
+
+    if not args.dry_run and len(scenarios) > 1:
+        print("[regression] 警告：多个在线飞行场景将复用同一机队；严格验收请由外层逐场景重启 "
+              "PX4/Gazebo，并用 --only 每次执行一个场景。", file=sys.stderr)
 
     rows = []
     for scn_path in scenarios:

@@ -14,12 +14,10 @@
 #   3. 无显示服务器上 gz 仍会拉起 GUI 组件（Qt xcb 连不上 display 崩溃）→ 本版起
 #      Xvfb 虚拟显示 + 软件 GL 兜住。
 #
-# ⚠ 关键前提（历史"无 heartbeat"的真正根因）：gz 用 lockstep 同步，仿真时钟依赖
-#   CPU 时间片。若本机正跑重负载任务（如 YOLO 训练，load 接近/超过核数），lockstep
-#   拿不到时间片，heartbeat 会严重延迟甚至发不出。**务必在空闲（低负载）机器运行。**
+# 历史“无 heartbeat”的根因是漏载 gz_env.sh，现已修复。gz lockstep 仍依赖 CPU 时间片，
+#   高负载会降低实时率，因此建议在空闲机器运行，但不会再把资源负载当作启动失败根因。
 #
-# 验证状态：单机启动链路（gz_bridge 连通 world）本会话已验证；多机 STANDALONE 模式
-#   为 PX4 v1.15 惯例，建议首次在空闲环境按下方 heartbeat 探测确认后再跑场景。
+# 验证状态（2026-08-25）：1/4/8 机飞行闭环已实测；8 机一键中止最大 ACK 时延 16.3ms。
 #
 # 多机接入原理：每实例 -i N → MAV_SYS_ID=N+1；GCS 流统一发往 14550，
 #   run_scenario.py / QGC 按 sysid 区分接入多机。
@@ -37,6 +35,9 @@ PX4_BIN="$BUILD/bin/px4"
 DATA_PATH="$BUILD/etc"
 RCS="$BUILD/etc/init.d-posix/rcS"
 
+[[ "$N" =~ ^[0-9]+$ && "$N" -ge 1 ]] || { echo "[launch] 机数须为正整数：$N"; exit 1; }
+[[ "$SPACING" =~ ^[0-9]+$ ]] || { echo "[launch] 初始间距须为非负整数：$SPACING"; exit 1; }
+command -v setsid >/dev/null || { echo "[launch] 缺少 setsid（util-linux）"; exit 1; }
 [[ -x "$PX4_BIN" ]] || { echo "[launch] 未找到 SITL 二进制：$PX4_BIN"; \
     echo "[launch] 请先在 $PX4_DIR 执行：make px4_sitl gz_x500"; exit 1; }
 [[ -f "$RCS" ]] || { echo "[launch] 未找到启动脚本 rcS：$RCS"; exit 1; }
@@ -45,8 +46,8 @@ RCS="$BUILD/etc/init.d-posix/rcS"
 LOAD1=$(awk '{print $1}' /proc/loadavg)
 NCPU=$(nproc)
 echo "[launch] 机数=$N 后端=$BACKEND 模型=$MODEL 当前 load=$LOAD1 / CPU=$NCPU"
-awk -v l="$LOAD1" -v c="$NCPU" 'BEGIN{ if (l > c*0.7) \
-    print "[launch] ⚠ 负载偏高：gz lockstep 可能拿不到足够 CPU，heartbeat 会延迟/超时。建议空闲时运行。" }'
+awk -v l="$LOAD1" -v c="$NCPU" \
+    'BEGIN { if (l > c*0.7) print "[launch] ⚠ 负载偏高：gz lockstep 实时率可能下降，建议空闲时运行。" }'
 
 # ---- 无显示环境：Xvfb 兜住 gz GUI + 软件 GL ----
 XVFB_PID=""
@@ -68,8 +69,10 @@ export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe   # 无 GPU 时软件渲�
 GZ_ENV="$BUILD/rootfs/gz_env.sh"
 if [[ -f "$GZ_ENV" ]]; then
     export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}"   # 防 set -u 下 gz_env.sh 报 unbound
+    set +u
     # shellcheck disable=SC1090
-    set +u; source "$GZ_ENV"; set -u
+    source "$GZ_ENV"
+    set -u
     echo "[launch] 已加载 gz 环境：$GZ_ENV"
 else
     export PX4_GZ_MODELS="$PX4_DIR/Tools/simulation/gz/models"
@@ -81,44 +84,58 @@ fi
 mkdir -p "$WORK_DIR"
 PIDS=()
 cleanup() {
+    trap - EXIT INT TERM
     echo "[launch] 停止全部 SITL 实例..."
-    for pid in "${PIDS[@]:-}"; do [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true; done
-    pkill -f "$BUILD/bin/px4" 2>/dev/null || true
-    # gz server 是独立 ruby 进程(px4 退出后仍存活)，按命令行清理(脚本自身命令行不含 'gz sim'，安全)
-    for gzpid in $(ps -eo pid,args | grep '[g]z sim' | awk '{print $1}'); do kill -9 "$gzpid" 2>/dev/null || true; done
-    [[ -n "$XVFB_PID" ]] && kill "$XVFB_PID" 2>/dev/null || true
+    for pid in "${PIDS[@]}"; do
+        if kill -0 -- "-$pid" 2>/dev/null; then
+            kill -- "-$pid" 2>/dev/null || true
+        fi
+    done
+    if [[ -n "$XVFB_PID" ]]; then
+        kill "$XVFB_PID" 2>/dev/null || true
+    fi
     wait 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-for i in $(seq 0 $((N-1))); do
+for ((i = 0; i < N; i++)); do
     INST="$WORK_DIR/inst_$i"
     mkdir -p "$INST"
     POSE_X=$((i * SPACING))
     # 实例 0 拉起 gz server；其余 STANDALONE 连同一 server（否则各起一个 server 会冲突）
-    GZ_STANDALONE=""
-    [[ $i -gt 0 ]] && GZ_STANDALONE="PX4_GZ_STANDALONE=1"
+    GZ_STANDALONE=()
+    if [[ $i -gt 0 ]]; then
+        GZ_STANDALONE=("PX4_GZ_STANDALONE=1")
+    fi
     case "$BACKEND" in
         gz)
-            env $GZ_STANDALONE \
+            setsid env "${GZ_STANDALONE[@]}" \
                 PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}" \
                 PX4_SIM_MODEL="$MODEL" \
                 PX4_GZ_MODEL_POSE="${POSE_X},0" \
                 HEADLESS=1 \
                 "$PX4_BIN" -i "$i" "$DATA_PATH" -s "$RCS" -w "$INST" -d \
+                < /dev/null \
                 > "$INST/px4.log" 2>&1 &
             ;;
         gazebo-classic|jmavsim|none)
-            env PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}" \
+            setsid env PX4_SYS_AUTOSTART="${PX4_SYS_AUTOSTART:-4001}" \
                 "$PX4_BIN" -i "$i" "$DATA_PATH" -s "$RCS" -w "$INST" -d \
+                < /dev/null \
                 > "$INST/px4.log" 2>&1 &
             ;;
         *) echo "[launch] 未知后端：$BACKEND"; exit 1 ;;
     esac
-    PIDS+=($!)
+    PIDS+=("$!")
     echo "[launch] 实例 $i 启动 (pid ${PIDS[-1]}, sysid $((i+1)), pose ${POSE_X},0, 日志 $INST/px4.log)"
     # 实例 0 需多给几秒让 gz server 起来，后续实例连它
-    [[ $i -eq 0 ]] && sleep 6 || sleep 2
+    if [[ $i -eq 0 ]]; then
+        sleep 6
+    else
+        sleep 2
+    fi
 done
 
 echo "[launch] 全部 $N 实例已拉起，探测 heartbeat 就绪（最多 120s）..."

@@ -1,7 +1,7 @@
 {
   "name": "03 单机故障注入（8 机，任务中 kill 1 机）",
   "fleet": 8,
-  "description": "巡航阶段 kill 3 号机 SITL 进程模拟失联坠机，验证：其余机不受影响、任务状态机超时保护、面板离线可见",
+  "description": "巡航阶段先从共享 Gazebo 世界安全移除 3 号机模型，再 kill 对应 SITL 进程模拟单机消失，验证：其余机不受影响、任务状态机超时保护、面板离线可见",
   "steps": [
     {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
     {"t": 0,  "action": "arm_all"},

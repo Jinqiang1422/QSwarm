@@ -24,9 +24,19 @@ N="${2:-1}"
 MODEL="${3:-iris}"
 IMG="px4io/px4-dev-simulation-focal:latest"
 COPY="/tmp/PX4-official-src"
+CONTAINER_NAME="${QGC_SITL_CONTAINER_NAME:-qgc-px4-sitl-$$}"
 
 [[ -d "$PX4_SRC" ]] || { echo "[official] 未找到 PX4 源码：$PX4_SRC"; exit 1; }
 [[ "$N" =~ ^[0-9]+$ ]] || { echo "[official] 机数须为整数：$N"; exit 1; }
+[[ "$N" -ge 1 ]] || { echo "[official] 机数须大于 0：$N"; exit 1; }
+[[ "$CONTAINER_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]] \
+    || { echo "[official] 非法容器名：$CONTAINER_NAME"; exit 1; }
+command -v docker >/dev/null || { echo "[official] 缺少 docker"; exit 1; }
+command -v rsync >/dev/null || { echo "[official] 缺少 rsync"; exit 1; }
+if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    echo "[official] 容器名已被占用：$CONTAINER_NAME（请先处理该容器或设置 QGC_SITL_CONTAINER_NAME）"
+    exit 1
+fi
 
 echo "[official] 0) 确保官方镜像在本地(不在则拉取，走 docker daemon 代理)..."
 docker image inspect "$IMG" >/dev/null 2>&1 || docker pull "$IMG"
@@ -52,6 +62,6 @@ fi
 echo "[official]    mavlink → 宿主 14550(所有实例聚合，按 sysid 区分)；另开终端跑 run_scenario.py"
 echo "[official]    Ctrl+C 停止"
 # --network host：容器 mavlink UDP 直达宿主(SITL headless 无需 X11，无串号风险)
-docker run --rm --network host \
+docker run --rm --name "$CONTAINER_NAME" --network host \
     -v "$COPY":/px4 -w /px4 \
     "$IMG" bash -lc "git config --global --add safe.directory /px4 && ${RUN}"
