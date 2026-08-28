@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003
 """regression.py — 一键跑完 scenarios/ 所有场景并汇总 pass/fail + 关键指标。
 
 复用 run_scenario.py 的驱动逻辑，遍历全部场景 → 逐个跑 → 收集报告 →
-生成 Markdown 汇总表(结果 / 耗时 / 一键中止时延等) + 退出码(全过 0 / 有failFAIL 1)。
+生成 Markdown 汇总表(结果 / 耗时 / 一键中止时延等) + 退出码(全过 0 / 有失败 1)。
 
 前置：SITL 机队已就绪(如 ./run_official_sitl.sh ~/PX4-Autopilot 8)，
       场景 fleet 与实际机数一致；mavlink 聚合在宿主 14550。严格飞行验收应由外层为
@@ -15,13 +15,14 @@
   python3 regression.py --dry-run                    # 不连机队，仅校验场景定义+自检脚本
   python3 regression.py --conn udpin:0.0.0.0:14550 --out /tmp/sitl_regression
 """
+
 import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import run_scenario as rs  # noqa: E402  复用同目录驱动
+import run_scenario as rs  # 复用同目录驱动
 
 
 def _metric_of(report: dict) -> str:
@@ -35,8 +36,7 @@ def _metric_of(report: dict) -> str:
     for step in report.get("steps", []):
         if step.get("action", "").startswith("check_online_count") and "actual" in step:
             bits.append(f"在线 {step['actual']}/{step['expect']}")
-        if (step.get("action", "").startswith("degrade_mavlink")
-                and "online_during_drop" in step):
+        if step.get("action", "").startswith("degrade_mavlink") and "online_during_drop" in step:
             during = len(step.get("online_during_drop", []))
             after = len(step.get("online_after_recovery", []))
             bits.append(f"链路在线 {during}→{after}")
@@ -44,8 +44,8 @@ def _metric_of(report: dict) -> str:
             stats = step.get("service_stats", {})
             if stats:
                 bits.append(
-                    f"航迹批次 {stats.get('track_batches')}；"
-                    f"心跳 {stats.get('heartbeat_hz')}Hz")
+                    f"航迹批次 {stats.get('track_batches')}；心跳 {stats.get('heartbeat_hz')}Hz"
+                )
     return "；".join(bits)
 
 
@@ -76,35 +76,46 @@ def main() -> None:
             scenario = json.loads(path.read_text(encoding="utf-8"))
         except Exception:  # 解析错误仍留给主循环生成正式失败报告
             return False
-        return any(step.get("action") == "kill_instance"
-                   for step in scenario.get("steps", []))
+        return any(step.get("action") == "kill_instance" for step in scenario.get("steps", []))
 
     scenarios.sort(key=lambda path: (is_destructive(path), path.name))
 
     if not args.dry_run and len(scenarios) > 1:
-        print("[regression] 警告：多个在线飞行场景将复用同一机队；严格验收请由外层逐场景重启 "
-              "PX4/Gazebo，并用 --only 每次执行一个场景。", file=sys.stderr)
+        print(
+            "[regression] 警告：多个在线飞行场景将复用同一机队；严格验收请由外层逐场景重启 "
+            "PX4/Gazebo，并用 --only 每次执行一个场景。",
+            file=sys.stderr,
+        )
 
     rows = []
     for scn_path in scenarios:
         try:
             scn = json.loads(scn_path.read_text(encoding="utf-8"))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             rows.append((scn_path.stem, "(解析失败)", "FAIL", 0, "", str(e)))
             continue
-        print(f"\n===== 跑场景 {scn_path.stem}: {scn.get('name', '')} "
-              f"(机队 {scn.get('fleet', 8)} 架){'（dry-run）' if args.dry_run else ''} =====",
-              flush=True)
+        print(
+            f"\n===== 跑场景 {scn_path.stem}: {scn.get('name', '')} "
+            f"(机队 {scn.get('fleet', 8)} 架){'（dry-run）' if args.dry_run else ''} =====",
+            flush=True,
+        )
         try:
             report = rs.run_scenario(scn, args.conn, args.dry_run)
-        except Exception as e:  # noqa: BLE001  单场景异常不中断整轮回归
+        except Exception as e:  # 单场景异常不中断整轮回归
             report = {"pass": False, "error": str(e), "total_sec": 0}
         (out_dir / f"report_{scn_path.stem}.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        rows.append((scn_path.stem, scn.get("name", ""),
-                     "PASS" if report.get("pass") else "FAIL",
-                     report.get("total_sec", 0), _metric_of(report),
-                     report.get("error", "")))
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        rows.append(
+            (
+                scn_path.stem,
+                scn.get("name", ""),
+                "PASS" if report.get("pass") else "FAIL",
+                report.get("total_sec", 0),
+                _metric_of(report),
+                report.get("error", ""),
+            )
+        )
 
     n_pass = sum(1 for r in rows if r[2] == "PASS")
     n_fail = len(rows) - n_pass

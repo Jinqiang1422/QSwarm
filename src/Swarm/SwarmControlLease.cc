@@ -19,6 +19,17 @@ QString SwarmControlLease::requestLease(int vehicleId, const QString& taskId, co
     return ls.token;
 }
 
+QString SwarmControlLease::requestLeaseForMode(int vehicleId, const QString& taskId, const QString& op, qint64 nowMs,
+                                               const QString& mode, const QStringList& autonomousModes,
+                                               bool operatorAuthorized, qint64 ttlMs)
+{
+    if (!operatorAuthorized && !isAutonomousMode(mode, autonomousModes)) {
+        setManualOverride(vehicleId, true);
+        return {};
+    }
+    return requestLease(vehicleId, taskId, op, nowMs, ttlMs);
+}
+
 bool SwarmControlLease::renewLease(int vehicleId, qint64 nowMs, qint64 ttlMs)
 {
     auto it = _leases.find(vehicleId);

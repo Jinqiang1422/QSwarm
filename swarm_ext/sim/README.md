@@ -6,7 +6,7 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 ## 组成
 
 | 文件 | 说明 |
-|---|---|
+| --- | --- |
 | `SITL测试流程.md` | **分层测试流程设计**：L1 机队/MAVLink 契约（自动化）+ L2 QGC 应用逻辑（半自动），覆盖全部功能域与验收指标 |
 | `launch_swarm_sitl.sh` | 一键拉起 N 机 PX4 SITL（v2 修正版，默认 4 机，gz 后端，内置 Xvfb + 软件 GL + heartbeat 就绪探测 + 负载预警） |
 | `scenarios/*.json` | 6 个场景定义：时间线动作 + 故障注入 + 通过准则 |
@@ -14,14 +14,17 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 | `regression.py` | **一键回归**：跑完全部场景 + 汇总 Markdown 报告(PASS/FAIL + 关键指标)，退出码可接 CI，`--dry-run` 自检 |
 | `run_official_sitl.sh` | **官方 PX4 SITL docker 方案**：拉官方镜像 + 源码副本 fresh build，打通起飞(本机固件环境受阻的推荐路径，见测试流程 §9) |
 | `auto_official_test.sh` | 官方 Docker 共享机队试跑：定向管理单个容器；严格验收仍须逐场景重启机队 |
-| `新功能验收checklist.md` | 控制租约 / 任务持久化两项新功能的可勾选验收单(A 7 例 / B 5 例) |
+| `新功能验收checklist.md` | 控制租约 / 任务持久化两项新功能的可勾选验收单(A 8 例 / B 5 例) |
 
 ## 控制安全与可靠性（Lattice 安全收尾）
 
 控制租约（`SwarmControlLease`）与任务持久化（`SwarmPersistence`）的核心安全逻辑已由容器
 单测覆盖（`tst_lease` / `tst_persistence` / `tst_pipeline::leaseGatesAutomation`），不依赖 SITL：
+
 - 集成层用 Vehicle/FirmwarePlugin 的规范飞行模式访问器（Mission/Pause/RTL/SmartRTL/Land/Follow/
-  Goto/Takeoff）构成自主模式集；仅在自动化已有租约时，集合外的模式切换才判定为人工接管，
+  Goto/Takeoff）构成自主模式集；已持有租约时，集合外的模式切换立即判定为人工接管；
+  首次申请租约时，未经人工授权的 AI/任务路径不得从手动、Offboard 或未知模式抢占控制；
+  面板直接指令、已确认 AI 计划和模板操作视为显式人工授权，
   与 `flightMode()` 同 tr() 上下文、locale 一致；集合外（操作员手动直控 / Offboard 外部控制 / 未知）
   → 该机租约立即释放；批量指令在排队和真正触发时双重检查，持续编队和任务上传也使用同一逐机闸门。
   切回自主模式后可重新申请租约；有效编队控制会续期租约，不在本地化显示名上硬编码字面量
@@ -35,7 +38,7 @@ SITL 启动链路已在官方 PX4 v1.15.4 源码构建上完成 1→4→8 递进
 ## 场景清单
 
 | # | 场景 | 验证点 |
-|---|---|---|
+| --- | --- | --- |
 | 01 | 区域搜索飞行骨架 | 8 机起飞/保持/返航；覆盖航线上传仍由 QGC L2 验证 |
 | 02 | 编队巡航飞行骨架 | 8 机起飞/保持/返航；楔形几何收敛仍由 QGC L2 验证 |
 | 03 | 单机故障注入 | 安全移除 Gazebo 模型后 kill 1 机，验证余下 7 机返航 |
@@ -74,7 +77,7 @@ python3 run_scenario.py scenarios/05_emergency_stop.json --dry-run
 ## 2026-08-25 实测结果
 
 | 规模/场景 | 结果 | 关键指标 |
-|---|---|---|
+| --- | --- | --- |
 | 单机冒烟 | PASS | arm→takeoff→RTL→落地，36.3s |
 | 4 机严格飞行 | PASS | 4/4 越过 5m并落地；暂停 ACK max 18.9ms |
 | 01 | PASS | 8/8 越过 25m并落地，80.4s |

@@ -246,6 +246,7 @@ private:
     void _requestAutomationLeases(const QString& origin);
     bool _automationAllowedAtDispatch(int vehicleId, bool requireActiveLease, const QString& commandName);
     bool _formationAutomationAllowed(int vehicleId);
+    QStringList _autonomousModes(Vehicle* vehicle) const;
 
     void _loadSettings();
 

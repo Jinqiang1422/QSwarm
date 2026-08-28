@@ -36,6 +36,19 @@
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
 
+namespace {
+bool originHasOperatorAuthorization(const QString& origin, const SwarmTaskController* taskController)
+{
+    if (origin == QStringLiteral("operator") || origin == QStringLiteral("ai_confirmed") ||
+        origin == QStringLiteral("template")) {
+        return true;
+    }
+    // 多阶段任务的两个现有启动入口均是操作员确认 AI 计划或直接点击模板。
+    // 只认可首阶段，后续自动推进仍按当前模式守门。
+    return origin == QStringLiteral("task") && taskController && taskController->currentStageIndex() == 0;
+}
+}  // namespace
+
 Q_APPLICATION_STATIC(SwarmManager, _swarmManagerInstance);
 
 SwarmManager::SwarmManager(QObject* parent)
@@ -513,9 +526,21 @@ void SwarmManager::_forEachVehicleStaggered(const QString& commandName, int stag
 void SwarmManager::_requestAutomationLeases(const QString& origin)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const bool operatorAuthorized = originHasOperatorAuthorization(origin, _taskController);
     for (Vehicle* vehicle : _targetVehicles()) {
         if (vehicle) {
-            _lease.requestLease(vehicle->id(), origin, QStringLiteral("swarm"), nowMs);
+            const QString token =
+                _lease.requestLeaseForMode(vehicle->id(), origin, QStringLiteral("swarm"), nowMs, vehicle->flightMode(),
+                                           _autonomousModes(vehicle), operatorAuthorized);
+            if (token.isEmpty() && _lease.stateOf(vehicle->id()) == SwarmControlLease::MANUAL_OVERRIDE) {
+                SwarmAuditLogger::instance()->log(QStringLiteral("safety"),
+                                                  QStringLiteral("lease_request_blocked_by_mode"),
+                                                  {
+                                                      {QStringLiteral("origin"), origin},
+                                                      {QStringLiteral("vehicle_id"), vehicle->id()},
+                                                      {QStringLiteral("flight_mode"), vehicle->flightMode()},
+                                                  });
+            }
         }
     }
 }
@@ -538,8 +563,14 @@ bool SwarmManager::_automationAllowedAtDispatch(int vehicleId, bool requireActiv
 bool SwarmManager::_formationAutomationAllowed(int vehicleId)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (_lease.stateOf(vehicleId) == SwarmControlLease::OBSERVE_ONLY) {
-        _lease.requestLease(vehicleId, QStringLiteral("formation"), QStringLiteral("swarm"), nowMs);
+    Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(vehicleId);
+    if (!vehicle) {
+        return false;
+    }
+    const SwarmControlLease::State state = _lease.stateOf(vehicleId);
+    if (state == SwarmControlLease::OBSERVE_ONLY || state == SwarmControlLease::RELEASED) {
+        _lease.requestLeaseForMode(vehicleId, QStringLiteral("formation"), QStringLiteral("swarm"), nowMs,
+                                   vehicle->flightMode(), _autonomousModes(vehicle), false /*operatorAuthorized*/);
     }
     if (!_lease.canAutomate(vehicleId, nowMs)) {
         return false;
@@ -1041,15 +1072,7 @@ void SwarmManager::_vehicleAdded(Vehicle* vehicle)
             // 用 Vehicle 规范飞行模式访问器(与 flightMode() 同 tr() 上下文,locale 安全)
             // 构成自主模式集;集合外(操作员手动直控 / Offboard 外部控制 / 未知)让出租约。
             // 切回自主模式即解除接管(可恢复)。
-            QStringList autoModes = {
-                vehicle->missionFlightMode(),  vehicle->pauseFlightMode(), vehicle->rtlFlightMode(),
-                vehicle->smartRTLFlightMode(), vehicle->landFlightMode(),  vehicle->followFlightMode(),
-                vehicle->gotoFlightMode(),
-            };
-            if (FirmwarePlugin* firmwarePlugin = vehicle->firmwarePlugin()) {
-                autoModes.append(firmwarePlugin->takeOffFlightMode());
-            }
-            const bool autonomous = SwarmControlLease::isAutonomousMode(mode, autoModes);
+            const bool autonomous = SwarmControlLease::isAutonomousMode(mode, _autonomousModes(vehicle));
             if (autonomous) {
                 _lease.setManualOverride(vehicle->id(), false);
             } else if (_lease.stateOf(vehicle->id()) == SwarmControlLease::LEASED) {
@@ -1061,6 +1084,22 @@ void SwarmManager::_vehicleAdded(Vehicle* vehicle)
         updateLeaseFromMode(vehicle->flightMode());
     }
     emit vehicleCountChanged();
+}
+
+QStringList SwarmManager::_autonomousModes(Vehicle* vehicle) const
+{
+    if (!vehicle) {
+        return {};
+    }
+    QStringList modes = {
+        vehicle->missionFlightMode(),  vehicle->pauseFlightMode(), vehicle->rtlFlightMode(),
+        vehicle->smartRTLFlightMode(), vehicle->landFlightMode(),  vehicle->followFlightMode(),
+        vehicle->gotoFlightMode(),
+    };
+    if (FirmwarePlugin* firmwarePlugin = vehicle->firmwarePlugin()) {
+        modes.append(firmwarePlugin->takeOffFlightMode());
+    }
+    return modes;
 }
 
 void SwarmManager::_vehicleRemoved(Vehicle* vehicle)

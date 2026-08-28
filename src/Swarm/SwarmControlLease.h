@@ -28,12 +28,17 @@ public:
     };
 
     QString requestLease(int vehicleId, const QString& taskId, const QString& op, qint64 nowMs, qint64 ttlMs = 300000);
+    /// 按当前飞行模式申请租约。非操作员授权路径不得从集合外模式（手动/
+    /// Offboard/未知）首次获取控制，并把该机标记为 MANUAL_OVERRIDE。
+    QString requestLeaseForMode(int vehicleId, const QString& taskId, const QString& op, qint64 nowMs,
+                                const QString& mode, const QStringList& autonomousModes, bool operatorAuthorized,
+                                qint64 ttlMs = 300000);
     /// 仅续期仍有效的租约；已过期或人工接管时拒绝续期。
     bool renewLease(int vehicleId, qint64 nowMs, qint64 ttlMs = 300000);
     /// 设置/解除某机的人工接管态。overridden=true→MANUAL_OVERRIDE;false→若当前接管则
     /// 解除为 OBSERVE_ONLY。解除后需自动化环下一轮 requestLease(由 executeActions 负责)
-    /// 才会重新 canAutomate。集成层仅在已有租约时把集合外模式视为接管，并用 Vehicle/FirmwarePlugin
-    /// 规范飞行模式访问器 + isAutonomousMode 判定 overridden，保证 locale 安全。
+    /// 才会重新 canAutomate。集成层用 Vehicle/FirmwarePlugin 规范飞行模式访问器
+    /// + isAutonomousMode 判定 overridden，保证 locale 安全。
     void setManualOverride(int vehicleId, bool overridden);
     bool canAutomate(int vehicleId, qint64 nowMs) const;
     void release(int vehicleId);
