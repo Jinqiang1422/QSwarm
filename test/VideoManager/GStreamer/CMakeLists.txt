@@ -15,4 +15,7 @@ target_sources(${CMAKE_PROJECT_NAME}
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_qgc_test(GStreamerTest LABELS Integration)
+# Docker's default seccomp profile can reject GLib's close-range operation while
+# spawning gst-plugin-scanner. Scan in-process for this test so plugin coverage is
+# preserved without relaxing the security profile of the entire test container.
+add_qgc_test(GStreamerTest LABELS Integration ENV_MODIFICATION "GST_REGISTRY_FORK=set:no")

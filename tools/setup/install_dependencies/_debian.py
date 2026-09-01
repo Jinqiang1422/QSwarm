@@ -199,12 +199,6 @@ def install_debian(
         if not _c.run_apt_install_with_retry(packages, dry_run, sudo=True):
             return False
 
-        for pkg in DEBIAN_PACKAGES.get("gstreamer_optional", []):
-            if _c.check_apt_package_available(pkg):
-                print(f"\nInstalling optional package: {pkg}")
-                _c.run_apt_install_with_retry([pkg], dry_run, sudo=True)
-            else:
-                print(f"\nSkipping optional package (not available): {pkg}")
     else:
         print("\nSkipping apt package installation (--skip-system-packages)")
 

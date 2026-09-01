@@ -16,6 +16,7 @@ from setup.install_dependencies import (
     PACKAGE_NAME_RE,
     PIPX_PACKAGES,
     _arch,
+    _debian,
     _detect_just_version,
     _fedora,
     _windows,
@@ -65,6 +66,25 @@ def test_get_debian_packages_all_returns_no_optional() -> None:
     assert "gstreamer1.0-qt6" not in pkgs, (
         "Optional gstreamer pkg should be excluded from default list"
     )
+
+
+def test_install_debian_default_does_not_install_optional_packages() -> None:
+    with (
+        patch.object(_debian._c, "get_apt_update_command", return_value=["apt-get", "update"]),
+        patch.object(_debian._c, "run_command", return_value=True),
+        patch.object(_debian._c, "run_apt_install_with_retry", return_value=True) as apt_install,
+        patch.object(_debian._c, "is_ubuntu", return_value=False),
+        patch.object(_debian._c, "check_apt_package_available", return_value=True),
+        patch.object(_debian._c, "run_pipx_install", return_value=True),
+        patch.object(_debian, "get_debian_packages", return_value=["required-package"]),
+        patch.object(_debian, "resolve_package_alternatives", side_effect=lambda packages: packages),
+        patch.object(_debian, "install_just_debian", return_value=True),
+    ):
+        assert _debian.install_debian() is True
+
+    installed_packages = [package for invocation in apt_install.call_args_list for package in invocation.args[0]]
+    assert "required-package" in installed_packages
+    assert "gstreamer1.0-qt6" not in installed_packages
 
 
 def test_get_debian_packages_category_core() -> None:
