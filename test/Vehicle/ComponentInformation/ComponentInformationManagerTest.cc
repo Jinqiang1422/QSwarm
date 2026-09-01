@@ -79,14 +79,19 @@ void ComponentInformationManagerTest::_progressSignalsStayInRange()
 
     QVERIFY2(maxProgress >= 0.5f,
              qPrintable(QStringLiteral("Expected progress to move forward, got max=%1").arg(maxProgress)));
-    QVERIFY2((maxProgress - minProgress) >= 0.2f,
-             qPrintable(QStringLiteral("Expected meaningful progress delta, got min=%1 max=%2")
-                            .arg(minProgress)
-                            .arg(maxProgress)));
+    QVERIFY2(
+        (maxProgress - minProgress) >= 0.2f,
+        qPrintable(
+            QStringLiteral("Expected meaningful progress delta, got min=%1 max=%2").arg(minProgress).arg(maxProgress)));
 }
 
 void ComponentInformationManagerTest::_requestCanRunMultipleTimes()
 {
+    // Repeated requests intentionally re-run the metadata fallback path. The
+    // MockLink has no general metadata source, so completion includes this warning.
+    ignoreLogMessage("ComponentInformation.RequestMetaDataTypeStateMachine", QtWarningMsg,
+                     QRegularExpression("failed to load metadata"));
+
     auto* manager = vehicle()->compInfoManager();
     QVERIFY(manager);
 

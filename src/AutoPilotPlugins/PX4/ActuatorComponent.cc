@@ -1,22 +1,25 @@
 #include "ActuatorComponent.h"
-#include "MAVLinkLib.h"
-#include "QGCApplication.h"
-#include "GeometryImage.h"
-#include "Actuators/Actuators.h"
-#include "Vehicle.h"
 
 #include <QtQml/QQmlApplicationEngine>
+
+#include "Actuators/Actuators.h"
+#include "GeometryImage.h"
+#include "MAVLinkLib.h"
+#include "QGCApplication.h"
+#include "Vehicle.h"
 
 static bool imageProviderAdded{false};
 
 ActuatorComponent::ActuatorComponent(Vehicle* vehicle, AutoPilotPlugin* autopilot, QObject* parent)
-    : VehicleComponent(vehicle, autopilot, AutoPilotPlugin::UnknownVehicleComponent, parent)
-    , _name(tr("Actuators"))
-    , _actuators(*vehicle->actuators())
+    : VehicleComponent(vehicle, autopilot, AutoPilotPlugin::UnknownVehicleComponent, parent),
+      _name(tr("Actuators")),
+      _actuators(*vehicle->actuators())
 {
-    if (!imageProviderAdded) {
+    QQmlApplicationEngine* const qmlEngine = qgcApp()->qmlAppEngine();
+    if (!imageProviderAdded && qmlEngine) {
         // TODO: qmlAppEngine should not be accessed inside app
-        qgcApp()->qmlAppEngine()->addImageProvider(QLatin1String("actuators"), GeometryImage::VehicleGeometryImageProvider::instance());
+        qmlEngine->addImageProvider(QLatin1String("actuators"),
+                                    GeometryImage::VehicleGeometryImageProvider::instance());
         imageProviderAdded = true;
     }
 

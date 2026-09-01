@@ -8,14 +8,16 @@ class RequestMessageTest : public VehicleTestNoInitialConnect
     Q_OBJECT
 
 public:
-    explicit RequestMessageTest(QObject* parent = nullptr)
-        : VehicleTestNoInitialConnect(parent)
+    explicit RequestMessageTest(QObject* parent = nullptr) : VehicleTestNoInitialConnect(parent)
     {
         setAutopilotType(MAV_AUTOPILOT_INVALID);
     }
 
 signals:
     void resultHandlerCalled();
+
+protected slots:
+    void init() override;
 
 private slots:
     void _performTestCases();

@@ -1,10 +1,11 @@
 #include "RequestMessageTest.h"
 
-#include "MultiVehicleManager.h"
-
 #include <QtCore/QRegularExpression>
+
+#include "MultiVehicleManager.h"
 RequestMessageTest::TestCase_t RequestMessageTest::_rgTestCases[] = {
-    {MockLink::FailRequestMessageNone, MAV_RESULT_ACCEPTED, Vehicle::RequestMessageNoFailure, 1, MAVLINK_MSG_ID_DEBUG, false, 0},
+    {MockLink::FailRequestMessageNone, MAV_RESULT_ACCEPTED, Vehicle::RequestMessageNoFailure, 1, MAVLINK_MSG_ID_DEBUG,
+     false, 0},
     {MockLink::FailRequestMessageCommandAcceptedMsgNotSent, MAV_RESULT_FAILED,
      Vehicle::RequestMessageFailureMessageNotReceived, 1, MAVLINK_MSG_ID_DEBUG, false, 0},
     {MockLink::FailRequestMessageCommandUnsupported, MAV_RESULT_UNSUPPORTED, Vehicle::RequestMessageFailureCommandError,
@@ -13,6 +14,22 @@ RequestMessageTest::TestCase_t RequestMessageTest::_rgTestCases[] = {
      Vehicle::_mavCommandMaxRetryCount, MAVLINK_MSG_ID_DEBUG, false, 0},
 };
 
+void RequestMessageTest::init()
+{
+    VehicleTestNoInitialConnect::init();
+    if (QTest::currentTestFailed() || !vehicle()) {
+        return;
+    }
+
+    // These managers issue their own REQUEST_MESSAGE commands on startup. They
+    // must be disabled for every test slot, not only for the table-driven slot,
+    // otherwise their requests race the duplicate/queue assertions below.
+    vehicle()->_deleteGimbalController();
+    vehicle()->_deleteCameraManager();
+    QVERIFY_TRUE_WAIT(vehicle()->_findMavCommandListEntryIndex(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE) == -1,
+                      TestTimeout::longMs());
+}
+
 void RequestMessageTest::_requestMessageResultHandler(void* resultHandlerData, MAV_RESULT commandResult,
                                                       Vehicle::RequestMessageResultHandlerFailureCode_t failureCode,
                                                       const mavlink_message_t& message)
@@ -20,8 +37,8 @@ void RequestMessageTest::_requestMessageResultHandler(void* resultHandlerData, M
     TestCase_t* testCase = static_cast<TestCase_t*>(resultHandlerData);
     testCase->resultHandlerCalled = true;
     testCase->callbackCount++;
-    QCOMPARE((int)testCase->expectedCommandResult, (int)commandResult);
-    QCOMPARE((int)testCase->expectedFailureCode, (int)failureCode);
+    QCOMPARE((int) testCase->expectedCommandResult, (int) commandResult);
+    QCOMPARE((int) testCase->expectedFailureCode, (int) failureCode);
     if (testCase->expectedFailureCode == Vehicle::RequestMessageNoFailure) {
         QVERIFY(message.msgid == testCase->expectedMessageId);
     }
@@ -31,11 +48,6 @@ void RequestMessageTest::_testCaseWorker(TestCase_t& testCase)
 {
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     Vehicle* vehicle = vehicleMgr->activeVehicle();
-    // Gimbal controller sends message requests when receiving heartbeats, trying to find a gimbal, and it messes with
-    // this test so we disable it
-    vehicle->_deleteGimbalController();
-    // Camera manager also messes with it.
-    vehicle->_deleteCameraManager();
     _mockLink->clearReceivedMavCommandCounts();
     _mockLink->setRequestMessageFailureMode(testCase.failureMode);
     vehicle->requestMessage(_requestMessageResultHandler, &testCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG);
@@ -43,7 +55,8 @@ void RequestMessageTest::_testCaseWorker(TestCase_t& testCase)
     QCOMPARE(testCase.callbackCount, 1);
     QVERIFY_TRUE_WAIT(vehicle->_findMavCommandListEntryIndex(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE) == -1,
                       TestTimeout::longMs());
-    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, testCase.expectedMessageId), testCase.expectedSendCount);
+    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, testCase.expectedMessageId),
+             testCase.expectedSendCount);
     // We should be able to do it twice in a row without any duplicate command problems
     testCase.resultHandlerCalled = false;
     testCase.callbackCount = 0;
@@ -53,7 +66,8 @@ void RequestMessageTest::_testCaseWorker(TestCase_t& testCase)
     QCOMPARE(testCase.callbackCount, 1);
     QVERIFY_TRUE_WAIT(vehicle->_findMavCommandListEntryIndex(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE) == -1,
                       TestTimeout::longMs());
-    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, testCase.expectedMessageId), testCase.expectedSendCount);
+    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, testCase.expectedMessageId),
+             testCase.expectedSendCount);
 }
 
 void RequestMessageTest::_performTestCases()
@@ -70,33 +84,51 @@ void RequestMessageTest::_performTestCases()
 
 void RequestMessageTest::_duplicateCommand()
 {
-    RequestMessageTest::TestCase_t firstRequestCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent, MAV_RESULT_FAILED,
-                                                                                                             Vehicle::RequestMessageFailureMessageNotReceived, 1, MAVLINK_MSG_ID_DEBUG, false, 0};
-    RequestMessageTest::TestCase_t exactDuplicateCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent, MAV_RESULT_FAILED,
-                                                                                                                 Vehicle::RequestMessageFailureDuplicate, 1, MAVLINK_MSG_ID_DEBUG, false, 0};
-    RequestMessageTest::TestCase_t queuedRequestCase = {MockLink::FailRequestMessageNone, MAV_RESULT_ACCEPTED,
-                                                                                                                Vehicle::RequestMessageNoFailure, 2, MAVLINK_MSG_ID_AUTOPILOT_VERSION, false, 0};
+    RequestMessageTest::TestCase_t firstRequestCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent,
+                                                       MAV_RESULT_FAILED,
+                                                       Vehicle::RequestMessageFailureMessageNotReceived,
+                                                       1,
+                                                       MAVLINK_MSG_ID_DEBUG,
+                                                       false,
+                                                       0};
+    RequestMessageTest::TestCase_t exactDuplicateCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent,
+                                                         MAV_RESULT_FAILED,
+                                                         Vehicle::RequestMessageFailureDuplicate,
+                                                         1,
+                                                         MAVLINK_MSG_ID_DEBUG,
+                                                         false,
+                                                         0};
+    RequestMessageTest::TestCase_t queuedRequestCase = {MockLink::FailRequestMessageNone,
+                                                        MAV_RESULT_ACCEPTED,
+                                                        Vehicle::RequestMessageNoFailure,
+                                                        2,
+                                                        MAVLINK_MSG_ID_AUTOPILOT_VERSION,
+                                                        false,
+                                                        0};
 
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     Vehicle* vehicle = vehicleMgr->activeVehicle();
     _mockLink->clearReceivedMavCommandCounts();
     _mockLink->setRequestMessageFailureMode(firstRequestCase.failureMode);
     QVERIFY(false == vehicle->isMavCommandPending(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE));
-    vehicle->requestMessage(_requestMessageResultHandler, &firstRequestCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG);
+    vehicle->requestMessage(_requestMessageResultHandler, &firstRequestCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_DEBUG);
     QVERIFY_TRUE_WAIT(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE) == 1, TestTimeout::shortMs());
     QCOMPARE(firstRequestCase.resultHandlerCalled, false);
 
     // Exact duplicate request should fail immediately and should not send a second MAV_CMD_REQUEST_MESSAGE.
     expectLogMessage("Vehicle.RequestMessageCoordinator", QtWarningMsg,
                      QRegularExpression("failing exact duplicate compId:msgId"));
-    vehicle->requestMessage(_requestMessageResultHandler, &exactDuplicateCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG);
+    vehicle->requestMessage(_requestMessageResultHandler, &exactDuplicateCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_DEBUG);
     verifyExpectedLogMessage();
     QCOMPARE(exactDuplicateCase.resultHandlerCalled, true);
     QCOMPARE(exactDuplicateCase.callbackCount, 1);
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE), exactDuplicateCase.expectedSendCount);
 
     // Different message id should queue and only send after the first request is done.
-    vehicle->requestMessage(_requestMessageResultHandler, &queuedRequestCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+    vehicle->requestMessage(_requestMessageResultHandler, &queuedRequestCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_AUTOPILOT_VERSION);
     QCOMPARE(queuedRequestCase.resultHandlerCalled, false);
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE), exactDuplicateCase.expectedSendCount);
 
@@ -122,14 +154,19 @@ void RequestMessageTest::_compIdAllRequestMessageResultHandler(
     TestCase_t* testCase = static_cast<TestCase_t*>(resultHandlerData);
     testCase->resultHandlerCalled = true;
     testCase->callbackCount++;
-    QCOMPARE((int)testCase->expectedCommandResult, (int)commandResult);
-    QCOMPARE((int)testCase->expectedFailureCode, (int)failureCode);
+    QCOMPARE((int) testCase->expectedCommandResult, (int) commandResult);
+    QCOMPARE((int) testCase->expectedFailureCode, (int) failureCode);
 }
 
 void RequestMessageTest::_compIdAllFailure()
 {
-    RequestMessageTest::TestCase_t testCase = {MockLink::FailRequestMessageCommandNoResponse, MAV_RESULT_FAILED,
-                                               Vehicle::RequestMessageFailureCommandError, 0, MAVLINK_MSG_ID_DEBUG, false, 0};
+    RequestMessageTest::TestCase_t testCase = {MockLink::FailRequestMessageCommandNoResponse,
+                                               MAV_RESULT_FAILED,
+                                               Vehicle::RequestMessageFailureCommandError,
+                                               0,
+                                               MAVLINK_MSG_ID_DEBUG,
+                                               false,
+                                               0};
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     Vehicle* vehicle = vehicleMgr->activeVehicle();
     _mockLink->clearReceivedMavCommandCounts();
@@ -143,29 +180,47 @@ void RequestMessageTest::_compIdAllFailure()
 
 void RequestMessageTest::_duplicateWhileQueued()
 {
-    RequestMessageTest::TestCase_t firstRequestCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent, MAV_RESULT_FAILED,
-                                                       Vehicle::RequestMessageFailureMessageNotReceived, 1, MAVLINK_MSG_ID_DEBUG, false, 0};
-    RequestMessageTest::TestCase_t queuedRequestCase = {MockLink::FailRequestMessageNone, MAV_RESULT_ACCEPTED,
-                                                        Vehicle::RequestMessageNoFailure, 2, MAVLINK_MSG_ID_AUTOPILOT_VERSION, false, 0};
-    RequestMessageTest::TestCase_t duplicateQueuedCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent, MAV_RESULT_FAILED,
-                                                          Vehicle::RequestMessageFailureDuplicate, 1, MAVLINK_MSG_ID_AUTOPILOT_VERSION, false, 0};
+    RequestMessageTest::TestCase_t firstRequestCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent,
+                                                       MAV_RESULT_FAILED,
+                                                       Vehicle::RequestMessageFailureMessageNotReceived,
+                                                       1,
+                                                       MAVLINK_MSG_ID_DEBUG,
+                                                       false,
+                                                       0};
+    RequestMessageTest::TestCase_t queuedRequestCase = {MockLink::FailRequestMessageNone,
+                                                        MAV_RESULT_ACCEPTED,
+                                                        Vehicle::RequestMessageNoFailure,
+                                                        2,
+                                                        MAVLINK_MSG_ID_AUTOPILOT_VERSION,
+                                                        false,
+                                                        0};
+    RequestMessageTest::TestCase_t duplicateQueuedCase = {MockLink::FailRequestMessageCommandAcceptedMsgNotSent,
+                                                          MAV_RESULT_FAILED,
+                                                          Vehicle::RequestMessageFailureDuplicate,
+                                                          1,
+                                                          MAVLINK_MSG_ID_AUTOPILOT_VERSION,
+                                                          false,
+                                                          0};
 
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     Vehicle* vehicle = vehicleMgr->activeVehicle();
     _mockLink->clearReceivedMavCommandCounts();
     _mockLink->setRequestMessageFailureMode(firstRequestCase.failureMode);
 
-    vehicle->requestMessage(_requestMessageResultHandler, &firstRequestCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG);
+    vehicle->requestMessage(_requestMessageResultHandler, &firstRequestCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_DEBUG);
     QVERIFY_TRUE_WAIT(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE) == 1, TestTimeout::shortMs());
 
-    vehicle->requestMessage(_requestMessageResultHandler, &queuedRequestCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+    vehicle->requestMessage(_requestMessageResultHandler, &queuedRequestCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_AUTOPILOT_VERSION);
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE), 1);
     QCOMPARE(queuedRequestCase.resultHandlerCalled, false);
 
     // Duplicate of an already queued request should fail immediately and should not send another command.
     expectLogMessage("Vehicle.RequestMessageCoordinator", QtWarningMsg,
                      QRegularExpression("failing exact duplicate compId:msgId"));
-    vehicle->requestMessage(_requestMessageResultHandler, &duplicateQueuedCase, MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+    vehicle->requestMessage(_requestMessageResultHandler, &duplicateQueuedCase, MAV_COMP_ID_AUTOPILOT1,
+                            MAVLINK_MSG_ID_AUTOPILOT_VERSION);
     verifyExpectedLogMessage();
     QCOMPARE(duplicateQueuedCase.resultHandlerCalled, true);
     QCOMPARE(duplicateQueuedCase.callbackCount, 1);
