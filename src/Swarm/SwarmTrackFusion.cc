@@ -1,18 +1,12 @@
 #include "SwarmTrackFusion.h"
 
-#include "SwarmTypes.h"
-
 #include <QtCore/QtMath>
 
-SwarmTrackFusion::SwarmTrackFusion()
-    : SwarmTrackFusion(Config())
-{
-}
+#include "SwarmTypes.h"
 
-SwarmTrackFusion::SwarmTrackFusion(const Config &cfg)
-    : _cfg(cfg)
-{
-}
+SwarmTrackFusion::SwarmTrackFusion() : SwarmTrackFusion(Config()) {}
+
+SwarmTrackFusion::SwarmTrackFusion(const Config& cfg) : _cfg(cfg) {}
 
 void SwarmTrackFusion::setReference(double lat, double lon)
 {
@@ -29,24 +23,31 @@ double SwarmTrackFusion::FusedTrack::speedMs() const
 QString SwarmTrackFusion::categoryName(int category)
 {
     switch (category) {
-    case 1:  return QStringLiteral("人员");
-    case 2:  return QStringLiteral("车辆");
-    case 3:  return QStringLiteral("船只");
-    case 4:  return QStringLiteral("动物");
-    case 5:  return QStringLiteral("火点");
-    case 6:  return QStringLiteral("烟雾");
-    default: return QStringLiteral("未知");
+        case 1:
+            return QStringLiteral("人员");
+        case 2:
+            return QStringLiteral("车辆");
+        case 3:
+            return QStringLiteral("船只");
+        case 4:
+            return QStringLiteral("动物");
+        case 5:
+            return QStringLiteral("火点");
+        case 6:
+            return QStringLiteral("烟雾");
+        default:
+            return QStringLiteral("未知");
     }
 }
 
 int SwarmTrackFusion::_associate(double eastM, double northM, qint64 monoMs) const
 {
-    int    bestIdx  = -1;
+    int bestIdx = -1;
     double bestDist = _cfg.gateDistM;
     for (int i = 0; i < _tracks.count(); i++) {
-        const FusedTrack &t = _tracks.at(i);
+        const FusedTrack& t = _tracks.at(i);
         if (t.state == QStringLiteral("coasting") && monoMs - t.lastSeenMs > _cfg.dropMs) {
-            continue;                                   // 已失效的不参与关联
+            continue;  // 已失效的不参与关联
         }
         double te, tn;
         SwarmTypes::latLonToLocalM(_refLat, _refLon, t.lat, t.lon, te, tn);
@@ -57,20 +58,20 @@ int SwarmTrackFusion::_associate(double eastM, double northM, qint64 monoMs) con
         const double d = qSqrt((te - eastM) * (te - eastM) + (tn - northM) * (tn - northM));
         if (d < bestDist) {
             bestDist = d;
-            bestIdx  = i;
+            bestIdx = i;
         }
     }
     return bestIdx;
 }
 
-void SwarmTrackFusion::_localToGeo(double eastM, double northM, double &lat, double &lon) const
+void SwarmTrackFusion::_localToGeo(double eastM, double northM, double& lat, double& lon) const
 {
     lat = _refLat + northM / 110540.0;
     const double latAvg = SwarmTypes::degToRad((_refLat + lat) / 2.0);
     lon = _refLon + eastM / (qCos(latAvg) * 111320.0);
 }
 
-int SwarmTrackFusion::ingest(const TrackReport &r, qint64 monoMs)
+int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
 {
     // 感知输入校验闸门(纵深防御):丢弃非法坐标/低置信航迹,防伪造或污染的外部
     // 航迹进入融合 → COP → LLM 态势解读(与指挥侧输入闸门对称);须在设参考点前拦截。
@@ -85,38 +86,38 @@ int SwarmTrackFusion::ingest(const TrackReport &r, qint64 monoMs)
     SwarmTypes::latLonToLocalM(_refLat, _refLon, r.lat, r.lon, eastM, northM);
 
     const int idx = _associate(eastM, northM, monoMs);
-    if (idx < 0) {                                      // 新建融合航迹
+    if (idx < 0) {  // 新建融合航迹
         FusedTrack t;
-        t.fusedId     = _nextFusedId++;
-        t.category    = r.category;
-        t.lat         = r.lat;
-        t.lon         = r.lon;
-        t.ve          = r.ve;
-        t.vn          = r.vn;
-        t.confidence  = r.confidence;
+        t.fusedId = _nextFusedId++;
+        t.category = r.category;
+        t.lat = r.lat;
+        t.lon = r.lon;
+        t.ve = r.ve;
+        t.vn = r.vn;
+        t.confidence = r.confidence;
         t.sensors.insert(r.sensorId);
         t.sourceTrackIds.append(r.trackId);
-        t.hits        = 1;
+        t.hits = 1;
         t.firstSeenMs = monoMs;
-        t.lastSeenMs  = monoMs;
-        t.state       = QStringLiteral("tentative");
+        t.lastSeenMs = monoMs;
+        t.state = QStringLiteral("tentative");
         _tracks.append(t);
         return t.fusedId;
     }
 
-    FusedTrack &t = _tracks[idx];
+    FusedTrack& t = _tracks[idx];
     // 置信度加权融合（权重 = 上报置信度，融合置信度递推）
     const double w = qBound(0.05, r.confidence, 1.0);
-    const double k = w / (t.confidence + w);            // 归一化新息权重
+    const double k = w / (t.confidence + w);  // 归一化新息权重
     double te, tn;
     SwarmTypes::latLonToLocalM(_refLat, _refLon, t.lat, t.lon, te, tn);
-    te += (eastM  - te) * k * 2.0;                      // k*2 ≈ 位置新息增益（经验）
+    te += (eastM - te) * k * 2.0;  // k*2 ≈ 位置新息增益（经验）
     tn += (northM - tn) * k * 2.0;
     _localToGeo(te, tn, t.lat, t.lon);
     t.ve += (r.ve - t.ve) * _cfg.speedDamp;
     t.vn += (r.vn - t.vn) * _cfg.speedDamp;
     t.confidence = qMin(0.99, t.confidence + (1.0 - t.confidence) * w * 0.5);
-    if (r.category != 0) {                              // 非 unknown 类别覆盖
+    if (r.category != 0) {  // 非 unknown 类别覆盖
         t.category = r.category;
     }
     t.sensors.insert(r.sensorId);
@@ -128,21 +129,21 @@ int SwarmTrackFusion::ingest(const TrackReport &r, qint64 monoMs)
     if (t.state == QStringLiteral("tentative") && t.hits >= _cfg.minHits) {
         t.state = QStringLiteral("confirmed");
     } else if (t.state == QStringLiteral("coasting")) {
-        t.state = QStringLiteral("confirmed");          // 重获量测
+        t.state = QStringLiteral("confirmed");  // 重获量测
     }
     return t.fusedId;
 }
 
 void SwarmTrackFusion::prune(qint64 monoMs)
 {
-    for (FusedTrack &t : _tracks) {
+    for (FusedTrack& t : _tracks) {
         const qint64 age = monoMs - t.lastSeenMs;
         if (t.state != QStringLiteral("tentative") && age > _cfg.coastMs) {
             t.state = QStringLiteral("coasting");
         }
     }
     for (int i = _tracks.count() - 1; i >= 0; i--) {
-        const FusedTrack &t = _tracks.at(i);
+        const FusedTrack& t = _tracks.at(i);
         const qint64 age = monoMs - t.lastSeenMs;
         if (age > _cfg.dropMs || (t.state == QStringLiteral("tentative") && age > _cfg.coastMs)) {
             _tracks.removeAt(i);
@@ -153,7 +154,7 @@ void SwarmTrackFusion::prune(qint64 monoMs)
 QList<SwarmTrackFusion::FusedTrack> SwarmTrackFusion::tracks() const
 {
     QList<FusedTrack> out;
-    for (const FusedTrack &t : _tracks) {
+    for (const FusedTrack& t : _tracks) {
         if (t.state != QStringLiteral("tentative")) {
             out.append(t);
         }

@@ -26,49 +26,51 @@
 class SwarmEventDetector
 {
 public:
-    struct Alert {
-        QString      level;         ///< info / warning / critical
-        QString      rule;          ///< low_battery / offline / fence_breach /
-                                    ///< gathering / boundary / speed_burst
-        QString      message;
-        QVariantList relatedIds;    ///< 相关机体/航迹 ID
-        qint64       monoMs = 0;
+    struct Alert
+    {
+        QString level;            ///< info / warning / critical
+        QString rule;             ///< low_battery / offline / fence_breach /
+                                  ///< gathering / boundary / speed_burst
+        QString message;
+        QVariantList relatedIds;  ///< 相关机体/航迹 ID
+        qint64 monoMs = 0;
     };
 
-    struct Config {
+    struct Config
+    {
         double batteryCriticalPct = 20.0;
-        double batteryWarningPct  = 30.0;
-        double gatherRadiusM      = 50.0;
-        int    gatherCount        = 3;
-        double speedBurstMs       = 8.0;    ///< |Δv| 阈值（m/s）
-        double overspeedMs        = 25.0;   ///< 绝对超速阈值（m/s）
-        qint64 cooldownMs         = 30000;
+        double batteryWarningPct = 30.0;
+        double gatherRadiusM = 50.0;
+        int gatherCount = 3;
+        double speedBurstMs = 8.0;  ///< |Δv| 阈值（m/s）
+        double overspeedMs = 25.0;  ///< 绝对超速阈值（m/s）
+        qint64 cooldownMs = 30000;
     };
 
     SwarmEventDetector();
-    explicit SwarmEventDetector(const Config &cfg);
+    explicit SwarmEventDetector(const Config& cfg);
 
-    void setConfig(const Config &cfg) { _cfg = cfg; }
+    void setConfig(const Config& cfg) { _cfg = cfg; }
 
     /// 空域围栏（与约束引擎 fences.json 同构），为空则跳过 fence 类检查
-    void setFences(const QList<QList<QPair<double, double>>> &includePolys,
-                   const QList<QList<QPair<double, double>>> &excludePolys);
+    void setFences(const QList<QList<QPair<double, double>>>& includePolys,
+                   const QList<QList<QPair<double, double>>>& excludePolys);
 
     /// 平台侧检查：输入机体状态快照，返回新告警（内部维护在线/速度历史）
-    QList<Alert> checkVehicles(const QList<SwarmTypes::VehicleState> &vehicles, qint64 monoMs);
+    QList<Alert> checkVehicles(const QList<SwarmTypes::VehicleState>& vehicles, qint64 monoMs);
 
     /// 目标侧检查：输入融合航迹清单
-    QList<Alert> checkTracks(const QList<SwarmTrackFusion::FusedTrack> &tracks, qint64 monoMs);
+    QList<Alert> checkTracks(const QList<SwarmTrackFusion::FusedTrack>& tracks, qint64 monoMs);
 
     /// 告警 → 单行文本（UI/审计共用）
-    static QString alertToText(const Alert &a);
+    static QString alertToText(const Alert& a);
 
 private:
-    bool _cooldownHit(const QString &key, const QString &level, qint64 monoMs);
+    bool _cooldownHit(const QString& key, const QString& level, qint64 monoMs);
 
-    Config                          _cfg;
+    Config _cfg;
     QList<QList<QPair<double, double>>> _includePolys, _excludePolys;
-    QHash<int, bool>                _wasOnline;         ///< vehicleId → 上次在线
-    QHash<int, double>              _lastSpeed;         ///< fusedId → 上次地速
-    QHash<QString, qint64>          _lastFired;         ///< 去抖键 → 上次出警时刻
+    QHash<int, bool> _wasOnline;        ///< vehicleId → 上次在线
+    QHash<int, double> _lastSpeed;      ///< fusedId → 上次地速
+    QHash<QString, qint64> _lastFired;  ///< 去抖键 → 上次出警时刻
 };

@@ -21,8 +21,8 @@
 
 #pragma once
 
-#include <QtCore/QObject>
 #include <QtCore/QJsonObject>
+#include <QtCore/QObject>
 #include <QtCore/QStringList>
 #include <QtQmlIntegration/QtQmlIntegration>
 
@@ -40,46 +40,62 @@ class SwarmAIAgent : public QObject
     QML_ELEMENT
     QML_UNCREATABLE("")
 
-    Q_PROPERTY(QString      apiBaseUrl          READ apiBaseUrl         WRITE setApiBaseUrl       NOTIFY apiBaseUrlChanged)
-    Q_PROPERTY(QString      apiKey              READ apiKey             WRITE setApiKey           NOTIFY apiKeyChanged)
-    Q_PROPERTY(QString      modelName           READ modelName          WRITE setModelName        NOTIFY modelNameChanged)
-    Q_PROPERTY(bool         useFunctionCalling  READ useFunctionCalling WRITE setUseFunctionCalling NOTIFY useFunctionCallingChanged)
-    Q_PROPERTY(bool         busy                READ busy                                           NOTIFY busyChanged)
-    Q_PROPERTY(QStringList  chatLog             READ chatLog                                        NOTIFY chatLogChanged)
-    Q_PROPERTY(bool         planPending         READ planPending                                    NOTIFY planPendingChanged)
-    Q_PROPERTY(QStringList  planSummary         READ planSummary                                    NOTIFY planChanged)
-    Q_PROPERTY(bool         planHasDangerous    READ planHasDangerous                             NOTIFY planChanged)
-    Q_PROPERTY(bool         requireConfirm      READ requireConfirm     WRITE setRequireConfirm   NOTIFY requireConfirmChanged)
-    Q_PROPERTY(QVariantList candidates          READ candidates                                     NOTIFY candidatesChanged)
-    Q_PROPERTY(double       responseTimeSec     READ responseTimeSec                                NOTIFY responseTimeSecChanged)
+    Q_PROPERTY(QString apiBaseUrl READ apiBaseUrl WRITE setApiBaseUrl NOTIFY apiBaseUrlChanged)
+    Q_PROPERTY(QString apiKey READ apiKey WRITE setApiKey NOTIFY apiKeyChanged)
+    Q_PROPERTY(QString modelName READ modelName WRITE setModelName NOTIFY modelNameChanged)
+    Q_PROPERTY(
+        bool useFunctionCalling READ useFunctionCalling WRITE setUseFunctionCalling NOTIFY useFunctionCallingChanged)
+    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(QStringList chatLog READ chatLog NOTIFY chatLogChanged)
+    Q_PROPERTY(bool planPending READ planPending NOTIFY planPendingChanged)
+    Q_PROPERTY(QStringList planSummary READ planSummary NOTIFY planChanged)
+    Q_PROPERTY(bool planHasDangerous READ planHasDangerous NOTIFY planChanged)
+    Q_PROPERTY(bool requireConfirm READ requireConfirm WRITE setRequireConfirm NOTIFY requireConfirmChanged)
+    Q_PROPERTY(QVariantList candidates READ candidates NOTIFY candidatesChanged)
+    Q_PROPERTY(double responseTimeSec READ responseTimeSec NOTIFY responseTimeSecChanged)
     /// 待确认计划各动作的参数 JSON 文本（WP2.3 计划编辑框初始值）
-    Q_PROPERTY(QStringList  pendingPlanParamsJson READ pendingPlanParamsJson                        NOTIFY planChanged)
+    Q_PROPERTY(QStringList pendingPlanParamsJson READ pendingPlanParamsJson NOTIFY planChanged)
     /// WP3.5：周期态势摘要开关与间隔（秒）
-    Q_PROPERTY(bool         situationSummaryEnabled READ situationSummaryEnabled WRITE setSituationSummaryEnabled NOTIFY situationSummaryChanged)
-    Q_PROPERTY(int          situationIntervalSec    READ situationIntervalSec    WRITE setSituationIntervalSec    NOTIFY situationSummaryChanged)
+    Q_PROPERTY(bool situationSummaryEnabled READ situationSummaryEnabled WRITE setSituationSummaryEnabled NOTIFY
+                   situationSummaryChanged)
+    Q_PROPERTY(
+        int situationIntervalSec READ situationIntervalSec WRITE setSituationIntervalSec NOTIFY situationSummaryChanged)
 
 public:
-    explicit SwarmAIAgent(SwarmManager *swarmManager);
+    explicit SwarmAIAgent(SwarmManager* swarmManager);
     ~SwarmAIAgent();
 
-    QString     apiBaseUrl() const       { return _apiBaseUrl; }
-    void        setApiBaseUrl(const QString &url);
-    QString     apiKey() const           { return _apiKey; }
-    void        setApiKey(const QString &key);
-    QString     modelName() const        { return _modelName; }
-    void        setModelName(const QString &model);
-    bool        useFunctionCalling() const { return _useFunctionCalling; }
-    void        setUseFunctionCalling(bool use);
-    bool        busy() const             { return _busy; }
-    QStringList chatLog() const          { return _chatLog; }
-    bool        planPending() const      { return !_pendingPlan.isEmpty() || _pendingTask; }
+    QString apiBaseUrl() const { return _apiBaseUrl; }
+
+    void setApiBaseUrl(const QString& url);
+
+    QString apiKey() const { return _apiKey; }
+
+    void setApiKey(const QString& key);
+
+    QString modelName() const { return _modelName; }
+
+    void setModelName(const QString& model);
+
+    bool useFunctionCalling() const { return _useFunctionCalling; }
+
+    void setUseFunctionCalling(bool use);
+
+    bool busy() const { return _busy; }
+
+    QStringList chatLog() const { return _chatLog; }
+
+    bool planPending() const { return !_pendingPlan.isEmpty() || _pendingTask; }
+
     QStringList planSummary() const;
-    bool        planHasDangerous() const;
-    bool        requireConfirm() const   { return _requireConfirm; }
-    void        setRequireConfirm(bool require);
+    bool planHasDangerous() const;
+
+    bool requireConfirm() const { return _requireConfirm; }
+
+    void setRequireConfirm(bool require);
 
     /// 发送自然语言指令。mapCenterLat/Lon 由 QML 传入当前地图中心（供“当前区域”类指令参照）。
-    Q_INVOKABLE void sendText(const QString &text, double mapCenterLat, double mapCenterLon);
+    Q_INVOKABLE void sendText(const QString& text, double mapCenterLat, double mapCenterLon);
 
     /// 确认执行挂起中的计划（动作序列或多阶段任务）
     Q_INVOKABLE void confirmPlan();
@@ -93,9 +109,11 @@ public:
     /// 测试接口连通性（GET {baseUrl}/models）
     Q_INVOKABLE void testConnection();
 
-    QVariantList candidates() const          { return _candidatesVariant; }
-    double       responseTimeSec() const     { return _responseTimeSec; }
-    QStringList  pendingPlanParamsJson() const;
+    QVariantList candidates() const { return _candidatesVariant; }
+
+    double responseTimeSec() const { return _responseTimeSec; }
+
+    QStringList pendingPlanParamsJson() const;
 
     /// 选择第 index 个候选方案（WP2.2 多候选），进入正常确认/执行流程
     Q_INVOKABLE void selectCandidate(int index);
@@ -105,17 +123,20 @@ public:
 
     /// 编辑待确认计划第 index 项动作的参数（WP2.3 计划可编辑），paramsJson 为参数 JSON 文本；
     /// 编辑后重新过统一校验，不通过则不生效
-    Q_INVOKABLE void updatePendingAction(int index, const QString &paramsJson);
+    Q_INVOKABLE void updatePendingAction(int index, const QString& paramsJson);
 
     /// WP3.5 态势问答：携带最新态势摘要向模型提问（事实须标注来源 [遥测]/[感知]/[推测]）
-    Q_INVOKABLE void askSituation(const QString &question, double mapCenterLat, double mapCenterLon);
+    Q_INVOKABLE void askSituation(const QString& question, double mapCenterLat, double mapCenterLon);
 
     /// WP3.6 联动：critical 告警触发 LLM 处置建议（异步，结果回对话区）
-    Q_INVOKABLE void requestAdvice(const QString &alertText);
+    Q_INVOKABLE void requestAdvice(const QString& alertText);
 
     bool situationSummaryEnabled() const { return _situationSummaryEnabled; }
+
     void setSituationSummaryEnabled(bool enabled);
-    int  situationIntervalSec() const    { return _situationIntervalSec; }
+
+    int situationIntervalSec() const { return _situationIntervalSec; }
+
     void setSituationIntervalSec(int sec);
 
 signals:
@@ -132,59 +153,62 @@ signals:
     void responseTimeSecChanged();
     void situationSummaryChanged();
     /// 运行反馈（连接错误、解析失败、执行结果等）
-    void agentFeedback(const QString &message);
+    void agentFeedback(const QString& message);
 
 private:
-    QString      _systemPromptJson() const;     ///< JSON 模式系统提示词（含输出格式约定）
-    QString      _systemPromptTools() const;    ///< Function Calling 系统提示词（仅规则，格式由 tools 承担）
-    QJsonArray   _toolsJson() const;            ///< OpenAI tools 定义（13 个动作 + 任务编排 2 个）
-    QJsonObject  _buildSwarmContext(double mapCenterLat, double mapCenterLon) const;
-    void         _sendRequest();
-    void         _handleResponse(const QByteArray &body);
-    void         _handleActionsJson(const QJsonArray &actionsJson, const QString &replyText);
-    bool         _handleTaskJson(const QJsonObject &taskObj, QString taskName, QList<SwarmTaskController::Stage> &stages, QStringList &warnings);
-    void         _runTaskTemplate(const QJsonObject &args);
-    void         _handleCandidates(const QJsonObject &args);    ///< WP2.2 多候选方案
-    void         _queueOrExecute(const QList<SwarmAction> &plan);
-    void         _setBusy(bool busy);
-    void         _appendChat(const QString &who, const QString &text);
-    void         _sendSituationSummary();                       ///< WP3.5 周期态势摘要
+    QString _systemPromptJson() const;   ///< JSON 模式系统提示词（含输出格式约定）
+    QString _systemPromptTools() const;  ///< Function Calling 系统提示词（仅规则，格式由 tools 承担）
+    QJsonArray _toolsJson() const;       ///< OpenAI tools 定义（14 个动作/规划 + 4 个任务/候选）
+    QJsonObject _buildSwarmContext(double mapCenterLat, double mapCenterLon) const;
+    void _sendRequest();
+    void _handleResponse(const QByteArray& body);
+    void _handleActionsJson(const QJsonArray& actionsJson, const QString& replyText);
+    bool _handleTaskJson(const QJsonObject& taskObj, QString taskName, QList<SwarmTaskController::Stage>& stages,
+                         QStringList& warnings);
+    void _runTaskTemplate(const QJsonObject& args);
+    void _handleCandidates(const QJsonObject& args);  ///< WP2.2 多候选方案
+    void _queueOrExecute(const QList<SwarmAction>& plan);
+    void _setBusy(bool busy);
+    void _appendChat(const QString& who, const QString& text);
+    void _sendSituationSummary();  ///< WP3.5 周期态势摘要
 
-    SwarmManager         *_swarmManager = nullptr;
-    QNetworkAccessManager *_nam         = nullptr;
-    QNetworkReply         *_reply       = nullptr;
+    SwarmManager* _swarmManager = nullptr;
+    QNetworkAccessManager* _nam = nullptr;
+    QNetworkReply* _reply = nullptr;
 
-    QString _apiBaseUrl;        // 默认 https://api.deepseek.com/v1（可在界面修改）
+    QString _apiBaseUrl;  // 默认 https://api.deepseek.com/v1（可在界面修改）
     QString _apiKey;
-    QString _modelName;         // 默认 deepseek-chat
-    bool    _useFunctionCalling = true;
-    bool    _requireConfirm     = true;
-    bool    _busy               = false;
+    QString _modelName;   // 默认 deepseek-chat
+    bool _useFunctionCalling = true;
+    bool _requireConfirm = true;
+    bool _busy = false;
 
-    QList<QJsonObject>              _history;           ///< 多轮对话（不含 system），定期截断
-    QList<SwarmAction>              _pendingPlan;       ///< 待确认动作序列
-    bool                            _pendingTask = false;
-    QString                         _pendingTaskName;
-    QList<SwarmTaskController::Stage> _pendingStages;   ///< 待确认多阶段任务
-    QStringList                     _chatLog;
-    double                          _lastMapCenterLat = 0.0;
-    double                          _lastMapCenterLon = 0.0;
+    QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断
+    QList<SwarmAction> _pendingPlan;  ///< 待确认动作序列
+    bool _pendingTask = false;
+    QString _pendingTaskName;
+    QList<SwarmTaskController::Stage> _pendingStages;  ///< 待确认多阶段任务
+    QStringList _chatLog;
+    double _lastMapCenterLat = 0.0;
+    double _lastMapCenterLon = 0.0;
 
     /// WP2.2 候选方案（QML 展示于对比视图）
-    struct Candidate {
+    struct Candidate
+    {
         bool isTask = false;
-        QList<SwarmAction> plan;                        ///< 动作型候选
-        QList<SwarmTaskController::Stage> stages;       ///< 模板/任务型候选
+        QList<SwarmAction> plan;                   ///< 动作型候选
+        QList<SwarmTaskController::Stage> stages;  ///< 模板/任务型候选
         QString taskName;
     };
-    QList<Candidate> _candidates;
-    QVariantList     _candidatesVariant;
 
-    double           _responseTimeSec = 0.0;            ///< WP2.6：上次请求响应时延
-    qint64           _requestStartMs  = 0;
+    QList<Candidate> _candidates;
+    QVariantList _candidatesVariant;
+
+    double _responseTimeSec = 0.0;  ///< WP2.6：上次请求响应时延
+    qint64 _requestStartMs = 0;
 
     // ---- WP3.5 态势摘要与问答 ----
-    bool    _situationSummaryEnabled = false;
-    int     _situationIntervalSec    = 60;
-    QTimer *_situationTimer          = nullptr;
+    bool _situationSummaryEnabled = false;
+    int _situationIntervalSec = 60;
+    QTimer* _situationTimer = nullptr;
 };

@@ -22,9 +22,9 @@
 #include <QtTest/QtTest>
 
 #include "SwarmEventDetector.h"
-#include "SwarmTunnelProtocol.h"
 #include "SwarmSituationDigest.h"
 #include "SwarmTrackFusion.h"
+#include "SwarmTunnelProtocol.h"
 #include "SwarmTypes.h"
 #include "SwarmVideoHub.h"
 
@@ -47,15 +47,17 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
-static SwarmTrackFusion::TrackReport makeReport(int trackId, int sensorId,
-                                                double lat, double lon,
-                                                double ve = 0.0, double vn = 0.0,
-                                                double conf = 0.8, int category = 2)
+static SwarmTrackFusion::TrackReport makeReport(int trackId, int sensorId, double lat, double lon, double ve = 0.0,
+                                                double vn = 0.0, double conf = 0.8, int category = 2)
 {
     SwarmTrackFusion::TrackReport r;
-    r.trackId = trackId;  r.sensorId = sensorId;  r.category = category;
-    r.lat = lat;          r.lon = lon;
-    r.ve = ve;            r.vn = vn;
+    r.trackId = trackId;
+    r.sensorId = sensorId;
+    r.category = category;
+    r.lat = lat;
+    r.lon = lon;
+    r.ve = ve;
+    r.vn = vn;
     r.confidence = conf;
     return r;
 }
@@ -67,35 +69,37 @@ void tst_p3modules::fusion_crossSensorMerge()
     fusion.ingest(makeReport(101, 1, 39.90000, 116.40000), 1000);
     const int id2 = fusion.ingest(makeReport(205, 2, 39.90005, 116.40008), 1100);
     const int id3 = fusion.ingest(makeReport(101, 1, 39.90002, 116.40003), 1200);
-    QCOMPARE(fusion.allTracks().count(), 1);                    // 未分裂
+    QCOMPARE(fusion.allTracks().count(), 1);  // 未分裂
     QCOMPARE(id2, id3);
     const auto t = fusion.allTracks().first();
-    QCOMPARE(t.sensors.count(), 2);                             // 双源贡献
-    QVERIFY(t.confidence > 0.8);                                // 多源置信度提升
+    QCOMPARE(t.sensors.count(), 2);  // 双源贡献
+    QVERIFY(t.confidence > 0.8);     // 多源置信度提升
 }
 
 void tst_p3modules::fusion_separateTargets()
 {
     SwarmTrackFusion fusion;
     fusion.ingest(makeReport(1, 1, 39.90000, 116.40000), 1000);
-    fusion.ingest(makeReport(2, 1, 39.90200, 116.40000), 1000); // 相距 ~220m
+    fusion.ingest(makeReport(2, 1, 39.90200, 116.40000), 1000);  // 相距 ~220m
     QCOMPARE(fusion.allTracks().count(), 2);
 }
 
 void tst_p3modules::fusion_lifecycle()
 {
     SwarmTrackFusion::Config cfg;
-    cfg.minHits = 2; cfg.coastMs = 1000; cfg.dropMs = 3000;
+    cfg.minHits = 2;
+    cfg.coastMs = 1000;
+    cfg.dropMs = 3000;
     SwarmTrackFusion fusion(cfg);
     fusion.ingest(makeReport(1, 1, 39.9, 116.4), 0);
     QCOMPARE(fusion.allTracks().first().state, QStringLiteral("tentative"));
-    QCOMPARE(fusion.tracks().count(), 0);                       // tentative 不上清单
+    QCOMPARE(fusion.tracks().count(), 0);  // tentative 不上清单
     fusion.ingest(makeReport(1, 1, 39.9, 116.4), 100);
     QCOMPARE(fusion.allTracks().first().state, QStringLiteral("confirmed"));
     QCOMPARE(fusion.tracks().count(), 1);
-    fusion.prune(2000);                                         // 超 coastMs
+    fusion.prune(2000);  // 超 coastMs
     QCOMPARE(fusion.allTracks().first().state, QStringLiteral("coasting"));
-    fusion.prune(5000);                                         // 超 dropMs
+    fusion.prune(5000);  // 超 dropMs
     QCOMPARE(fusion.allTracks().count(), 0);
 }
 
@@ -118,9 +122,9 @@ void tst_p3modules::videoHub_pixelToGeo()
 void tst_p3modules::videoHub_timestamp()
 {
     SwarmVideoHub hub;
-    const qint64 u1 = hub.noteFrame(1, 500000, 10000);          // 首帧标定
+    const qint64 u1 = hub.noteFrame(1, 500000, 10000);  // 首帧标定
     QCOMPARE(u1, 10000 * 1000);
-    const qint64 u2 = hub.noteFrame(1, 700000, 10200);          // +0.2s 流内
+    const qint64 u2 = hub.noteFrame(1, 700000, 10200);  // +0.2s 流内
     QCOMPARE(u2, 10000 * 1000 + 200000);
 }
 
@@ -128,21 +132,23 @@ void tst_p3modules::event_batteryOffline()
 {
     SwarmEventDetector det;
     SwarmTypes::VehicleState v;
-    v.id = 3; v.online = true; v.batteryPct = 15.0;             // critical
+    v.id = 3;
+    v.online = true;
+    v.batteryPct = 15.0;  // critical
     auto alerts = det.checkVehicles({v}, 1000);
     QCOMPARE(alerts.count(), 1);
     QCOMPARE(alerts.first().level, QStringLiteral("critical"));
     QCOMPARE(alerts.first().rule, QStringLiteral("low_battery"));
 
-    v.batteryPct = 25.0;                                        // warning
+    v.batteryPct = 25.0;  // warning
     alerts = det.checkVehicles({v}, 2000);
     QCOMPARE(alerts.count(), 1);
     QCOMPARE(alerts.first().level, QStringLiteral("warning"));
 
-    alerts = det.checkVehicles({v}, 3000);                      // 冷却期不再报
+    alerts = det.checkVehicles({v}, 3000);  // 冷却期不再报
     QCOMPARE(alerts.count(), 0);
 
-    v.online = false;                                           // 离线跳变
+    v.online = false;  // 离线跳变
     alerts = det.checkVehicles({v}, 4000);
     QCOMPARE(alerts.count(), 1);
     QCOMPARE(alerts.first().rule, QStringLiteral("offline"));
@@ -152,11 +158,14 @@ void tst_p3modules::event_gatheringSpeed()
 {
     SwarmEventDetector det;
     QList<SwarmTrackFusion::FusedTrack> tracks;
-    for (int i = 0; i < 3; i++) {                               // 三目标 ~20m 内
+    for (int i = 0; i < 3; i++) {  // 三目标 ~20m 内
         SwarmTrackFusion::FusedTrack t;
-        t.fusedId = i + 1; t.category = 2;
-        t.lat = 39.9 + i * 0.0001; t.lon = 116.4;
-        t.ve = 1.0; t.vn = 0.0;
+        t.fusedId = i + 1;
+        t.category = 2;
+        t.lat = 39.9 + i * 0.0001;
+        t.lon = 116.4;
+        t.ve = 1.0;
+        t.vn = 0.0;
         tracks.append(t);
     }
     auto alerts = det.checkTracks(tracks, 1000);
@@ -167,8 +176,10 @@ void tst_p3modules::event_gatheringSpeed()
     tracks.first().ve = 12.0;
     alerts = det.checkTracks(tracks, 2000);
     bool hasBurst = false;
-    for (const auto &a : alerts) {
-        if (a.rule == QStringLiteral("speed_burst")) { hasBurst = true; }
+    for (const auto& a : alerts) {
+        if (a.rule == QStringLiteral("speed_burst")) {
+            hasBurst = true;
+        }
     }
     QVERIFY(hasBurst);
 }
@@ -176,31 +187,38 @@ void tst_p3modules::event_gatheringSpeed()
 void tst_p3modules::digest_structure()
 {
     SwarmTypes::VehicleState v;
-    v.id = 1; v.online = true; v.batteryPct = 72.0; v.altRelM = 30.0;
+    v.id = 1;
+    v.online = true;
+    v.batteryPct = 72.0;
+    v.altRelM = 30.0;
     SwarmTrackFusion::FusedTrack t;
-    t.fusedId = 5; t.category = 2; t.lat = 39.901; t.lon = 116.401;
-    t.ve = 2.0; t.vn = 0.0; t.confidence = 0.85;
-    t.sensors.insert(1); t.state = QStringLiteral("confirmed");
-    SwarmEventDetector::Alert a{QStringLiteral("warning"), QStringLiteral("gathering"),
-                                QStringLiteral("3 目标聚集"), {1, 2, 3}, 0};
+    t.fusedId = 5;
+    t.category = 2;
+    t.lat = 39.901;
+    t.lon = 116.401;
+    t.ve = 2.0;
+    t.vn = 0.0;
+    t.confidence = 0.85;
+    t.sensors.insert(1);
+    t.state = QStringLiteral("confirmed");
+    SwarmEventDetector::Alert a{
+        QStringLiteral("warning"), QStringLiteral("gathering"), QStringLiteral("3 目标聚集"), {1, 2, 3}, 0};
 
     const QJsonObject d = SwarmSituationDigest::build({v}, {t}, QStringLiteral("区域搜索中"), true, {a}, 12345);
-    QCOMPARE(d.value(QStringLiteral("fleet")).toObject()
-             .value(QStringLiteral("source")).toString(), QStringLiteral("telemetry"));
-    QCOMPARE(d.value(QStringLiteral("tracks")).toObject()
-             .value(QStringLiteral("source")).toString(), QStringLiteral("perception"));
-    QCOMPARE(d.value(QStringLiteral("alerts")).toObject()
-             .value(QStringLiteral("source")).toString(), QStringLiteral("inferred"));
-    QCOMPARE(d.value(QStringLiteral("tracks")).toObject()
-             .value(QStringLiteral("count")).toInt(), 1);
+    QCOMPARE(d.value(QStringLiteral("fleet")).toObject().value(QStringLiteral("source")).toString(),
+             QStringLiteral("telemetry"));
+    QCOMPARE(d.value(QStringLiteral("tracks")).toObject().value(QStringLiteral("source")).toString(),
+             QStringLiteral("perception"));
+    QCOMPARE(d.value(QStringLiteral("alerts")).toObject().value(QStringLiteral("source")).toString(),
+             QStringLiteral("inferred"));
+    QCOMPARE(d.value(QStringLiteral("tracks")).toObject().value(QStringLiteral("count")).toInt(), 1);
 
     const QString line = SwarmSituationDigest::oneLiner(d);
     QVERIFY(line.contains(QStringLiteral("在线 1/1")));
     QVERIFY(line.contains(QStringLiteral("目标 1 个")));
     QVERIFY(line.contains(QStringLiteral("告警 1")));
     // 来源角标
-    QCOMPARE(SwarmSituationDigest::sourceLabel(SwarmSituationDigest::Source::Perception),
-             QStringLiteral("[感知]"));
+    QCOMPARE(SwarmSituationDigest::sourceLabel(SwarmSituationDigest::Source::Perception), QStringLiteral("[感知]"));
 }
 
 void tst_p3modules::bridge_wireDecode()
@@ -225,7 +243,7 @@ void tst_p3modules::bridge_wireDecode()
     dg1.append(char(42001 >> 8)).append(char(42001 & 0xFF)).append(char(1)).append(json.left(half));
     dg2.append(char(42002 >> 8)).append(char(42002 & 0xFF)).append(char(1)).append(json.mid(half));
     SwarmTunnel::Reassembly rx2;
-    QVERIFY(SwarmTunnel::parseDatagram(dg1, rx2).isEmpty());   // 未完
+    QVERIFY(SwarmTunnel::parseDatagram(dg1, rx2).isEmpty());  // 未完
     const QJsonObject msg2 = SwarmTunnel::parseDatagram(dg2, rx2);
     QCOMPARE(msg2.value(QStringLiteral("kind")).toString(), QStringLiteral("track"));
 
@@ -238,8 +256,8 @@ void tst_p3modules::bridge_wireDecode()
 void tst_p3modules::fusion_rejectsInvalidLatLon()
 {
     SwarmTrackFusion fusion;
-    fusion.ingest(makeReport(1, 1, 999.0, 116.4), 1000);   // lat 非法
-    fusion.ingest(makeReport(2, 1, 39.9, 999.0), 1000);    // lon 非法
+    fusion.ingest(makeReport(1, 1, 999.0, 116.4), 1000);  // lat 非法
+    fusion.ingest(makeReport(2, 1, 39.9, 999.0), 1000);   // lon 非法
     QVERIFY2(fusion.allTracks().isEmpty(), "非法坐标航迹应被感知校验闸门丢弃");
     QCOMPARE(fusion.rejectedCount(), 2);
 }
@@ -247,10 +265,10 @@ void tst_p3modules::fusion_rejectsInvalidLatLon()
 void tst_p3modules::fusion_dropsLowConfidence()
 {
     SwarmTrackFusion fusion;
-    fusion.ingest(makeReport(1, 1, 39.9, 116.4, 0.0, 0.0, 0.05), 1000);   // conf 0.05 < 门槛 0.2
+    fusion.ingest(makeReport(1, 1, 39.9, 116.4, 0.0, 0.0, 0.05), 1000);  // conf 0.05 < 门槛 0.2
     QVERIFY2(fusion.allTracks().isEmpty(), "低置信度航迹应被门槛过滤");
     QCOMPARE(fusion.rejectedCount(), 1);
-    fusion.ingest(makeReport(2, 1, 39.9, 116.4, 0.0, 0.0, 0.8), 1100);    // 门槛之上放行
+    fusion.ingest(makeReport(2, 1, 39.9, 116.4, 0.0, 0.0, 0.8), 1100);  // 门槛之上放行
     QCOMPARE(fusion.allTracks().count(), 1);
 }
 

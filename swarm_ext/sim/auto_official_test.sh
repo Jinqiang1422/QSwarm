@@ -6,7 +6,7 @@
 #   1) 循环拉官方镜像(间隔 60s,避免 docker hub 匿名限流;已缓存层续传)
 #   2) 起 N 机官方 gazebo-classic SITL(容器内 fresh build ~20min)
 #   3) 轮询等 N 机 heartbeat 就绪
-#   4) 跑 regression.py 全场景共享机队试跑 → 出 SUMMARY.md 报告
+#   4) 跑 L1 场景 03/04/05 的共享机队试跑 → 出 SUMMARY.md 报告
 #
 # 注意：PX4 估计器/预检/故障状态会跨场景保留。此脚本适合环境冒烟和发现问题；严格验收
 # 必须为每个飞行场景重启全新机队，再用 regression.py --only 单独执行。
@@ -84,9 +84,9 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-echo "==== [auto] 阶段 4/4: 一键回归全场景 ===="
-echo "[auto] ⚠ 当前为共享机队连续试跑；严格验收请逐场景重启 PX4/Gazebo。"
-python3 "$SIM_DIR/regression.py" --out /tmp/sitl_regression
+echo "==== [auto] 阶段 4/4: 共享机队 L1 冒烟（03/04/05） ===="
+echo "[auto] ⚠ 01/02/06/07 需要 QGC 验收接口；全量严格验收请用 strict_regression.py。"
+python3 "$SIM_DIR/regression.py" --only 03,04,05 --out /tmp/sitl_regression
 RC=$?
 echo "==== [auto] 完成! 报告: /tmp/sitl_regression/SUMMARY.md (退出码 $RC) ===="
 exit $RC

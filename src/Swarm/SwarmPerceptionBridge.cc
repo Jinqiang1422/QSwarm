@@ -3,10 +3,7 @@
 #include <QtCore/QDateTime>
 #include <QtNetwork/QUdpSocket>
 
-SwarmPerceptionBridge::SwarmPerceptionBridge(QObject *parent)
-    : QObject(parent)
-{
-}
+SwarmPerceptionBridge::SwarmPerceptionBridge(QObject* parent) : QObject(parent) {}
 
 SwarmPerceptionBridge::~SwarmPerceptionBridge()
 {
@@ -43,8 +40,7 @@ void SwarmPerceptionBridge::stop()
 
 bool SwarmPerceptionBridge::serviceOnline() const
 {
-    return _lastHeartbeatMonoMs > 0
-            && QDateTime::currentMSecsSinceEpoch() - _lastHeartbeatMonoMs < 3000;
+    return _lastHeartbeatMonoMs > 0 && QDateTime::currentMSecsSinceEpoch() - _lastHeartbeatMonoMs < 3000;
 }
 
 void SwarmPerceptionBridge::_onReadyRead()
@@ -60,7 +56,7 @@ void SwarmPerceptionBridge::_onReadyRead()
     }
 }
 
-void SwarmPerceptionBridge::_dispatch(const QJsonObject &msg)
+void SwarmPerceptionBridge::_dispatch(const QJsonObject& msg)
 {
     const QString kind = msg.value(QStringLiteral("kind")).toString();
     const QJsonObject data = msg.value(QStringLiteral("data")).toObject();
@@ -75,31 +71,30 @@ void SwarmPerceptionBridge::_dispatch(const QJsonObject &msg)
         }
         _lastHeartbeatMonoMs = nowMs;
         QVariantMap hb;
-        hb[QStringLiteral("tracks_active")]   = data.value(QStringLiteral("tracks_active")).toInt();
-        hb[QStringLiteral("fps_x10")]         = data.value(QStringLiteral("fps_x10")).toInt();
+        hb[QStringLiteral("tracks_active")] = data.value(QStringLiteral("tracks_active")).toInt();
+        hb[QStringLiteral("fps_x10")] = data.value(QStringLiteral("fps_x10")).toInt();
         hb[QStringLiteral("camera_channels")] = data.value(QStringLiteral("camera_channels")).toInt();
-        hb[QStringLiteral("status")]          = data.value(QStringLiteral("status")).toInt();
-        hb[QStringLiteral("time_usec")]       = data.value(QStringLiteral("time_usec")).toDouble();
+        hb[QStringLiteral("status")] = data.value(QStringLiteral("status")).toInt();
+        hb[QStringLiteral("time_usec")] = data.value(QStringLiteral("time_usec")).toDouble();
         emit heartbeatReceived(hb);
         emit heartbeatChanged();
     } else if (kind == QStringLiteral("track_batch")) {
         const QJsonArray arr = data.value(QStringLiteral("tracks")).toArray();
         QVariantList tracks;
         tracks.reserve(arr.count());
-        for (const QJsonValue &v : arr) {
+        for (const QJsonValue& v : arr) {
             tracks.append(v.toObject().toVariantMap());
         }
         _lastTrackCount = tracks.count();
         const qint64 tUsec = qint64(data.value(QStringLiteral("time_usec")).toDouble());
-        if (tUsec > 0) {                                // 同主机/PTP 时有效
+        if (tUsec > 0) {  // 同主机/PTP 时有效
             _wireLatencyMs = qMax(0.0, nowMs - tUsec / 1000.0);
         }
         emit trackBatchReceived(tracks, tUsec);
         emit tracksChanged();
     } else if (kind == QStringLiteral("track")) {
         _lastTrackCount = 1;
-        emit trackBatchReceived({data.toVariantMap()},
-                                qint64(data.value(QStringLiteral("time_usec")).toDouble()));
+        emit trackBatchReceived({data.toVariantMap()}, qint64(data.value(QStringLiteral("time_usec")).toDouble()));
         emit tracksChanged();
     }
 }

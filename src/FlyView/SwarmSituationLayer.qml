@@ -20,6 +20,7 @@ import QGroundControl.Controls
 
 Item {
     id: _layer
+    objectName: "swarmSituationLayer"
 
     /// 外部注入：宿主 Map 与 SwarmManager（集成补丁在 FlyView 地图处绑定）
     property var map:           null
@@ -35,6 +36,7 @@ Item {
         parent: _layer.map
         model:  (_layer.showThreats && _layer.swarmManager) ? _layer.swarmManager.copModel.threatZones : []
         delegate: MapPolygon {
+            objectName: "swarmThreatZone"
             color:        "#40e53935"
             border.color: "#e53935"
             border.width: 2
@@ -55,6 +57,7 @@ Item {
         parent: _layer.map
         model:  (_layer.showHeatmap && _layer.swarmManager) ? _layer.swarmManager.copModel.heatmap : []
         delegate: MapRectangle {
+            objectName: "swarmHeatmapCell"
             topLeft:     QtPositioning.coordinate(modelData.lat + 0.00025, modelData.lon - 0.00025)
             bottomRight: QtPositioning.coordinate(modelData.lat - 0.00025, modelData.lon + 0.00025)
             color:       Qt.rgba(1.0, 0.67, 0.0, 0.05 + 0.03 * modelData.weight)
@@ -69,6 +72,7 @@ Item {
         parent: _layer.map
         model:  (_layer.showTracks && _layer.swarmManager) ? _layer.swarmManager.copModel : null
         delegate: MapQuickItem {
+            objectName:      "swarmTrackMarker_" + model.fusedId
             coordinate:      model.coordinate
             anchorPoint.x:   marker.width / 2
             anchorPoint.y:   marker.height / 2

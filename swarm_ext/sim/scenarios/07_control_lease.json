@@ -1,0 +1,29 @@
+{
+  "name": "07 QGC 控制租约与人工接管（8 机）",
+  "fleet": 8,
+  "requires_qgc": true,
+  "description": "验证 AI 未获租约时不得控制、操作员可授予租约、人工模式立即释放租约，以及重新进入自动模式后可再次授权。",
+  "steps": [
+    {"t": 0, "action": "wait_all_online", "timeout_sec": 120},
+    {"t": 0, "action": "qgc_set_flight_mode", "vehicle_id": 2, "mode_kind": "manual"},
+    {"t": 0, "action": "qgc_execute_actions", "origin": "ai",
+     "actions": [{"type": "set_selection", "vehicle_ids": [2]}, {"type": "pause"}]},
+    {"t": 0, "action": "qgc_expect_lease", "vehicle_id": 2, "state": "manual_override"},
+    {"t": 0, "action": "qgc_set_flight_mode", "vehicle_id": 3, "mode_kind": "manual"},
+    {"t": 0, "action": "qgc_execute_actions", "origin": "operator",
+     "actions": [{"type": "set_selection", "vehicle_ids": [3]}, {"type": "pause"}]},
+    {"t": 0, "action": "qgc_expect_lease", "vehicle_id": 3, "state": "leased"},
+    {"t": 0, "action": "qgc_set_flight_mode", "vehicle_id": 3, "mode_kind": "pause"},
+    {"t": 0, "action": "qgc_set_flight_mode", "vehicle_id": 3, "mode_kind": "manual"},
+    {"t": 0, "action": "qgc_expect_lease", "vehicle_id": 3, "state": "manual_override"},
+    {"t": 0, "action": "qgc_set_flight_mode", "vehicle_id": 3, "mode_kind": "pause"},
+    {"t": 0, "action": "qgc_expect_lease", "vehicle_id": 3, "state": "observe_only"},
+    {"t": 0, "action": "qgc_execute_actions", "origin": "ai",
+     "actions": [{"type": "set_selection", "vehicle_ids": [3]}, {"type": "pause"}]},
+    {"t": 0, "action": "qgc_expect_lease", "vehicle_id": 3, "state": "leased"}
+  ],
+  "pass_criteria": {
+    "all_steps_completed": true,
+    "max_total_sec": 180
+  }
+}

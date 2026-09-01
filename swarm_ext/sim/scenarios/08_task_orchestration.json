@@ -1,0 +1,77 @@
+{
+  "name": "08 QGC 多阶段任务人工门控与中止",
+  "fleet": 0,
+  "requires_qgc": true,
+  "description": "验证任务启动、manual 阶段等待、操作员继续、正常完成、再次启动和安全中止。",
+  "steps": [
+    {
+      "t": 0,
+      "action": "qgc_start_task",
+      "name": "人工门控验收",
+      "stages": [
+        {
+          "name": "等待确认",
+          "actions": [],
+          "complete_when": {
+            "kind": "manual",
+            "timeout_sec": 30
+          }
+        }
+      ]
+    },
+    {
+      "t": 0,
+      "action": "qgc_expect_task",
+      "running": true,
+      "name": "人工门控验收",
+      "stage_index": 0,
+      "waiting_for_proceed": true
+    },
+    {
+      "t": 0,
+      "action": "qgc_proceed_task"
+    },
+    {
+      "t": 0,
+      "action": "qgc_expect_task",
+      "running": false,
+      "waiting_for_proceed": false
+    },
+    {
+      "t": 0,
+      "action": "qgc_start_task",
+      "name": "中止验收",
+      "stages": [
+        {
+          "name": "等待中止",
+          "actions": [],
+          "complete_when": {
+            "kind": "manual",
+            "timeout_sec": 30
+          }
+        }
+      ]
+    },
+    {
+      "t": 0,
+      "action": "qgc_expect_task",
+      "running": true,
+      "name": "中止验收",
+      "waiting_for_proceed": true
+    },
+    {
+      "t": 0,
+      "action": "qgc_abort_task"
+    },
+    {
+      "t": 0,
+      "action": "qgc_expect_task",
+      "running": false,
+      "waiting_for_proceed": false
+    }
+  ],
+  "pass_criteria": {
+    "all_steps_completed": true,
+    "max_total_sec": 60
+  }
+}

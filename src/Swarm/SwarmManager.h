@@ -45,6 +45,9 @@ class SwarmTaskLibrary;
 class QTimer;
 class Vehicle;
 class QmlObjectListModel;
+#ifdef QGC_UNITTEST_BUILD
+class SwarmAcceptanceServer;
+#endif
 
 class SwarmManager : public QObject
 {
@@ -149,6 +152,11 @@ public:
     /// 文本安全检查（防注入过滤，供 QML 预检）：返回 {level, matched, score} JSON 字符串
     Q_INVOKABLE QString checkTextSafety(const QString& text) const;
 
+#ifdef QGC_UNITTEST_BUILD
+    QString controlLeaseState(int vehicleId) const;
+    bool automationAllowed(int vehicleId) const;
+#endif
+
     // ------------------------------------------------------------------
     // 自主等级闸门（WP1.3）：AI 侧执行路径必过；操作员手动直控不受限
     // ------------------------------------------------------------------
@@ -178,7 +186,7 @@ public:
     Q_INVOKABLE void armAll(bool arm);
 
     /// 批量起飞到相对高度 altitudeRelative（米）。
-    /// 未解锁车辆会先自动解锁，再延迟起飞；机间间隔 takeoffStaggerMs，避免同时离地。
+    /// 每架机在自己的错峰时隙重新确认解锁，再延迟起飞，避免等待期间触发 PX4 自动上锁。
     Q_INVOKABLE void takeoffAll(double altitudeRelative);
 
     /// 批量原地降落
@@ -243,6 +251,8 @@ private:
     /// 以 staggerMs 为间隔对目标车辆依次执行 action；自动化路径在定时器触发时再次校验租约。
     void _forEachVehicleStaggered(const QString& commandName, int staggerMs,
                                   const std::function<void(Vehicle*, bool)>& action);
+    void _armAndTakeoff(Vehicle* vehicle, double altitudeRelative, bool requireActiveLease, quint64 commandGeneration,
+                        int retriesRemaining);
     void _requestAutomationLeases(const QString& origin);
     bool _automationAllowedAtDispatch(int vehicleId, bool requireActiveLease, const QString& commandName);
     bool _formationAutomationAllowed(int vehicleId);
@@ -257,11 +267,12 @@ private:
     /// 加载围栏/空域配置（AppDataLocation/SwarmConfig/fences.json；缺失时写默认）
     SwarmConstraintChecker::Config _constraintConfig() const;
 
-    int _commandIntervalMs = 300;  ///< 常规指令机间间隔
-    int _takeoffStaggerMs = 2500;  ///< 起飞指令机间间隔（安全关键，默认更大）
-    int _autonomyLevel = 2;        ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
-    QStringList _l3AllowedTypes;   ///< L3 限定域自主白名单（动作类型）
-    SwarmControlLease _lease;      ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
+    int _commandIntervalMs = 300;           ///< 常规指令机间间隔
+    int _takeoffStaggerMs = 2500;           ///< 起飞指令机间间隔（安全关键，默认更大）
+    quint64 _takeoffCommandGeneration = 0;  ///< 取消被后续飞行指令取代的延迟起飞/解锁重试
+    int _autonomyLevel = 2;                 ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
+    QStringList _l3AllowedTypes;            ///< L3 限定域自主白名单（动作类型）
+    SwarmControlLease _lease;               ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     bool _automationDispatchInProgress = false;
     FormationController* _formation = nullptr;
     SwarmMissionPlanner* _missionPlanner = nullptr;
@@ -279,6 +290,10 @@ private:
     QList<SwarmEventDetector::Alert> _alerts;  ///< 近期告警（上限 20 条）
     QVariantList _alertsVariant;
     QString _situationOneLiner;
+
+#ifdef QGC_UNITTEST_BUILD
+    SwarmAcceptanceServer* _acceptanceServer = nullptr;
+#endif
 
     void _raiseAlerts(const QList<SwarmEventDetector::Alert>& alerts);
 };

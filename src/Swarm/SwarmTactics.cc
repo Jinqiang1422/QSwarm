@@ -1,23 +1,22 @@
 #include "SwarmTactics.h"
 
-#include "SwarmTaskAllocator.h"
-
 #include <QtCore/QtMath>
-
 #include <cmath>
+
+#include "SwarmTaskAllocator.h"
 
 namespace SwarmTactics {
 
 namespace {
 // 把拍卖结果规整为无冲突满射：每个目标至多分一次，拍卖有效分配优先采纳，
 // 缺失/冲突的机按顺序补第一个未用目标，杜绝退化几何下的重复分配。
-QList<int> resolveAssignment(const QList<SwarmTypes::VehicleState> &vehicles,
-                             const QMap<int, int> &assign, int nTargets)
+QList<int> resolveAssignment(const QList<SwarmTypes::VehicleState>& vehicles, const QMap<int, int>& assign,
+                             int nTargets)
 {
     const int n = vehicles.count();
-    QList<int>  result(n, -1);
+    QList<int> result(n, -1);
     QList<bool> used(nTargets, false);
-    for (int i = 0; i < n; i++) {           // 第一遍：采纳无冲突的拍卖分配
+    for (int i = 0; i < n; i++) {  // 第一遍：采纳无冲突的拍卖分配
         const int t = assign.value(vehicles.at(i).id, -1);
         if (t >= 0 && t < nTargets && !used[t]) {
             result[i] = t;
@@ -25,7 +24,7 @@ QList<int> resolveAssignment(const QList<SwarmTypes::VehicleState> &vehicles,
         }
     }
     int next = 0;
-    for (int i = 0; i < n; i++) {            // 第二遍：未分配机顺序补未用目标
+    for (int i = 0; i < n; i++) {  // 第二遍：未分配机顺序补未用目标
         if (result[i] < 0) {
             while (next < nTargets && used[next]) {
                 next++;
@@ -43,8 +42,7 @@ QList<int> resolveAssignment(const QList<SwarmTypes::VehicleState> &vehicles,
 // ============================================================================
 // 场景③ 跟踪：Standoff 环绕观测
 // ============================================================================
-QList<GeoPoint> standoffRing(double tgtLat, double tgtLon, double radiusM,
-                             int n, double phase0Deg)
+QList<GeoPoint> standoffRing(double tgtLat, double tgtLon, double radiusM, int n, double phase0Deg)
 {
     QList<GeoPoint> out;
     if (n <= 0 || radiusM <= 0.0) {
@@ -63,8 +61,8 @@ QList<GeoPoint> standoffRing(double tgtLat, double tgtLon, double radiusM,
 // ============================================================================
 // 场景④ 围捕：环形包围 + 拍卖就近分配（半径可收缩）
 // ============================================================================
-QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
-                             double tgtLat, double tgtLon, double radiusM)
+QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState>& vehicles, double tgtLat, double tgtLon,
+                             double radiusM)
 {
     QMap<int, GeoPoint> out;
     const int n = vehicles.count();
@@ -85,7 +83,7 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
     for (int i = 0; i < n; i++) {
         double e, nth;
         SwarmTypes::latLonToLocalM(tgtLat, tgtLon, ring.at(i).lat, ring.at(i).lon, e, nth);
-        pNodes.append({i, e, nth});   // 包围点 Node id = 环索引
+        pNodes.append({i, e, nth});  // 包围点 Node id = 环索引
     }
     const QMap<int, int> assign = allocator.auctionAssign(vNodes, pNodes);
     const QList<int> resolved = resolveAssignment(vehicles, assign, ring.size());
@@ -102,7 +100,7 @@ QMap<int, GeoPoint> encircle(const QList<SwarmTypes::VehicleState> &vehicles,
 double solveQuadraticEarliestPositive(double a, double b, double c)
 {
     const double kEps = 1e-9;
-    if (std::abs(a) < kEps) {          // a≈0：退化为线性方程 b·t + c = 0
+    if (std::abs(a) < kEps) {  // a≈0：退化为线性方程 b·t + c = 0
         if (std::abs(b) < kEps) {
             return -1.0;
         }
@@ -111,20 +109,19 @@ double solveQuadraticEarliestPositive(double a, double b, double c)
     }
     const double disc = b * b - 4.0 * a * c;
     if (disc < 0.0) {
-        return -1.0;                   // 无实根
+        return -1.0;  // 无实根
     }
     const double sq = std::sqrt(disc);
     double t = -1.0;
     for (const double r : {(-b + sq) / (2.0 * a), (-b - sq) / (2.0 * a)}) {
-        if (r > 0.0 && (t < 0.0 || r < t)) {   // 取最小正根 = 最早拦截
+        if (r > 0.0 && (t < 0.0 || r < t)) {  // 取最小正根 = 最早拦截
             t = r;
         }
     }
     return t;
 }
 
-InterceptSolution intercept(double insLat, double insLon, double vMps,
-                            const MovingTarget &tgt)
+InterceptSolution intercept(double insLat, double insLon, double vMps, const MovingTarget& tgt)
 {
     InterceptSolution sol;
     if (vMps <= 0.0) {
@@ -145,37 +142,37 @@ InterceptSolution intercept(double insLat, double insLon, double vMps,
 
     const double t = solveQuadraticEarliestPositive(a, b, c);
     if (t <= 0.0) {
-        return sol;   // 追不上（速度不足或目标远离）
+        return sol;  // 追不上（速度不足或目标远离）
     }
 
     // 拦截点（本地米）→ 方位角/距离 → 地理坐标
     const double iE = tE + vE * t;
     const double iN = tN + vN * t;
     const double dist = std::sqrt(iE * iE + iN * iN);
-    double bearing = std::atan2(iE, iN) * 180.0 / M_PI;   // (东,北) → 北起顺时针方位角
+    double bearing = std::atan2(iE, iN) * 180.0 / M_PI;  // (东,北) → 北起顺时针方位角
     if (bearing < 0.0) {
         bearing += 360.0;
     }
     SwarmTypes::destinationPoint(insLat, insLon, bearing, dist, sol.lat, sol.lon);
-    sol.feasible   = true;
+    sol.feasible = true;
     sol.headingDeg = bearing;
-    sol.timeS      = t;
+    sol.timeS = t;
     return sol;
 }
 
 // 从机群中挑选距目标最近的机作为拦截机（供接入层选择，避免首架随意指派）
-int pickInterceptor(const QList<SwarmTypes::VehicleState> &vehicles, double tgtLat, double tgtLon)
+int pickInterceptor(const QList<SwarmTypes::VehicleState>& vehicles, double tgtLat, double tgtLon)
 {
     if (vehicles.isEmpty()) {
         return -1;
     }
-    int    bestId   = vehicles.first().id;
+    int bestId = vehicles.first().id;
     double bestDist = SwarmTypes::haversineM(vehicles.first().lat, vehicles.first().lon, tgtLat, tgtLon);
     for (int i = 1; i < vehicles.count(); i++) {
         const double d = SwarmTypes::haversineM(vehicles.at(i).lat, vehicles.at(i).lon, tgtLat, tgtLon);
         if (d < bestDist) {
             bestDist = d;
-            bestId   = vehicles.at(i).id;
+            bestId = vehicles.at(i).id;
         }
     }
     return bestId;
@@ -184,8 +181,7 @@ int pickInterceptor(const QList<SwarmTypes::VehicleState> &vehicles, double tgtL
 // ============================================================================
 // 场景① 协同搜索：矩形区域按机数分区 + 拍卖就近分配
 // ============================================================================
-QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicles,
-                                  double centerLat, double centerLon,
+QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState>& vehicles, double centerLat, double centerLon,
                                   double lengthM, double widthM, double angleDeg)
 {
     QList<SearchLane> out;
@@ -193,17 +189,16 @@ QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicle
     if (n <= 0 || widthM <= 0.0) {
         return out;
     }
-    const double laneW       = widthM / n;
-    const double perpBearing = std::fmod(angleDeg + 90.0, 360.0);   // 垂直航向=切分方向
+    const double laneW = widthM / n;
+    const double perpBearing = std::fmod(angleDeg + 90.0, 360.0);  // 垂直航向=切分方向
 
     // 沿垂直航向把区域均匀切成 n 条带，求各条带中心
     QList<GeoPoint> laneCenters;
     for (int i = 0; i < n; i++) {
-        const double offset = -widthM / 2.0 + (i + 0.5) * laneW;    // [-W/2, +W/2]
+        const double offset = -widthM / 2.0 + (i + 0.5) * laneW;  // [-W/2, +W/2]
         GeoPoint p{centerLat, centerLon};
         if (std::abs(offset) > 1e-6) {
-            const double brg = (offset > 0.0) ? perpBearing
-                                              : std::fmod(perpBearing + 180.0, 360.0);
+            const double brg = (offset > 0.0) ? perpBearing : std::fmod(perpBearing + 180.0, 360.0);
             SwarmTypes::destinationPoint(centerLat, centerLon, brg, std::abs(offset), p.lat, p.lon);
         }
         laneCenters.append(p);
@@ -227,11 +222,11 @@ QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicle
     for (int i = 0; i < n; i++) {
         const int lIdx = (resolved.at(i) >= 0) ? resolved.at(i) : i;
         SearchLane lane;
-        lane.vehicleId   = vehicles.at(i).id;
-        lane.center      = laneCenters.at(lIdx);
-        lane.laneWidthM  = laneW;
+        lane.vehicleId = vehicles.at(i).id;
+        lane.center = laneCenters.at(lIdx);
+        lane.laneWidthM = laneW;
         lane.laneLengthM = lengthM;
-        lane.bearingDeg  = std::fmod(angleDeg, 360.0);
+        lane.bearingDeg = std::fmod(angleDeg, 360.0);
         out.append(lane);
     }
     return out;
@@ -240,12 +235,11 @@ QList<SearchLane> partitionSearch(const QList<SwarmTypes::VehicleState> &vehicle
 // ============================================================================
 // 场景② 巡逻：多边形周界按机数均分为弧段（相位错开覆盖不同区段）
 // ============================================================================
-QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState> &vehicles,
-                                           const QList<QPair<double, double>> &polygon,
-                                           int samplesPerLap)
+QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState>& vehicles,
+                                           const QList<QPair<double, double>>& polygon, int samplesPerLap)
 {
     QMap<int, QList<GeoPoint>> out;
-    const int n  = vehicles.count();
+    const int n = vehicles.count();
     const int nv = polygon.count();
     if (n <= 0 || nv < 2) {
         return out;
@@ -256,8 +250,8 @@ QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState>
     QList<double> edgeLen;
     double perim = 0.0;
     for (int i = 0; i < nv; i++) {
-        const QPair<double, double> &a = polygon.at(i);
-        const QPair<double, double> &b = polygon.at((i + 1) % nv);   // 首尾闭合
+        const QPair<double, double>& a = polygon.at(i);
+        const QPair<double, double>& b = polygon.at((i + 1) % nv);  // 首尾闭合
         const double d = SwarmTypes::haversineM(a.first, a.second, b.first, b.second);
         edgeLen.append(d);
         perim += d;
@@ -269,17 +263,17 @@ QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState>
     // 沿周界等弧长采样 M 个巡逻点（在对应边上线性内插）
     QList<GeoPoint> samples;
     for (int k = 0; k < M; k++) {
-        double s = perim * k / M;   // 该点的周界弧长
+        double s = perim * k / M;  // 该点的周界弧长
         int e = 0;
         while (e < nv - 1 && s > edgeLen.at(e)) {
             s -= edgeLen.at(e);
             e++;
         }
-        const QPair<double, double> &a = polygon.at(e);
-        const QPair<double, double> &b = polygon.at((e + 1) % nv);
+        const QPair<double, double>& a = polygon.at(e);
+        const QPair<double, double>& b = polygon.at((e + 1) % nv);
         const double t = (edgeLen.at(e) > 1e-9) ? (s / edgeLen.at(e)) : 0.0;
         GeoPoint p;
-        p.lat = a.first  + t * (b.first  - a.first);
+        p.lat = a.first + t * (b.first - a.first);
         p.lon = a.second + t * (b.second - a.second);
         samples.append(p);
     }
@@ -297,4 +291,4 @@ QMap<int, QList<GeoPoint>> partitionPatrol(const QList<SwarmTypes::VehicleState>
     return out;
 }
 
-} // namespace SwarmTactics
+}  // namespace SwarmTactics

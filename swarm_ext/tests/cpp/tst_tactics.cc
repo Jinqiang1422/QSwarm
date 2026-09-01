@@ -5,12 +5,11 @@
  ****************************************************************************/
 
 #include <QtTest/QtTest>
+#include <cmath>
 
 #include "SwarmTactics.h"
-#include "SwarmTypes.h"
 #include "SwarmTaskAllocator.h"
-
-#include <cmath>
+#include "SwarmTypes.h"
 
 using namespace SwarmTactics;
 
@@ -19,12 +18,12 @@ namespace {
 SwarmTypes::VehicleState mkVehicle(int id, double lat, double lon)
 {
     SwarmTypes::VehicleState v;
-    v.id  = id;
+    v.id = id;
     v.lat = lat;
     v.lon = lon;
     return v;
 }
-} // namespace
+}  // namespace
 
 class TstTactics : public QObject
 {
@@ -86,7 +85,7 @@ void TstTactics::tracking_standoffRingGeometry()
     QCOMPARE(ring.size(), 4);
 
     // 每个观测点到目标的距离 ≈ R
-    for (const GeoPoint &p : ring) {
+    for (const GeoPoint& p : ring) {
         const double d = SwarmTypes::haversineM(tgtLat, tgtLon, p.lat, p.lon);
         QVERIFY2(std::abs(d - R) < 1.0, "观测点应落在半径 R 的圆上");
     }
@@ -113,8 +112,8 @@ void TstTactics::tracking_standoffRingPhaseOffset()
 
 void TstTactics::tracking_standoffRingDegenerate()
 {
-    QVERIFY(standoffRing(39.9, 116.4, 100.0, 0, 0.0).isEmpty());   // 机数 0
-    QVERIFY(standoffRing(39.9, 116.4, 0.0, 4, 0.0).isEmpty());     // 半径 0
+    QVERIFY(standoffRing(39.9, 116.4, 100.0, 0, 0.0).isEmpty());  // 机数 0
+    QVERIFY(standoffRing(39.9, 116.4, 0.0, 4, 0.0).isEmpty());    // 半径 0
 }
 
 // ============================================================================
@@ -124,10 +123,10 @@ void TstTactics::encircle_coversRing()
 {
     const double tgtLat = 39.9, tgtLon = 116.4, R = 150.0;
     const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.905, 116.400),   // 北
-        mkVehicle(2, 39.900, 116.406),   // 东
-        mkVehicle(3, 39.895, 116.400),   // 南
-        mkVehicle(4, 39.900, 116.394),   // 西
+        mkVehicle(1, 39.905, 116.400),  // 北
+        mkVehicle(2, 39.900, 116.406),  // 东
+        mkVehicle(3, 39.895, 116.400),  // 南
+        mkVehicle(4, 39.900, 116.394),  // 西
     };
     const QMap<int, GeoPoint> asg = encircle(v, tgtLat, tgtLon, R);
     QCOMPARE(asg.size(), 4);
@@ -137,7 +136,7 @@ void TstTactics::encircle_coversRing()
     for (auto it = asg.constBegin(); it != asg.constEnd(); ++it) {
         const double d = SwarmTypes::haversineM(tgtLat, tgtLon, it.value().lat, it.value().lon);
         QVERIFY2(std::abs(d - R) < 1.0, "包围点应在半径 R 圆上");
-        for (const GeoPoint &s : seen) {
+        for (const GeoPoint& s : seen) {
             QVERIFY2(SwarmTypes::haversineM(s.lat, s.lon, it.value().lat, it.value().lon) > 1.0,
                      "各机应分到不同包围点");
         }
@@ -150,10 +149,10 @@ void TstTactics::encircle_nearestAssignment()
     // 四机分处目标 N/E/S/W，拍卖就近应各分到同方向包围点（最小转场）
     const double tgtLat = 39.9, tgtLon = 116.4, R = 150.0;
     const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.905, 116.400),   // 北
-        mkVehicle(2, 39.900, 116.406),   // 东
-        mkVehicle(3, 39.895, 116.400),   // 南
-        mkVehicle(4, 39.900, 116.394),   // 西
+        mkVehicle(1, 39.905, 116.400),  // 北
+        mkVehicle(2, 39.900, 116.406),  // 东
+        mkVehicle(3, 39.895, 116.400),  // 南
+        mkVehicle(4, 39.900, 116.394),  // 西
     };
     const QMap<int, GeoPoint> asg = encircle(v, tgtLat, tgtLon, R);
     QVERIFY(asg[1].lat > tgtLat && std::abs(asg[1].lon - tgtLon) < 1e-3);  // 北机→北点
@@ -177,7 +176,10 @@ void TstTactics::intercept_stationaryTarget()
     double tLat, tLon;
     SwarmTypes::destinationPoint(insLat, insLon, 90.0, 1000.0, tLat, tLon);
     MovingTarget tgt;
-    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 0.0; tgt.headingDeg = 0.0;
+    tgt.lat = tLat;
+    tgt.lon = tLon;
+    tgt.speedMps = 0.0;
+    tgt.headingDeg = 0.0;
 
     const InterceptSolution s = intercept(insLat, insLon, 10.0, tgt);
     QVERIFY(s.feasible);
@@ -193,7 +195,10 @@ void TstTactics::intercept_movingTargetConsistency()
     double tLat, tLon;
     SwarmTypes::destinationPoint(insLat, insLon, 0.0, 500.0, tLat, tLon);
     MovingTarget tgt;
-    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 5.0; tgt.headingDeg = 90.0;
+    tgt.lat = tLat;
+    tgt.lon = tLon;
+    tgt.speedMps = 5.0;
+    tgt.headingDeg = 90.0;
 
     const InterceptSolution s = intercept(insLat, insLon, 20.0, tgt);
     QVERIFY(s.feasible);
@@ -213,7 +218,10 @@ void TstTactics::intercept_infeasibleWhenSlower()
     double tLat, tLon;
     SwarmTypes::destinationPoint(insLat, insLon, 90.0, 1000.0, tLat, tLon);
     MovingTarget tgt;
-    tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 20.0; tgt.headingDeg = 90.0;
+    tgt.lat = tLat;
+    tgt.lon = tLon;
+    tgt.speedMps = 20.0;
+    tgt.headingDeg = 90.0;
 
     const InterceptSolution s = intercept(insLat, insLon, 10.0, tgt);
     QVERIFY2(!s.feasible, "慢于逃逸目标应判不可拦截");
@@ -222,8 +230,10 @@ void TstTactics::intercept_infeasibleWhenSlower()
 void TstTactics::intercept_zeroSpeed()
 {
     MovingTarget tgt;
-    tgt.lat = 39.91; tgt.lon = 116.41; tgt.speedMps = 0.0;
-    QVERIFY(!intercept(39.9, 116.4, 0.0, tgt).feasible);   // 拦截机速度 0
+    tgt.lat = 39.91;
+    tgt.lon = 116.41;
+    tgt.speedMps = 0.0;
+    QVERIFY(!intercept(39.9, 116.4, 0.0, tgt).feasible);  // 拦截机速度 0
 }
 
 // ============================================================================
@@ -233,11 +243,11 @@ void TstTactics::search_partitionCoversWidth()
 {
     // 2 机，1000×600 区域，航向 0°(南北航线)：切成 2 条各宽 300 的东西向条带
     const double cLat = 39.9, cLon = 116.4;
-    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, cLat, cLon), mkVehicle(2, cLat, cLon) };
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, cLat, cLon), mkVehicle(2, cLat, cLon)};
     const QList<SearchLane> lanes = partitionSearch(v, cLat, cLon, 1000.0, 600.0, 0.0);
     QCOMPARE(lanes.size(), 2);
 
-    for (const SearchLane &ln : lanes) {
+    for (const SearchLane& ln : lanes) {
         QVERIFY2(std::abs(ln.laneWidthM - 300.0) < 1e-6, "条带宽 = 总宽/机数");
         QVERIFY2(std::abs(ln.laneLengthM - 1000.0) < 1e-6, "条带长 = 区域长");
         QCOMPARE(ln.bearingDeg, 0.0);
@@ -255,9 +265,9 @@ void TstTactics::search_nearestAssignment()
     // 机分处区域东西两侧，拍卖就近应各分到同侧条带
     const double cLat = 39.9, cLon = 116.4;
     double wLat, wLon, eLat, eLon;
-    SwarmTypes::destinationPoint(cLat, cLon, 270.0, 500.0, wLat, wLon);   // 西 500m
-    SwarmTypes::destinationPoint(cLat, cLon,  90.0, 500.0, eLat, eLon);   // 东 500m
-    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, wLat, wLon), mkVehicle(2, eLat, eLon) };
+    SwarmTypes::destinationPoint(cLat, cLon, 270.0, 500.0, wLat, wLon);  // 西 500m
+    SwarmTypes::destinationPoint(cLat, cLon, 90.0, 500.0, eLat, eLon);   // 东 500m
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, wLat, wLon), mkVehicle(2, eLat, eLon)};
     const QList<SearchLane> lanes = partitionSearch(v, cLat, cLon, 1000.0, 600.0, 0.0);
     QCOMPARE(lanes.size(), 2);
 
@@ -279,19 +289,15 @@ void TstTactics::search_degenerate()
 void TstTactics::patrol_partitionsPerimeter()
 {
     // 矩形周界，4 机，全周 16 采样点 → 每机 4 点，覆盖不同弧段
-    const QList<QPair<double, double>> poly{
-        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
-    };
-    const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
-        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
-    };
+    const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}};
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+                                            mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)};
     const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 16);
     QCOMPARE(plan.size(), 4);
 
     QList<GeoPoint> all;
     for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
-        QCOMPARE(it.value().size(), 4);      // 16/4
+        QCOMPARE(it.value().size(), 4);  // 16/4
         all.append(it.value());
     }
     QCOMPARE(all.size(), 16);
@@ -306,15 +312,11 @@ void TstTactics::patrol_partitionsPerimeter()
 
 void TstTactics::patrol_pointsWithinBounds()
 {
-    const QList<QPair<double, double>> poly{
-        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
-    };
-    const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.91, 116.41)
-    };
+    const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}};
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.91, 116.41)};
     const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 20);
     for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) {
-        for (const GeoPoint &p : it.value()) {
+        for (const GeoPoint& p : it.value()) {
             QVERIFY(p.lat >= 39.90 - 1e-6 && p.lat <= 39.91 + 1e-6);
             QVERIFY(p.lon >= 116.40 - 1e-6 && p.lon <= 116.41 + 1e-6);
         }
@@ -327,9 +329,9 @@ void TstTactics::patrol_pointsWithinBounds()
 void TstTactics::patrol_degenerate()
 {
     const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}};
-    QVERIFY(partitionPatrol({}, poly, 12).isEmpty());                       // 无机
+    QVERIFY(partitionPatrol({}, poly, 12).isEmpty());            // 无机
     const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.9, 116.4)};
-    QVERIFY(partitionPatrol(v, {{39.9, 116.4}}, 12).isEmpty());             // 顶点 < 2
+    QVERIFY(partitionPatrol(v, {{39.9, 116.4}}, 12).isEmpty());  // 顶点 < 2
 }
 
 // ============================================================================
@@ -340,15 +342,18 @@ void TstTactics::solveQuadratic_twoRootsEarliest()
     // (t-2)(t-5)=t²-7t+10 → 根 2、5,取最早正根 2
     QVERIFY(std::abs(solveQuadraticEarliestPositive(1.0, -7.0, 10.0) - 2.0) < 1e-9);
 }
+
 void TstTactics::solveQuadratic_linearDegenerate()
 {
-    QVERIFY(std::abs(solveQuadraticEarliestPositive(0.0, 2.0, -10.0) - 5.0) < 1e-9); // 2t-10=0→5
+    QVERIFY(std::abs(solveQuadraticEarliestPositive(0.0, 2.0, -10.0) - 5.0) < 1e-9);  // 2t-10=0→5
     QCOMPARE(solveQuadraticEarliestPositive(0.0, 0.0, 3.0), -1.0);                    // a=b=0 无解
 }
+
 void TstTactics::solveQuadratic_noRealRoot()
 {
-    QCOMPARE(solveQuadraticEarliestPositive(1.0, 0.0, 1.0), -1.0);   // t²+1=0 判别式<0
+    QCOMPARE(solveQuadraticEarliestPositive(1.0, 0.0, 1.0), -1.0);  // t²+1=0 判别式<0
 }
+
 void TstTactics::solveQuadratic_negativeRootsRejected()
 {
     QCOMPARE(solveQuadraticEarliestPositive(1.0, 7.0, 10.0), -1.0);  // 根 -2、-5 全负
@@ -362,7 +367,11 @@ void TstTactics::intercept_equalSpeedLinear()
     // 目标正东 1000m 以 10m/s 迎面向西飞来,拦截机 10m/s(等速→a≈0 线性分支)
     double tLat, tLon;
     SwarmTypes::destinationPoint(39.9, 116.4, 90.0, 1000.0, tLat, tLon);
-    MovingTarget tgt; tgt.lat = tLat; tgt.lon = tLon; tgt.speedMps = 10.0; tgt.headingDeg = 270.0;
+    MovingTarget tgt;
+    tgt.lat = tLat;
+    tgt.lon = tLon;
+    tgt.speedMps = 10.0;
+    tgt.headingDeg = 270.0;
     const InterceptSolution s = intercept(39.9, 116.4, 10.0, tgt);
     QVERIFY2(s.feasible, "等速迎面目标应可拦截(线性分支)");
     QVERIFY2(std::abs(s.timeS - 50.0) < 1.0, "迎面等速相遇 t≈dist/(v+vt)=50s");
@@ -373,11 +382,12 @@ void TstTactics::intercept_equalSpeedLinear()
 // ============================================================================
 void TstTactics::encircle_singleVehicle()
 {
-    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, 39.905, 116.4) };
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.905, 116.4)};
     const QMap<int, GeoPoint> asg = encircle(v, 39.9, 116.4, 100.0);
     QCOMPARE(asg.size(), 1);
     QVERIFY(std::abs(SwarmTypes::haversineM(39.9, 116.4, asg[1].lat, asg[1].lon) - 100.0) < 1.0);
 }
+
 void TstTactics::encircle_assignmentBijective()
 {
     QList<SwarmTypes::VehicleState> v;
@@ -388,26 +398,28 @@ void TstTactics::encircle_assignmentBijective()
     }
     const QMap<int, GeoPoint> asg = encircle(v, 39.9, 116.4, 100.0);
     QCOMPARE(asg.size(), 8);
-    QList<GeoPoint> pts;                                    // 8 个分配点两两不同 = 双射
+    QList<GeoPoint> pts;  // 8 个分配点两两不同 = 双射
     for (auto it = asg.constBegin(); it != asg.constEnd(); ++it) {
-        for (const GeoPoint &p : pts) {
+        for (const GeoPoint& p : pts) {
             QVERIFY2(SwarmTypes::haversineM(p.lat, p.lon, it.value().lat, it.value().lon) > 1.0,
                      "各机应分到唯一包围点(B3 无冲突)");
         }
         pts.append(it.value());
     }
 }
+
 void TstTactics::search_assignmentBijective()
 {
     // 5 机全在区域中心(退化几何,拍卖易冲突)——B3 应补成唯一条带分配
     QList<SwarmTypes::VehicleState> v;
-    for (int i = 0; i < 5; i++) v.append(mkVehicle(i + 1, 39.9, 116.4));
+    for (int i = 0; i < 5; i++)
+        v.append(mkVehicle(i + 1, 39.9, 116.4));
     const QList<SearchLane> lanes = partitionSearch(v, 39.9, 116.4, 1000.0, 500.0, 0.0);
     QCOMPARE(lanes.size(), 5);
     for (int i = 0; i < lanes.size(); i++) {
         for (int j = i + 1; j < lanes.size(); j++) {
-            QVERIFY2(SwarmTypes::haversineM(lanes[i].center.lat, lanes[i].center.lon,
-                                            lanes[j].center.lat, lanes[j].center.lon) > 1.0,
+            QVERIFY2(SwarmTypes::haversineM(lanes[i].center.lat, lanes[i].center.lon, lanes[j].center.lat,
+                                            lanes[j].center.lon) > 1.0,
                      "退化几何下各机仍应分到唯一条带(B3 无冲突)");
         }
     }
@@ -418,37 +430,34 @@ void TstTactics::search_assignmentBijective()
 // ============================================================================
 void TstTactics::patrol_segmentsContiguous()
 {
-    const QList<QPair<double, double>> poly{
-        {39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}
-    };
-    const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
-        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
-    };
+    const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}, {39.91, 116.40}};
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+                                            mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)};
     const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 16);
     int total = 0;
-    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) total += it.value().size();
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it)
+        total += it.value().size();
     QCOMPARE(total, 16);
     // 机1段末点 与 机2段首点 应弧长连续衔接(间距 ≈ 单采样步长)
-    const double perim = 2.0 * (SwarmTypes::haversineM(39.90, 116.40, 39.90, 116.41)
-                              + SwarmTypes::haversineM(39.90, 116.41, 39.91, 116.41));
+    const double perim = 2.0 * (SwarmTypes::haversineM(39.90, 116.40, 39.90, 116.41) +
+                                SwarmTypes::haversineM(39.90, 116.41, 39.91, 116.41));
     const double step = perim / 16.0;
     const GeoPoint a = plan[1].last(), b = plan[2].first();
-    QVERIFY2(SwarmTypes::haversineM(a.lat, a.lon, b.lat, b.lon) < step * 2.0,
-             "相邻机段应弧长连续衔接(抓 off-by-one)");
+    QVERIFY2(SwarmTypes::haversineM(a.lat, a.lon, b.lat, b.lon) < step * 2.0, "相邻机段应弧长连续衔接(抓 off-by-one)");
 }
+
 void TstTactics::patrol_fewerSamplesThanVehicles()
 {
     const QList<QPair<double, double>> poly{{39.90, 116.40}, {39.90, 116.41}, {39.91, 116.41}};
-    const QList<SwarmTypes::VehicleState> v{
-        mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
-        mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)
-    };
-    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 2);   // M=2 < n=4
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.90, 116.40), mkVehicle(2, 39.90, 116.41),
+                                            mkVehicle(3, 39.91, 116.41), mkVehicle(4, 39.91, 116.40)};
+    const QMap<int, QList<GeoPoint>> plan = partitionPatrol(v, poly, 2);  // M=2 < n=4
     QCOMPARE(plan.size(), 4);
     int nonEmpty = 0;
-    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it) if (!it.value().isEmpty()) nonEmpty++;
-    QCOMPARE(nonEmpty, 2);    // 记录当前行为:仅 2 机有点,不崩溃
+    for (auto it = plan.constBegin(); it != plan.constEnd(); ++it)
+        if (!it.value().isEmpty())
+            nonEmpty++;
+    QCOMPARE(nonEmpty, 2);  // 记录当前行为:仅 2 机有点,不崩溃
 }
 
 // ============================================================================
@@ -461,7 +470,7 @@ void TstTactics::allocator_cbbaNoWorseThanSequential()
     const QList<SwarmTaskAllocator::Node> V{{1, 0, 0}, {2, 0, 100}, {3, 0, 200}};
     const QList<SwarmTaskAllocator::Node> T{{10, 0, 200}, {20, 0, 100}, {30, 0, 0}};
     const QVariantMap cmp = alloc.compare(V, T);
-    const double seq  = cmp.value(QStringLiteral("seq_total_m")).toDouble();
+    const double seq = cmp.value(QStringLiteral("seq_total_m")).toDouble();
     const double cbba = cmp.value(QStringLiteral("cbba_total_m")).toDouble();
     QVERIFY2(cbba <= seq + 1e-6, "CBBA 总里程应不劣于顺序基线");
 }
@@ -471,21 +480,23 @@ void TstTactics::allocator_cbbaNoWorseThanSequential()
 // ============================================================================
 void TstTactics::interceptor_picksNearest()
 {
-    const QList<SwarmTypes::VehicleState> v{ mkVehicle(1, 39.99, 116.4), mkVehicle(2, 39.901, 116.4) };
-    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 2);      // 2号(39.901)比1号(39.99)距目标更近
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(1, 39.99, 116.4), mkVehicle(2, 39.901, 116.4)};
+    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 2);  // 2号(39.901)比1号(39.99)距目标更近
 }
+
 void TstTactics::interceptor_singleAndEmpty()
 {
-    const QList<SwarmTypes::VehicleState> v{ mkVehicle(7, 39.99, 116.4) };
-    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 7);      // 单机
-    QCOMPARE(pickInterceptor({}, 39.9, 116.4), -1);    // 空列表
+    const QList<SwarmTypes::VehicleState> v{mkVehicle(7, 39.99, 116.4)};
+    QCOMPARE(pickInterceptor(v, 39.9, 116.4), 7);    // 单机
+    QCOMPARE(pickInterceptor({}, 39.9, 116.4), -1);  // 空列表
 }
+
 void TstTactics::latLon_validation()
 {
     QVERIFY2(!SwarmTypes::isValidLatLon(200.0, 116.4), "纬度超范围应拒绝");
     QVERIFY2(!SwarmTypes::isValidLatLon(39.9, 999.0), "经度超范围应拒绝");
     QVERIFY2(!SwarmTypes::isValidLatLon(0.0, 0.0), "(0,0) 占位应拒绝");
-    QVERIFY2( SwarmTypes::isValidLatLon(39.9, 116.4), "合法坐标应通过");
+    QVERIFY2(SwarmTypes::isValidLatLon(39.9, 116.4), "合法坐标应通过");
 }
 
 QTEST_GUILESS_MAIN(TstTactics)

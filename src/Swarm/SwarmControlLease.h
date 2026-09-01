@@ -38,7 +38,7 @@ public:
     /// 设置/解除某机的人工接管态。overridden=true→MANUAL_OVERRIDE;false→若当前接管则
     /// 解除为 OBSERVE_ONLY。解除后需自动化环下一轮 requestLease(由 executeActions 负责)
     /// 才会重新 canAutomate。集成层用 Vehicle/FirmwarePlugin 规范飞行模式访问器
-    /// + isAutonomousMode 判定 overridden，保证 locale 安全。
+    /// + indicatesManualOverride 判定 overridden，保证 locale 安全并忽略空遥测瞬态。
     void setManualOverride(int vehicleId, bool overridden);
     bool canAutomate(int vehicleId, qint64 nowMs) const;
     void release(int vehicleId);
@@ -49,9 +49,13 @@ public:
     /// mode 是否属于给定的自主模式集合。集成层从 Vehicle 的 missionFlightMode()/
     /// pauseFlightMode()/rtlFlightMode()/smartRTLFlightMode()/landFlightMode()/gotoFlightMode()/
     /// followFlightMode() 及 FirmwarePlugin::takeOffFlightMode() 取集合——与 flightMode() 同 tr() 上下文、
-    /// locale 一致。集合外(操作员手动直控 / Offboard 外部控制 / 未知)视为让路。
+    /// locale 一致。该函数只做自主集合分类；人工接管证据由 indicatesManualOverride 判定。
     /// 不在本地化显示名上硬编码字面量(会随语言失配)。
     static bool isAutonomousMode(const QString& mode, const QStringList& autonomousModes);
+
+    /// 非空且不属于自主模式集合时，才有足够证据判定操作员接管。
+    /// 空模式是飞行模式遥测切换期间的瞬态未知值，不能据此抢断现有租约。
+    static bool indicatesManualOverride(const QString& mode, const QStringList& autonomousModes);
 
 private:
     QMap<int, Lease> _leases;

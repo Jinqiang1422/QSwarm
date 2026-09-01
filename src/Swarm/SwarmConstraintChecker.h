@@ -29,63 +29,68 @@
 class SwarmConstraintChecker
 {
 public:
-    struct Violation {
-        QString severity;      ///< "error" / "warning"
-        QString rule;          ///< 规则标识（fence/battery/spacing/deconflict/comm/fleet/payload）
-        QString message;       ///< 违例描述
-        QString suggestion;    ///< 修改建议
+    struct Violation
+    {
+        QString severity;    ///< "error" / "warning"
+        QString rule;        ///< 规则标识（fence/battery/spacing/deconflict/comm/fleet/payload）
+        QString message;     ///< 违例描述
+        QString suggestion;  ///< 修改建议
     };
 
-    struct Config {
-        QList<QList<QPair<double, double>>> includePolygons;   ///< 允许空域（空=不限制）
-        QList<QList<QPair<double, double>>> excludePolygons;   ///< 禁飞区
-        double maxAltitudeM   = 0.0;    ///< 围栏高度上限（0=不限制）
-        double commRangeM     = 1500.0; ///< 链路覆盖半径
-        double homeLat        = 0.0;    ///< 集结/指控点（无效坐标时用地图中心替代）
-        double homeLon        = 0.0;
-        double cruiseSpeedMs  = 12.0;   ///< 巡航速度（估算用）
-        double climbRateMs    = 2.5;    ///< 爬升速率
-        double enduranceMin   = 25.0;   ///< 满电续航（估算用）
-        double reserveFactor  = 0.8;    ///< 可用电量安全系数（保留 20%）
-        double minSeparationM = 3.0;    ///< 编队最小间距
-        double commWarnFactor    = 1.0;   ///< comm 告警系数(range > commRange×factor → warning)
-        double commErrorFactor   = 1.5;   ///< comm 阻断系数
-        double spacingWarnFactor = 2.0;   ///< 间距告警系数(< minSep×factor → warning)
-        double deconflictFactor  = 1.0;   ///< 重叠判定系数(中心距 < 半对角和×factor → 重叠)
+    struct Config
+    {
+        QList<QList<QPair<double, double>>> includePolygons;  ///< 允许空域（空=不限制）
+        QList<QList<QPair<double, double>>> excludePolygons;  ///< 禁飞区
+        double maxAltitudeM = 0.0;                            ///< 围栏高度上限（0=不限制）
+        double commRangeM = 1500.0;                           ///< 链路覆盖半径
+        double homeLat = 0.0;                                 ///< 集结/指控点（无效坐标时用地图中心替代）
+        double homeLon = 0.0;
+        double cruiseSpeedMs = 12.0;                          ///< 巡航速度（估算用）
+        double climbRateMs = 2.5;                             ///< 爬升速率
+        double enduranceMin = 25.0;                           ///< 满电续航（估算用）
+        double reserveFactor = 0.8;                           ///< 可用电量安全系数（保留 20%）
+        double minSeparationM = 3.0;                          ///< 编队最小间距
+        double commWarnFactor = 1.0;                          ///< comm 告警系数(range > commRange×factor → warning)
+        double commErrorFactor = 1.5;                         ///< comm 阻断系数
+        double spacingWarnFactor = 2.0;                       ///< 间距告警系数(< minSep×factor → warning)
+        double deconflictFactor = 1.0;                        ///< 重叠判定系数(中心距 < 半对角和×factor → 重叠)
     };
 
     /// 从 JSON 加载配置（fences.json）；缺失字段用默认值
-    static Config configFromJson(const QJsonObject &obj);
-    static QJsonObject configToJson(const Config &cfg);
+    static Config configFromJson(const QJsonObject& obj);
+    static QJsonObject configToJson(const Config& cfg);
 
     /// 对动作序列做完整约束检查（mapCenter 用于无绝对坐标动作的参照）
-    QList<Violation> check(const QList<SwarmAction> &plan,
-                           const QList<SwarmTypes::VehicleState> &vehicles,
-                           const Config &cfg,
-                           double mapCenterLat, double mapCenterLon) const;
+    QList<Violation> check(const QList<SwarmAction>& plan, const QList<SwarmTypes::VehicleState>& vehicles,
+                           const Config& cfg, double mapCenterLat, double mapCenterLon) const;
 
     /// 模板级检查：规模与载荷（requiredPayload 空串=无要求；fleetPayloadKnown=false=载荷能力未知）
-    QList<Violation> checkTemplate(int minFleet, const QString &requiredPayload,
-                                   int onlineCount, bool fleetPayloadKnown) const;
+    QList<Violation> checkTemplate(int minFleet, const QString& requiredPayload, int onlineCount,
+                                   bool fleetPayloadKnown) const;
 
     /// 是否有 error 级违例
-    static bool hasError(const QList<Violation> &violations);
+    static bool hasError(const QList<Violation>& violations);
 
     /// 覆盖任务估算（米/分钟）：条带数、单架次扫掠距离
-    static void coverageGeometry(double lengthMeters, double widthMeters, double spacingMeters,
-                                 int &bands, double &sweepDistanceM);
+    static void coverageGeometry(double lengthMeters, double widthMeters, double spacingMeters, int& bands,
+                                 double& sweepDistanceM);
 
 private:
-    struct CoverageArea { double lat = 0.0; double lon = 0.0; double lengthM = 0.0; double widthM = 0.0; };
+    struct CoverageArea
+    {
+        double lat = 0.0;
+        double lon = 0.0;
+        double lengthM = 0.0;
+        double widthM = 0.0;
+    };
 
-    void _checkFence(const SwarmAction &action, const Config &cfg,
-                     double mapCenterLat, double mapCenterLon, QList<Violation> &out) const;
-    void _checkBattery(const SwarmAction &action, const QList<SwarmTypes::VehicleState> &vehicles,
-                       const Config &cfg, double mapCenterLat, double mapCenterLon,
-                       QList<Violation> &out) const;
-    void _checkTakeoffAlt(const SwarmAction &action, const Config &cfg, QList<Violation> &out) const;
-    void _checkComm(const SwarmAction &action, const Config &cfg,
-                    double mapCenterLat, double mapCenterLon, QList<Violation> &out) const;
-    void _checkSpacing(const SwarmAction &action, const Config &cfg, QList<Violation> &out) const;
-    void _checkDeconflict(const QList<CoverageArea> &areas, const Config &cfg, QList<Violation> &out) const;
+    void _checkFence(const SwarmAction& action, const Config& cfg, double mapCenterLat, double mapCenterLon,
+                     QList<Violation>& out) const;
+    void _checkBattery(const SwarmAction& action, const QList<SwarmTypes::VehicleState>& vehicles, const Config& cfg,
+                       double mapCenterLat, double mapCenterLon, QList<Violation>& out) const;
+    void _checkTakeoffAlt(const SwarmAction& action, const Config& cfg, QList<Violation>& out) const;
+    void _checkComm(const SwarmAction& action, const Config& cfg, double mapCenterLat, double mapCenterLon,
+                    QList<Violation>& out) const;
+    void _checkSpacing(const SwarmAction& action, const Config& cfg, QList<Violation>& out) const;
+    void _checkDeconflict(const QList<CoverageArea>& areas, const Config& cfg, QList<Violation>& out) const;
 };

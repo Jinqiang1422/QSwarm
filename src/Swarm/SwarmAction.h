@@ -12,22 +12,26 @@
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 
-struct SwarmAction {
-    QString     type;           ///< set_selection / arm / takeoff / land / rtl / pause /
-                                ///< start_mission / disarm / emergency_disarm /
-                                ///< start_formation / stop_formation / plan_coverage / clear_missions
+struct SwarmAction
+{
+    QString type;         ///< set_selection / arm / takeoff / land / rtl / pause /
+                          ///< start_mission / disarm / emergency_disarm /
+                          ///< start_formation / stop_formation / plan_coverage / clear_missions
     QVariantMap params;
-    QString     description;    ///< 中文描述，用于计划确认界面
-    bool        dangerous = false;
+    QString description;  ///< 中文描述，用于计划确认界面
+    bool dangerous = false;
 
     /// 危险动作集合（需人工确认后才可执行）
-    static bool isDangerousType(const QString &type)
+    static bool isDangerousType(const QString& type)
     {
-        static const QSet<QString> dangerousTypes = {
-            QStringLiteral("arm"), QStringLiteral("takeoff"), QStringLiteral("land"),
-            QStringLiteral("rtl"), QStringLiteral("start_mission"), QStringLiteral("disarm"),
-            QStringLiteral("emergency_disarm"), QStringLiteral("start_formation")
-        };
+        static const QSet<QString> dangerousTypes = {QStringLiteral("arm"),
+                                                     QStringLiteral("takeoff"),
+                                                     QStringLiteral("land"),
+                                                     QStringLiteral("rtl"),
+                                                     QStringLiteral("start_mission"),
+                                                     QStringLiteral("disarm"),
+                                                     QStringLiteral("emergency_disarm"),
+                                                     QStringLiteral("start_formation")};
         return dangerousTypes.contains(type);
     }
 };

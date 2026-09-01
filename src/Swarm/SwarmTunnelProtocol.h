@@ -24,38 +24,39 @@ namespace SwarmTunnel {
 
 constexpr quint16 PT_SINGLE = 42000;
 constexpr quint16 PT_MIDDLE = 42001;
-constexpr quint16 PT_LAST   = 42002;
+constexpr quint16 PT_LAST = 42002;
 
 /// 分片重组器状态（镜像 swarm_msgs.Reassembler）
-struct Reassembly {
+struct Reassembly
+{
     QByteArray buf;
-    bool       open = false;
+    bool open = false;
 };
 
 /// 位置式航迹数组 → 字段字典（镜像 swarm_msgs.track_from_wire）
-inline QJsonObject trackFromWire(const QJsonArray &w)
+inline QJsonObject trackFromWire(const QJsonArray& w)
 {
     QJsonObject t;
     if (w.count() < 11) {
         return t;
     }
-    t[QStringLiteral("track_id")]   = w.at(0).toInt();
-    t[QStringLiteral("category")]   = w.at(1).toInt();
-    t[QStringLiteral("lat")]        = w.at(2).toDouble() / 1e7;
-    t[QStringLiteral("lon")]        = w.at(3).toDouble() / 1e7;
+    t[QStringLiteral("track_id")] = w.at(0).toInt();
+    t[QStringLiteral("category")] = w.at(1).toInt();
+    t[QStringLiteral("lat")] = w.at(2).toDouble() / 1e7;
+    t[QStringLiteral("lon")] = w.at(3).toDouble() / 1e7;
     const int altDm = w.at(4).toInt();
-    t[QStringLiteral("alt_msl")]    = altDm < 0 ? QJsonValue() : QJsonValue(altDm / 10.0);
-    t[QStringLiteral("ve")]         = w.at(5).toDouble() / 100.0;
-    t[QStringLiteral("vn")]         = w.at(6).toDouble() / 100.0;
+    t[QStringLiteral("alt_msl")] = altDm < 0 ? QJsonValue() : QJsonValue(altDm / 10.0);
+    t[QStringLiteral("ve")] = w.at(5).toDouble() / 100.0;
+    t[QStringLiteral("vn")] = w.at(6).toDouble() / 100.0;
     t[QStringLiteral("confidence")] = w.at(7).toDouble() / 1000.0;
-    t[QStringLiteral("sensor_id")]  = w.at(8).toInt();
-    t[QStringLiteral("source")]     = w.at(9).toInt();
-    t[QStringLiteral("time_usec")]  = w.at(10).toDouble();
+    t[QStringLiteral("sensor_id")] = w.at(8).toInt();
+    t[QStringLiteral("source")] = w.at(9).toInt();
+    t[QStringLiteral("time_usec")] = w.at(10).toDouble();
     return t;
 }
 
 /// JSON 体 → {kind, data}（track/track_batch 自动还原位置式线格式）
-inline QJsonObject decodePayload(const QByteArray &body)
+inline QJsonObject decodePayload(const QByteArray& body)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(body);
     if (!doc.isObject()) {
@@ -70,7 +71,7 @@ inline QJsonObject decodePayload(const QByteArray &body)
     } else if (kind == QStringLiteral("track_batch")) {
         const QJsonObject data = msg.value(QStringLiteral("data")).toObject();
         QJsonArray tracks;
-        for (const QJsonValue &v : data.value(QStringLiteral("tracks")).toArray()) {
+        for (const QJsonValue& v : data.value(QStringLiteral("tracks")).toArray()) {
             tracks.append(trackFromWire(v.toArray()));
         }
         QJsonObject d;
@@ -84,13 +85,13 @@ inline QJsonObject decodePayload(const QByteArray &body)
 }
 
 /// 解析一个 UDP/TUNNEL 数据报 → 完成的消息 {kind, data}；分片未完返回空
-inline QJsonObject parseDatagram(const QByteArray &datagram, Reassembly &rx)
+inline QJsonObject parseDatagram(const QByteArray& datagram, Reassembly& rx)
 {
     if (datagram.size() < 3) {
         return {};
     }
     const quint16 pt = (quint8(datagram.at(0)) << 8) | quint8(datagram.at(1));
-    const QByteArray chunk = datagram.mid(3);           // 跳过 payload_type + seq
+    const QByteArray chunk = datagram.mid(3);  // 跳过 payload_type + seq
 
     QByteArray body;
     if (pt == PT_SINGLE) {
@@ -106,7 +107,7 @@ inline QJsonObject parseDatagram(const QByteArray &datagram, Reassembly &rx)
             rx.buf += chunk;
             body = rx.buf;
         } else {
-            body = chunk;                               // 丢首帧容错
+            body = chunk;  // 丢首帧容错
         }
         rx.buf.clear();
         rx.open = false;
@@ -116,4 +117,4 @@ inline QJsonObject parseDatagram(const QByteArray &datagram, Reassembly &rx)
     return decodePayload(body);
 }
 
-} // namespace SwarmTunnel
+}  // namespace SwarmTunnel

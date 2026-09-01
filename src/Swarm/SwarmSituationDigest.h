@@ -26,15 +26,16 @@ class SwarmSituationDigest
 {
 public:
     /// 事实来源（与 WP3.5 契约一致）
-    enum class Source {
-        Telemetry,      ///< 遥测（机体状态）
-        Perception,     ///< 感知（检测/融合航迹）
-        Inferred        ///< 推测（规则推导/估算）
+    enum class Source
+    {
+        Telemetry,   ///< 遥测（机体状态）
+        Perception,  ///< 感知（检测/融合航迹）
+        Inferred     ///< 推测（规则推导/估算）
     };
 
     /// 来源中文角标：[遥测] / [感知] / [推测]
     static QString sourceLabel(Source s);
-    static QString sourceKey(Source s);     ///< "telemetry" / "perception" / "inferred"
+    static QString sourceKey(Source s);  ///< "telemetry" / "perception" / "inferred"
 
     /// 构建结构化态势摘要：
     /// {
@@ -44,13 +45,11 @@ public:
     ///   "alerts":  {"source":"inferred", "count":N, "items":[...]},
     ///   "notes":   ["..."]
     /// }
-    static QJsonObject build(const QList<SwarmTypes::VehicleState> &vehicles,
-                             const QList<SwarmTrackFusion::FusedTrack> &tracks,
-                             const QString &taskStateText, bool taskRunning,
-                             const QList<SwarmEventDetector::Alert> &recentAlerts,
-                             qint64 monoMs);
+    static QJsonObject build(const QList<SwarmTypes::VehicleState>& vehicles,
+                             const QList<SwarmTrackFusion::FusedTrack>& tracks, const QString& taskStateText,
+                             bool taskRunning, const QList<SwarmEventDetector::Alert>& recentAlerts, qint64 monoMs);
 
     /// 紧凑单行摘要（面板状态栏/LLM 上下文复用）：
     /// "在线6架｜最低电72%｜目标3个(车辆2/人员1)｜任务:区域搜索中｜告警1"
-    static QString oneLiner(const QJsonObject &digest);
+    static QString oneLiner(const QJsonObject& digest);
 };

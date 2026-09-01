@@ -24,18 +24,22 @@
 
 namespace SwarmAutonomy {
 
-enum class Level {
-    L1Suggest    = 1,   ///< 仅建议
-    L2Supervised = 2,   ///< 监督执行（人工确认后下发）
-    L3Bounded    = 3    ///< 限定域自主
+enum class Level
+{
+    L1Suggest = 1,     ///< 仅建议
+    L2Supervised = 2,  ///< 监督执行（人工确认后下发）
+    L3Bounded = 3      ///< 限定域自主
 };
 
 inline QString levelName(Level level)
 {
     switch (level) {
-    case Level::L1Suggest:    return QStringLiteral("L1 仅建议");
-    case Level::L2Supervised: return QStringLiteral("L2 监督执行");
-    case Level::L3Bounded:    return QStringLiteral("L3 限定域自主");
+        case Level::L1Suggest:
+            return QStringLiteral("L1 仅建议");
+        case Level::L2Supervised:
+            return QStringLiteral("L2 监督执行");
+        case Level::L3Bounded:
+            return QStringLiteral("L3 限定域自主");
     }
     return QStringLiteral("未知");
 }
@@ -43,13 +47,14 @@ inline QString levelName(Level level)
 inline QString levelDescription(Level level)
 {
     switch (level) {
-    case Level::L1Suggest:
-        return QStringLiteral("AI 只生成计划与建议并展示，一律不下发执行；操作员手动直控不受限。");
-    case Level::L2Supervised:
-        return QStringLiteral("AI 计划经人工确认后下发；含危险动作的计划强制挂起确认（默认档位）。");
-    case Level::L3Bounded:
-        return QStringLiteral("白名单任务域内的动作自动执行（仍过统一校验闸门并全程审计）；"
-                              "域外危险动作仍需人工确认；紧急类动作永不自动执行。");
+        case Level::L1Suggest:
+            return QStringLiteral("AI 只生成计划与建议并展示，一律不下发执行；操作员手动直控不受限。");
+        case Level::L2Supervised:
+            return QStringLiteral("AI 计划经人工确认后下发；含危险动作的计划强制挂起确认（默认档位）。");
+        case Level::L3Bounded:
+            return QStringLiteral(
+                "白名单任务域内的动作自动执行（仍过统一校验闸门并全程审计）；"
+                "域外危险动作仍需人工确认；紧急类动作永不自动执行。");
     }
     return QString();
 }
@@ -57,15 +62,19 @@ inline QString levelDescription(Level level)
 /// L3 默认自主白名单：放开除“紧急上锁”外的全部危险动作，操作员可按任务域裁剪
 inline QStringList defaultL3AllowedTypes()
 {
-    return { QStringLiteral("arm"), QStringLiteral("takeoff"), QStringLiteral("land"),
-             QStringLiteral("rtl"), QStringLiteral("start_mission"), QStringLiteral("disarm"),
-             QStringLiteral("start_formation") };
+    return {QStringLiteral("arm"),
+            QStringLiteral("takeoff"),
+            QStringLiteral("land"),
+            QStringLiteral("rtl"),
+            QStringLiteral("start_mission"),
+            QStringLiteral("disarm"),
+            QStringLiteral("start_formation")};
 }
 
 /// 任何等级下都绝不自动执行的动作（空中强制上锁等同坠机，只能人工显式触发）
 inline QStringList neverAutoTypes()
 {
-    return { QStringLiteral("emergency_disarm") };
+    return {QStringLiteral("emergency_disarm")};
 }
 
 /// AI 侧执行是否被当前等级整体禁止（仅 L1）
@@ -76,10 +85,8 @@ inline bool aiExecutionBlocked(Level level)
 
 /// 判定动作序列在当前等级下是否需要人工确认挂起。
 /// 返回 true 时 reason 给出触发原因（供界面显示与审计记录）。
-inline bool needsConfirmation(Level level,
-                              const QStringList &l3AllowedTypes,
-                              const QList<SwarmAction> &actions,
-                              QString *reason = nullptr)
+inline bool needsConfirmation(Level level, const QStringList& l3AllowedTypes, const QList<SwarmAction>& actions,
+                              QString* reason = nullptr)
 {
     if (actions.isEmpty()) {
         return false;
@@ -93,13 +100,13 @@ inline bool needsConfirmation(Level level,
     }
 
     QStringList dangerousTypes;
-    for (const SwarmAction &action : actions) {
+    for (const SwarmAction& action : actions) {
         if (action.dangerous && !dangerousTypes.contains(action.type)) {
             dangerousTypes.append(action.type);
         }
     }
     if (dangerousTypes.isEmpty()) {
-        return false;   // 无危险动作，L2/L3 均可直接执行
+        return false;  // 无危险动作，L2/L3 均可直接执行
     }
 
     if (level == Level::L2Supervised) {
@@ -112,7 +119,7 @@ inline bool needsConfirmation(Level level,
 
     // L3：域内白名单自动执行；域外危险动作与“永不自动”动作需确认
     QStringList blockedTypes;
-    for (const QString &type : dangerousTypes) {
+    for (const QString& type : dangerousTypes) {
         if (neverAutoTypes().contains(type) || !l3AllowedTypes.contains(type)) {
             blockedTypes.append(type);
         }
@@ -127,4 +134,4 @@ inline bool needsConfirmation(Level level,
     return false;
 }
 
-} // namespace SwarmAutonomy
+}  // namespace SwarmAutonomy

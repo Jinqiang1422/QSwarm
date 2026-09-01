@@ -138,8 +138,11 @@ for ((i = 0; i < N; i++)); do
     fi
 done
 
-echo "[launch] 全部 $N 实例已拉起，探测 heartbeat 就绪（最多 120s）..."
-python3 - "$N" <<'PY'
+if [[ "${QGC_SKIP_READY_PROBE:-0}" == "1" ]]; then
+    echo "[launch] 全部 $N 实例已拉起；由外层 QGC 验收器等待 heartbeat"
+else
+    echo "[launch] 全部 $N 实例已拉起，探测 heartbeat 就绪（最多 120s）..."
+    python3 - "$N" <<'PY'
 import sys, time
 try:
     from pymavlink import mavutil
@@ -161,6 +164,7 @@ ok = len(seen) >= need
 print(f"[launch] 就绪 {len(seen)}/{need} 架" +
       ("" if ok else " —— 未满：多为高负载 lockstep 卡顿或多机 standalone 未连上，见各 inst_*/px4.log"))
 PY
+fi
 
 echo "[launch] 机队就绪后，另开终端运行场景（示例）："
 SIM_DIR="$(cd "$(dirname "$0")" && pwd)"

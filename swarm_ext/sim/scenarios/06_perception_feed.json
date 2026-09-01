@@ -1,5 +1,8 @@
 {
   "name": "06 感知链路馈送（检测→跟踪→TUNNEL→COP）",
+  "fleet": 0,
+  "requires_qgc": true,
+  "requires_qml": true,
   "description": "两路机载相机对地扫描，1 车辆目标北向移动、1 人员目标东向移动、1 目标中途进入视场；验证检测跟踪服务端到端时延 ≤500ms、航迹地理误差 ≤8m、COP 叠加刷新 ≥1Hz。",
   "duration_s": 30,
   "fps": 5,

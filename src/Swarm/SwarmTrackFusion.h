@@ -22,54 +22,58 @@ class SwarmTrackFusion
 {
 public:
     /// 上游航迹上报（与 swarm_msgs.make_track / SWARM_TARGET_TRACK 字段一一对应）
-    struct TrackReport {
-        int     trackId     = 0;        ///< 服务侧航迹 ID
-        int     sensorId    = 0;        ///< 来源传感器
-        int     category    = 0;        ///< SWARM_TARGET_CATEGORY
-        double  lat         = 0.0;
-        double  lon         = 0.0;
-        double  ve          = 0.0;      ///< 东向速度 m/s
-        double  vn          = 0.0;      ///< 北向速度 m/s
-        double  confidence  = 0.5;
-        int     source      = 0;        ///< SWARM_TRACK_SOURCE
-        qint64  timeUsec    = 0;        ///< 量测时间戳
+    struct TrackReport
+    {
+        int trackId = 0;   ///< 服务侧航迹 ID
+        int sensorId = 0;  ///< 来源传感器
+        int category = 0;  ///< SWARM_TARGET_CATEGORY
+        double lat = 0.0;
+        double lon = 0.0;
+        double ve = 0.0;      ///< 东向速度 m/s
+        double vn = 0.0;      ///< 北向速度 m/s
+        double confidence = 0.5;
+        int source = 0;       ///< SWARM_TRACK_SOURCE
+        qint64 timeUsec = 0;  ///< 量测时间戳
     };
 
     /// 融合后的统一航迹（COP/事件检测/态势摘要共用）
-    struct FusedTrack {
-        int         fusedId     = 0;
-        int         category    = 0;
-        double      lat         = 0.0;
-        double      lon         = 0.0;
-        double      ve          = 0.0;
-        double      vn          = 0.0;
-        double      confidence  = 0.0;
-        QSet<int>   sensors;            ///< 贡献传感器集合
-        QList<int>  sourceTrackIds;     ///< 贡献上游航迹
-        int         hits        = 0;
-        qint64      firstSeenMs = 0;
-        qint64      lastSeenMs  = 0;
-        QString     state;              ///< tentative / confirmed / coasting
-        double      speedMs() const;    ///< 地速
+    struct FusedTrack
+    {
+        int fusedId = 0;
+        int category = 0;
+        double lat = 0.0;
+        double lon = 0.0;
+        double ve = 0.0;
+        double vn = 0.0;
+        double confidence = 0.0;
+        QSet<int> sensors;          ///< 贡献传感器集合
+        QList<int> sourceTrackIds;  ///< 贡献上游航迹
+        int hits = 0;
+        qint64 firstSeenMs = 0;
+        qint64 lastSeenMs = 0;
+        QString state;           ///< tentative / confirmed / coasting
+        double speedMs() const;  ///< 地速
     };
 
-    struct Config {
-        double gateDistM      = 25.0;   ///< 关联距离门限（米）
-        double coastMs        = 3000;   ///< 超过则进入 coasting
-        double dropMs         = 10000;  ///< 超过则删除
-        int    minHits        = 2;      ///< tentative→confirmed 所需命中
-        double speedDamp      = 0.4;    ///< 速度融合阻尼（防瞬时跳变）
-        double minConfidence  = 0.2;    ///< 感知输入置信度门槛（低于则丢弃）
+    struct Config
+    {
+        double gateDistM = 25.0;     ///< 关联距离门限（米）
+        double coastMs = 3000;       ///< 超过则进入 coasting
+        double dropMs = 10000;       ///< 超过则删除
+        int minHits = 2;             ///< tentative→confirmed 所需命中
+        double speedDamp = 0.4;      ///< 速度融合阻尼（防瞬时跳变）
+        double minConfidence = 0.2;  ///< 感知输入置信度门槛（低于则丢弃）
     };
 
     SwarmTrackFusion();
-    explicit SwarmTrackFusion(const Config &cfg);
+    explicit SwarmTrackFusion(const Config& cfg);
 
-    void setConfig(const Config &cfg) { _cfg = cfg; }
-    void setReference(double lat, double lon);          ///< ENU 参考点（默认首报自动设定）
+    void setConfig(const Config& cfg) { _cfg = cfg; }
+
+    void setReference(double lat, double lon);  ///< ENU 参考点（默认首报自动设定）
 
     /// 摄入一条上游航迹，返回命中的融合航迹 ID（新建则为新 ID）
-    int ingest(const TrackReport &r, qint64 monoMs);
+    int ingest(const TrackReport& r, qint64 monoMs);
 
     /// 周期维护：状态迁移与过期删除（建议 ≥2Hz 调用）
     void prune(qint64 monoMs);
@@ -87,13 +91,13 @@ public:
     static QString categoryName(int category);
 
 private:
-    int  _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
-    void _localToGeo(double eastM, double northM, double &lat, double &lon) const;
+    int _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
+    void _localToGeo(double eastM, double northM, double& lat, double& lon) const;
 
-    Config              _cfg;
-    QList<FusedTrack>   _tracks;
-    double              _refLat = 0.0, _refLon = 0.0;
-    bool                _refSet = false;
-    int                 _nextFusedId = 1;
-    int                 _rejectedCount = 0;
+    Config _cfg;
+    QList<FusedTrack> _tracks;
+    double _refLat = 0.0, _refLon = 0.0;
+    bool _refSet = false;
+    int _nextFusedId = 1;
+    int _rejectedCount = 0;
 };

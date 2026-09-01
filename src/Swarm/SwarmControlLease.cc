@@ -107,5 +107,10 @@ bool SwarmControlLease::isAutonomousMode(const QString& mode, const QStringList&
             return true;
         }
     }
-    return false;  // 集合外:操作员手动直控 / Offboard 外部控制 / 未知 → 让路
+    return false;  // 非自主或未知；是否构成人工接管由 indicatesManualOverride 判定
+}
+
+bool SwarmControlLease::indicatesManualOverride(const QString& mode, const QStringList& autonomousModes)
+{
+    return !mode.trimmed().isEmpty() && !isAutonomousMode(mode, autonomousModes);
 }

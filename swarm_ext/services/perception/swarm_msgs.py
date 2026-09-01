@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003
 """
 WP3.7 感知消息契约 — TUNNEL JSON 编解码（单源事实）
 
@@ -20,15 +20,17 @@ payload_type 约定（与 mavlink/swarm_perception.xml 注释一致）：
 本模块同时被 QGC 侧测试脚本与感知服务使用，保持零第三方依赖。
 """
 
+from __future__ import annotations
+
 import json
 
 PT_SINGLE = 42000
 PT_MIDDLE = 42001
-PT_LAST   = 42002
+PT_LAST = 42002
 
-TUNNEL_PAYLOAD_MAX = 128      # MAVLink TUNNEL 载荷上限
-CHUNK_DATA_MAX     = 126      # 首字节留给 seq
-_SEQ_MASK          = 0xFF
+TUNNEL_PAYLOAD_MAX = 128  # MAVLink TUNNEL 载荷上限
+CHUNK_DATA_MAX = 126  # 首字节留给 seq
+_SEQ_MASK = 0xFF
 
 
 class Reassembler:
@@ -51,7 +53,7 @@ class Reassembler:
             if self._open:
                 self._buf += payload[1:]
                 data = bytes(self._buf)
-            else:                       # 丢了首帧的尾帧，按单帧尝试
+            else:  # 丢了首帧的尾帧，按单帧尝试
                 data = payload[1:]
             self._buf.clear()
             self._open = False
@@ -74,31 +76,49 @@ class Reassembler:
 #          ve(cm/s int), vn(cm/s int), confidence(0-1000), sensor_id, source, time_usec]
 # ---------------------------------------------------------------------------
 
-_TRACK_KEYS = ("track_id", "category", "lat", "lon", "alt_msl",
-               "ve", "vn", "confidence", "sensor_id", "source", "time_usec")
+_TRACK_KEYS = (
+    "track_id",
+    "category",
+    "lat",
+    "lon",
+    "alt_msl",
+    "ve",
+    "vn",
+    "confidence",
+    "sensor_id",
+    "source",
+    "time_usec",
+)
 
 
 def track_to_wire(t: dict) -> list:
     return [
-        int(t["track_id"]), int(t["category"]),
-        int(round(float(t["lat"]) * 1e7)), int(round(float(t["lon"]) * 1e7)),
+        int(t["track_id"]),
+        int(t["category"]),
+        int(round(float(t["lat"]) * 1e7)),
+        int(round(float(t["lon"]) * 1e7)),
         -1 if t.get("alt_msl") is None else int(round(float(t["alt_msl"]) * 10)),
         int(round(float(t.get("ve", 0.0)) * 100)),
         int(round(float(t.get("vn", 0.0)) * 100)),
         int(round(float(t.get("confidence", 0.5)) * 1000)),
-        int(t.get("sensor_id", 0)), int(t.get("source", 0)),
+        int(t.get("sensor_id", 0)),
+        int(t.get("source", 0)),
         int(t.get("time_usec", 0)),
     ]
 
 
 def track_from_wire(w: list) -> dict:
     return {
-        "track_id": int(w[0]), "category": int(w[1]),
-        "lat": w[2] / 1e7, "lon": w[3] / 1e7,
+        "track_id": int(w[0]),
+        "category": int(w[1]),
+        "lat": w[2] / 1e7,
+        "lon": w[3] / 1e7,
         "alt_msl": None if w[4] < 0 else w[4] / 10.0,
-        "ve": w[5] / 100.0, "vn": w[6] / 100.0,
+        "ve": w[5] / 100.0,
+        "vn": w[6] / 100.0,
         "confidence": w[7] / 1000.0,
-        "sensor_id": int(w[8]), "source": int(w[9]),
+        "sensor_id": int(w[8]),
+        "source": int(w[9]),
         "time_usec": int(w[10]),
     }
 
@@ -108,16 +128,19 @@ def encode(kind: str, obj, seq: int = 0) -> list:
     if kind == "track":
         obj = track_to_wire(obj)
     elif kind == "track_batch":
-        obj = {"t": int(obj.get("time_usec", 0)),
-               "tracks": [track_to_wire(t) for t in obj["tracks"]]}
-    body = json.dumps({"kind": kind, "data": obj},
-                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        obj = {
+            "t": int(obj.get("time_usec", 0)),
+            "tracks": [track_to_wire(t) for t in obj["tracks"]],
+        }
+    body = json.dumps(
+        {"kind": kind, "data": obj}, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
     if len(body) <= CHUNK_DATA_MAX:
         return [(PT_SINGLE, bytes([seq & _SEQ_MASK]) + body)]
     frames = []
     off = 0
     while off < len(body):
-        chunk = body[off:off + CHUNK_DATA_MAX]
+        chunk = body[off : off + CHUNK_DATA_MAX]
         off += len(chunk)
         pt = PT_MIDDLE if off < len(body) else PT_LAST
         frames.append((pt, bytes([seq & _SEQ_MASK]) + chunk))
@@ -134,13 +157,16 @@ def decode_payload(raw: bytes):
     if kind == "track" and isinstance(data, list):
         data = track_from_wire(data)
     elif kind == "track_batch" and isinstance(data, dict) and "tracks" in data:
-        data = {"time_usec": data.get("t", 0),
-                "tracks": [track_from_wire(w) for w in data["tracks"]]}
+        data = {
+            "time_usec": data.get("t", 0),
+            "tracks": [track_from_wire(w) for w in data["tracks"]],
+        }
     return kind, data
 
 
-def make_heartbeat(tracks_active: int, fps: float, camera_channels: int,
-                   status: int = 0, time_usec: int = 0) -> dict:
+def make_heartbeat(
+    tracks_active: int, fps: float, camera_channels: int, status: int = 0, time_usec: int = 0
+) -> dict:
     return {
         "tracks_active": int(tracks_active),
         "fps_x10": int(round(fps * 10)),
@@ -150,10 +176,19 @@ def make_heartbeat(tracks_active: int, fps: float, camera_channels: int,
     }
 
 
-def make_track(track_id: int, category: int, lat: float, lon: float,
-               alt_msl: float = None, ve: float = 0.0, vn: float = 0.0,
-               confidence: float = 0.5, sensor_id: int = 0, source: int = 0,
-               time_usec: int = 0) -> dict:
+def make_track(
+    track_id: int,
+    category: int,
+    lat: float,
+    lon: float,
+    alt_msl: float | None = None,
+    ve: float = 0.0,
+    vn: float = 0.0,
+    confidence: float = 0.5,
+    sensor_id: int = 0,
+    source: int = 0,
+    time_usec: int = 0,
+) -> dict:
     return {
         "track_id": int(track_id),
         "category": int(category),

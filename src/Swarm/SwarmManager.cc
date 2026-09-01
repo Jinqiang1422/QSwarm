@@ -36,6 +36,10 @@
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
 
+#ifdef QGC_UNITTEST_BUILD
+#include "SwarmAcceptanceServer.h"
+#endif
+
 namespace {
 bool originHasOperatorAuthorization(const QString& origin, const SwarmTaskController* taskController)
 {
@@ -106,6 +110,13 @@ void SwarmManager::init()
                            qgcApp()->showAppMessage(message);
                        }
                    });
+
+#ifdef QGC_UNITTEST_BUILD
+    _acceptanceServer = new SwarmAcceptanceServer(this);
+    if (_acceptanceServer->startFromEnvironment()) {
+        emit swarmCommandFeedback(tr("集群验收接口已在本机回环地址启动"));
+    }
+#endif
 }
 
 QmlObjectListModel* SwarmManager::vehicles() const
@@ -212,6 +223,30 @@ QString SwarmManager::checkTextSafety(const QString& text) const
     obj[QStringLiteral("score")] = verdict.score;
     return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
+
+#ifdef QGC_UNITTEST_BUILD
+QString SwarmManager::controlLeaseState(int vehicleId) const
+{
+    switch (_lease.stateOf(vehicleId)) {
+        case SwarmControlLease::OBSERVE_ONLY:
+            return QStringLiteral("observe_only");
+        case SwarmControlLease::LEASE_REQUESTED:
+            return QStringLiteral("lease_requested");
+        case SwarmControlLease::LEASED:
+            return QStringLiteral("leased");
+        case SwarmControlLease::RELEASED:
+            return QStringLiteral("released");
+        case SwarmControlLease::MANUAL_OVERRIDE:
+            return QStringLiteral("manual_override");
+    }
+    return QStringLiteral("unknown");
+}
+
+bool SwarmManager::automationAllowed(int vehicleId) const
+{
+    return _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch());
+}
+#endif
 
 bool SwarmManager::aiExecutionBlocked(QString* reason) const
 {
@@ -580,6 +615,7 @@ bool SwarmManager::_formationAutomationAllowed(int vehicleId)
 
 void SwarmManager::armAll(bool arm)
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(arm ? QStringLiteral("armAll") : QStringLiteral("disarmAll"));
     _forEachVehicleStaggered(arm ? tr("集群解锁") : tr("集群上锁"), _commandIntervalMs,
                              [arm](Vehicle* vehicle, bool) { vehicle->setArmed(arm, true /*showError*/); });
@@ -587,28 +623,61 @@ void SwarmManager::armAll(bool arm)
 
 void SwarmManager::takeoffAll(double altitudeRelative)
 {
+    const quint64 commandGeneration = ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("takeoffAll"),
                                                      {{QStringLiteral("altitude"), altitudeRelative}});
     _forEachVehicleStaggered(
-        tr("集群起飞"), _takeoffStaggerMs, [this, altitudeRelative](Vehicle* vehicle, bool requireActiveLease) {
-            if (vehicle->armed()) {
-                vehicle->guidedModeTakeoff(altitudeRelative);
-            } else {
-                // 先解锁，等待解锁生效后再起飞
-                vehicle->setArmed(true, true /*showError*/);
-                QPointer<Vehicle> vehiclePtr(vehicle);
-                QTimer::singleShot(1500, this, [this, vehiclePtr, altitudeRelative, requireActiveLease]() {
-                    if (vehiclePtr && vehiclePtr->armed() &&
-                        _automationAllowedAtDispatch(vehiclePtr->id(), requireActiveLease, tr("集群起飞"))) {
-                        vehiclePtr->guidedModeTakeoff(altitudeRelative);
+        tr("集群起飞"), _takeoffStaggerMs,
+        [this, altitudeRelative, commandGeneration](Vehicle* vehicle, bool requireActiveLease) {
+            if (commandGeneration != _takeoffCommandGeneration) {
+                return;
+            }
+            // PX4 may auto-disarm an already armed vehicle while it waits for its staggered
+            // takeoff slot. Reassert arming for every vehicle at dispatch time instead of
+            // trusting a potentially stale armed state from the earlier arm-all command.
+            vehicle->setArmed(true, true /*showError*/);
+            QPointer<Vehicle> vehiclePtr(vehicle);
+            QTimer::singleShot(
+                1500, this, [this, vehiclePtr, altitudeRelative, requireActiveLease, commandGeneration]() {
+                    if (vehiclePtr) {
+                        _armAndTakeoff(vehiclePtr.data(), altitudeRelative, requireActiveLease, commandGeneration, 30);
                     }
                 });
-            }
         });
+}
+
+void SwarmManager::_armAndTakeoff(Vehicle* vehicle, double altitudeRelative, bool requireActiveLease,
+                                  quint64 commandGeneration, int retriesRemaining)
+{
+    if (!vehicle || commandGeneration != _takeoffCommandGeneration ||
+        !_automationAllowedAtDispatch(vehicle->id(), requireActiveLease, tr("集群起飞"))) {
+        return;
+    }
+    if (vehicle->armed()) {
+        vehicle->guidedModeTakeoff(altitudeRelative);
+        return;
+    }
+    if (retriesRemaining <= 0) {
+        emit swarmCommandFeedback(tr("集群起飞：%1 号机等待解锁超时").arg(vehicle->id()));
+        SwarmAuditLogger::instance()->log(QStringLiteral("safety"), QStringLiteral("takeoff_arm_timeout"),
+                                          {{QStringLiteral("vehicle_id"), vehicle->id()}});
+        return;
+    }
+
+    vehicle->setArmed(true, true /*showError*/);
+    QPointer<Vehicle> vehiclePtr(vehicle);
+    QTimer::singleShot(1000, this,
+                       [this, vehiclePtr, altitudeRelative, requireActiveLease, commandGeneration, retriesRemaining]() {
+                           if (vehiclePtr) {
+                               _armAndTakeoff(vehiclePtr.data(), altitudeRelative, requireActiveLease,
+                                              commandGeneration, retriesRemaining - 1);
+                           }
+                       });
 }
 
 void SwarmManager::landAll()
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("landAll"));
     _forEachVehicleStaggered(tr("集群降落"), _commandIntervalMs,
                              [](Vehicle* vehicle, bool) { vehicle->guidedModeLand(); });
@@ -616,6 +685,7 @@ void SwarmManager::landAll()
 
 void SwarmManager::rtlAll()
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("rtlAll"));
     _forEachVehicleStaggered(tr("集群返航"), _commandIntervalMs,
                              [](Vehicle* vehicle, bool) { vehicle->guidedModeRTL(true /*smartRTL*/); });
@@ -623,6 +693,7 @@ void SwarmManager::rtlAll()
 
 void SwarmManager::pauseAll()
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("pauseAll"));
     _forEachVehicleStaggered(tr("集群暂停"), 0 /*立即同时执行*/,
                              [](Vehicle* vehicle, bool) { vehicle->pauseVehicle(); });
@@ -630,6 +701,7 @@ void SwarmManager::pauseAll()
 
 void SwarmManager::startMissionAll()
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("startMissionAll"));
     _forEachVehicleStaggered(tr("集群开始任务"), _commandIntervalMs,
                              [](Vehicle* vehicle, bool) { vehicle->startMission(); });
@@ -637,6 +709,7 @@ void SwarmManager::startMissionAll()
 
 void SwarmManager::emergencyDisarmAll()
 {
+    ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("emergencyDisarmAll"));
     _forEachVehicleStaggered(tr("紧急上锁"), 0, [](Vehicle* vehicle, bool) {
         // MAV_CMD_COMPONENT_ARM_DISARM: param1=0(上锁), param2=21196(强制，含空中)
@@ -1070,12 +1143,14 @@ void SwarmManager::_vehicleAdded(Vehicle* vehicle)
     if (vehicle) {
         const auto updateLeaseFromMode = [this, vehicle](const QString& mode) {
             // 用 Vehicle 规范飞行模式访问器(与 flightMode() 同 tr() 上下文,locale 安全)
-            // 构成自主模式集;集合外(操作员手动直控 / Offboard 外部控制 / 未知)让出租约。
+            // 构成自主模式集；非空集合外模式（操作员手动直控 / Offboard 外部控制）让出租约。
+            // 空模式是遥测切换瞬态，不作为人工接管证据。
             // 切回自主模式即解除接管(可恢复)。
             const bool autonomous = SwarmControlLease::isAutonomousMode(mode, _autonomousModes(vehicle));
             if (autonomous) {
                 _lease.setManualOverride(vehicle->id(), false);
-            } else if (_lease.stateOf(vehicle->id()) == SwarmControlLease::LEASED) {
+            } else if (SwarmControlLease::indicatesManualOverride(mode, _autonomousModes(vehicle)) &&
+                       _lease.stateOf(vehicle->id()) == SwarmControlLease::LEASED) {
                 // 仅在自动化已持有租约时，集合外模式切换才表示操作员接管。
                 _lease.setManualOverride(vehicle->id(), true);
             }

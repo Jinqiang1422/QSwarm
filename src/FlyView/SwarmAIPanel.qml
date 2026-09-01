@@ -73,41 +73,42 @@ Rectangle {
         visible:                _root.expanded
         clip:                   true
 
-        ColumnLayout {
+        Column {
             id:     mainColumn
             width:  _root.width - _margin * 2
             spacing: _margin
 
             // ==================== 接口配置（默认折叠） ====================
-            ColumnLayout {
+            Column {
                 id:             configColumn
                 visible:        false
                 spacing:        _margin
-                Layout.fillWidth: true
+                width:          parent.width
 
                 QGCLabel { text: qsTr("◆ 大模型接口（OpenAI 兼容）"); font.bold: true }
                 QGCLabel { text: qsTr("接口地址") }
                 QGCTextField {
-                    Layout.fillWidth: true
+                    width: parent.width
                     text: _ai.apiBaseUrl
                     placeholderText: "https://api.deepseek.com/v1"
                     onEditingFinished: _ai.apiBaseUrl = text
                 }
                 QGCLabel { text: qsTr("API Key") }
                 QGCTextField {
-                    Layout.fillWidth: true
+                    width: parent.width
                     text: _ai.apiKey
                     echoMode: TextInput.Password
                     onEditingFinished: _ai.apiKey = text
                 }
                 QGCLabel { text: qsTr("模型") }
                 QGCTextField {
-                    Layout.fillWidth: true
+                    width: parent.width
                     text: _ai.modelName
                     placeholderText: "deepseek-chat"
                     onEditingFinished: _ai.modelName = text
                 }
                 RowLayout {
+                    width:      parent.width
                     spacing: _margin
                     QGCButton { text: qsTr("测试连接"); onClicked: _ai.testConnection() }
                     QGCCheckBox {
@@ -125,6 +126,7 @@ Rectangle {
                 // ---------- 自主等级（WP1.3） ----------
                 QGCLabel { text: qsTr("◆ 自主等级"); font.bold: true }
                 RowLayout {
+                    width:      parent.width
                     spacing: _margin
                     QGCComboBox {
                         model:          [qsTr("L1 仅建议"), qsTr("L2 监督执行"), qsTr("L3 限定域自主")]
@@ -139,7 +141,7 @@ Rectangle {
                     }
                 }
                 Flow {
-                    Layout.fillWidth:   true
+                    width:              parent.width
                     spacing:            _margin
                     visible:            _swarm.autonomyLevel === 3
                     Repeater {
@@ -167,6 +169,7 @@ Rectangle {
 
                 // ---------- 审计（WP1.1） ----------
                 RowLayout {
+                    width:      parent.width
                     spacing: _margin
                     QGCLabel { text: qsTr("◆ 审计追溯"); font.bold: true }
                     QGCButton {
@@ -175,7 +178,7 @@ Rectangle {
                     }
                 }
                 QGCLabel {
-                    Layout.fillWidth:   true
+                    width:              parent.width
                     text:               qsTr("会话 %1｜已记录 %2 条｜%3")
                                             .arg(_swarm.auditSessionId())
                                             .arg(_swarm.auditEventCount())
@@ -184,7 +187,7 @@ Rectangle {
                     font.pointSize:     ScreenTools.smallFontPointSize
                 }
                 QGCLabel {
-                    Layout.fillWidth:   true
+                    width:              parent.width
                     text:               qsTr("上次响应 %1s｜围栏：%2")
                                             .arg(_ai.responseTimeSec.toFixed(1))
                                             .arg(_swarm.fenceSummary())
@@ -194,7 +197,7 @@ Rectangle {
 
                 // ---- P3 感知链路 / 态势 / 周期摘要 ----
                 Rectangle {
-                    Layout.fillWidth:   true
+                    width:              parent.width
                     height:             p3Column.height + _margin * 2
                     color:              "#1a2e3a"
                     radius:             4
@@ -254,7 +257,7 @@ Rectangle {
 
                 // ---- P3 告警区（事件检测引擎） ----
                 ColumnLayout {
-                    Layout.fillWidth:   true
+                    width:              parent.width
                     visible:            _swarm.alerts.length > 0
                     spacing:            _margin / 2
 
@@ -278,8 +281,8 @@ Rectangle {
             QGCLabel { text: qsTr("◆ 对话"); font.bold: true }
 
             Rectangle {
-                Layout.fillWidth:       true
-                Layout.preferredHeight: ScreenTools.defaultFontPixelHeight * 12
+                width:                  parent.width
+                height:                 ScreenTools.defaultFontPixelHeight * 12
                 color:                  qgcPal.window
                 radius:                 4
 
@@ -305,6 +308,7 @@ Rectangle {
 
             // ==================== 指令输入 ====================
             RowLayout {
+                width:   parent.width
                 spacing: _margin
                 QGCTextField {
                     id:                 inputField
@@ -333,7 +337,7 @@ Rectangle {
             // ==================== 计划确认区 ====================
             Rectangle {
                 visible:                _ai.planPending
-                Layout.fillWidth:       true
+                width:                  parent.width
                 implicitHeight:         planColumn.implicitHeight + _margin * 2
                 color:                  _ai.planHasDangerous ? "#4d2c2c" : qgcPal.window
                 border.color:           _ai.planHasDangerous ? "#e74c3c" : qgcPal.buttonHighlight
@@ -394,7 +398,7 @@ Rectangle {
             // ==================== 候选方案区（WP2.2 多候选） ====================
             Rectangle {
                 visible:                _ai.candidates.length > 0
-                Layout.fillWidth:       true
+                width:                  parent.width
                 implicitHeight:         candColumn.implicitHeight + _margin * 2
                 color:                  qgcPal.window
                 border.color:           "#4fc3f7"
@@ -474,7 +478,7 @@ Rectangle {
             // ==================== 多阶段任务状态区 ====================
             Rectangle {
                 visible:                _task.running || _task.stateText !== qsTr("空闲")
-                Layout.fillWidth:       true
+                width:                  parent.width
                 implicitHeight:         taskColumn.implicitHeight + _margin * 2
                 color:                  qgcPal.window
                 border.color:           _task.running ? "#4fc3f7" : qgcPal.buttonHighlight
@@ -526,6 +530,7 @@ Rectangle {
 
             // ==================== 任务模板库 ====================
             RowLayout {
+                width:   parent.width
                 spacing: _margin
                 QGCLabel { text: qsTr("◆ 任务模板库（%1 套）").arg(_lib.templates.length); font.bold: true; Layout.fillWidth: true }
                 QGCButton { text: qsTr("刷新"); onClicked: _lib.reload() }
@@ -537,7 +542,7 @@ Rectangle {
 
                 delegate: Rectangle {
                     id:                 tplDelegate
-                    Layout.fillWidth:   true
+                    width:              mainColumn.width
                     implicitHeight:     tplColumn.implicitHeight + _margin * 2
                     color:              qgcPal.window
                     border.color:       qgcPal.buttonHighlight

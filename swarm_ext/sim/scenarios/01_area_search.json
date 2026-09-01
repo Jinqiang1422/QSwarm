@@ -1,13 +1,17 @@
 {
   "name": "01 区域搜索全流程（8 机）",
   "fleet": 8,
+  "requires_qgc": true,
   "description": "解锁起飞 → 区域覆盖规划上传 → 开始任务 → 等待全部完成 → 返航上锁，验证集群任务闭环",
   "steps": [
     {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
-    {"t": 0,  "action": "arm_all"},
+    {"t": 0,  "action": "arm_all", "retry_timeout_sec": 180},
     {"t": 3,  "action": "takeoff_all", "altitude": 30},
-    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 90},
-    {"t": 0,  "action": "wait_seconds", "seconds": 30, "note": "SITL 中由操作员经 AI 面板/模板上传覆盖任务；自动化版本后续接入 QGC 侧指令"},
+    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 180},
+    {"t": 0,  "action": "qgc_plan_coverage", "length_m": 120, "width_m": 80,
+     "angle_deg": 0, "assign_mode": "sequential", "timeout_sec": 60},
+    {"t": 0,  "action": "qgc_start_mission"},
+    {"t": 0,  "action": "wait_seconds", "seconds": 30},
     {"t": 0,  "action": "rtl_all"},
     {"t": 0,  "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 120}
   ],

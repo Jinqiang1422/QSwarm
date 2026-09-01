@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "Fact.h"
+#include "FirmwarePlugin.h"
 #include "MultiVehicleManager.h"
 #include "QmlObjectListModel.h"
 #include "Vehicle.h"
@@ -138,7 +139,10 @@ void FormationController::_updateFormation()
         QGeoCoordinate target = leaderCoord.atDistanceAndAzimuth(distanceMeters, leaderHeading + azimuthOffsetDeg);
         target.setAltitude(leaderAltAMSL + altitudeStepMeters);
 
-        followers[k]->guidedModeGotoLocation(target);
+        FirmwarePlugin* firmwarePlugin = followers[k]->firmwarePlugin();
+        if (firmwarePlugin) {
+            firmwarePlugin->guidedModeGotoLocationAndAltitude(followers[k], target);
+        }
     }
 
     if (_followerCount != followers.count()) {

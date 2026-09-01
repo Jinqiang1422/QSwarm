@@ -1,14 +1,19 @@
 {
   "name": "02 编队巡航（8 机，楔形）",
   "fleet": 8,
+  "requires_qgc": true,
   "description": "起飞后以 1 号机为长机组成楔形编队，僚机位置收敛后保持 30 秒，验证编队控制与长机失效保护",
   "steps": [
     {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
-    {"t": 0,  "action": "arm_all"},
+    {"t": 0,  "action": "arm_all", "retry_timeout_sec": 180},
     {"t": 3,  "action": "takeoff_all", "altitude": 35},
-    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 30, "timeout_sec": 90},
-    {"t": 0,  "action": "note", "text": "在 QGC 编队面板以 1 号长机启动楔形编队（自动化接口规划中）"},
-    {"t": 0,  "action": "wait_seconds", "seconds": 45},
+    {"t": 0,  "action": "wait_all_airborne", "min_altitude": 30, "timeout_sec": 180},
+    {"t": 0,  "action": "qgc_start_formation", "leader_id": 1, "type": "wedge",
+     "spacing_m": 15, "vertical_step_m": 3, "min_followers": 7, "timeout_sec": 20},
+    {"t": 0,  "action": "wait_seconds", "seconds": 35},
+    {"t": 0,  "action": "qgc_check_formation", "min_followers": 7,
+     "max_horizontal_error_m": 12, "max_vertical_error_m": 5},
+    {"t": 0,  "action": "qgc_stop_formation"},
     {"t": 0,  "action": "rtl_all"},
     {"t": 0,  "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 120}
   ],

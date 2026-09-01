@@ -298,6 +298,21 @@ bool QGCApplication::_initQmlRootWindow()
 
 void QGCApplication::_initForNormalAppBoot()
 {
+#ifdef QGC_UNITTEST_BUILD
+    // The loopback acceptance interface can run without loading the complete QML scene. This keeps
+    // vehicle/mission/lease integration tests usable on CI hosts without a functional scene graph.
+    // Rendering acceptance still requires a normal GUI boot and is reported separately by the API.
+    if (qEnvironmentVariableIntValue("QGC_SWARM_ACCEPTANCE_HEADLESS") == 1 &&
+        !qEnvironmentVariableIsEmpty("QGC_SWARM_ACCEPTANCE_TOKEN")) {
+        QGCCorePlugin::instance()->init();
+        MAVLinkProtocol::instance()->init();
+        MultiVehicleManager::instance()->init();
+        SwarmManager::instance()->init();
+        LinkManager::instance()->init();
+        return;
+    }
+#endif
+
     (void) _initVideo();
 
     (void) _initQmlRootWindow();
@@ -660,10 +675,12 @@ bool QGCApplication::compressEvent(QEvent* event, QObject* receiver, QPostEventL
     }
 
     // QMetaCallEvent::id() was removed in 6.11; its protected Data is reachable from a derived helper.
-    struct MetaCallHelper : public QMetaCallEvent {
+    struct MetaCallHelper : public QMetaCallEvent
+    {
         int id() const { return d.method_offset_ + d.method_relative_; }
     };
-    const auto methodId = [](const QMetaCallEvent *e) { return static_cast<const MetaCallHelper*>(e)->id(); };
+
+    const auto methodId = [](const QMetaCallEvent* e) { return static_cast<const MetaCallHelper*>(e)->id(); };
 
     for (QPostEventList::iterator it = postedEvents->begin(); it != postedEvents->end(); ++it) {
         QPostEvent& cur = *it;

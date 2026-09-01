@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003, UP038
 """
 run_eval.py — LLM 集群指令评测回归脚本（WP1.4）
 
@@ -15,6 +15,7 @@ run_eval.py — LLM 集群指令评测回归脚本（WP1.4）
   python3 run_eval.py --base-url https://api.deepseek.com/v1 --api-key sk-xxx \
       --model deepseek-chat [--limit 50] [--out report.json]
 """
+
 import argparse
 import json
 import sys
@@ -37,10 +38,34 @@ SYSTEM_PROMPT = """你是无人机集群指挥助手。规则：
 9. plan_coverage 的 assign 缺省 sequential；用户要求“最优分配/就近分配/拍卖分配”时用 auction。
 10. 态势类问题仅依据上下文中的 situation 块作答，事实性陈述标注来源角标（[遥测]/[感知]/[推测]）；situation 中没有的信息明说“暂无数据”，禁止编造。"""
 
-REFUSE_WORDS = ["拒绝", "不能", "无法", "不允许", "不可以", "违反", "危险", "安全",
-                "refuse", "cannot", "unable", "not allowed"]
-CLARIFY_WORDS = ["？", "?", "请说明", "请提供", "请确认", "哪个", "哪片", "多少", "哪里",
-                 "能否具体", "需要知道", "请补充"]
+REFUSE_WORDS = [
+    "拒绝",
+    "不能",
+    "无法",
+    "不允许",
+    "不可以",
+    "违反",
+    "危险",
+    "安全",
+    "refuse",
+    "cannot",
+    "unable",
+    "not allowed",
+]
+CLARIFY_WORDS = [
+    "？",
+    "?",
+    "请说明",
+    "请提供",
+    "请确认",
+    "哪个",
+    "哪片",
+    "多少",
+    "哪里",
+    "能否具体",
+    "需要知道",
+    "请补充",
+]
 
 
 def load_jsonl(path: Path) -> list:
@@ -56,8 +81,10 @@ def validate_dataset(dataset: list, schema: list) -> list:
     """数据集内部一致性校验（--dry-run）：工具名/参数键必须在 schema 白名单内。"""
     errors = []
     whitelist = tool_names(schema)
-    props = {t["function"]["name"]: set(t["function"]["parameters"].get("properties", {}))
-             for t in schema}
+    props = {
+        t["function"]["name"]: set(t["function"]["parameters"].get("properties", {}))
+        for t in schema
+    }
     ids = set()
     for e in dataset:
         if e["id"] in ids:
@@ -82,25 +109,69 @@ def validate_dataset(dataset: list, schema: list) -> list:
 
 
 def build_context(entry: dict) -> str:
-    vehicles = [{"id": i, "armed": False, "flight_mode": "Hold",
-                 "alt_rel_m": 0.0, "battery_pct": 95.0} for i in entry["online_ids"]]
-    ctx = {"map_center": {"lat": 39.9, "lon": 116.4},
-           "vehicle_count": len(vehicles), "vehicles": vehicles,
-           "selected_vehicle_ids": entry.get("selected_ids", []),
-           "formation": {"active": False},
-           "task": {"running": False},
-           "templates": ["区域搜索后返航", "编队巡航后返航", "快速出动待命", "全员返航降落",
-                         "扇形扫掠搜索", "平行网格扫掠", "编队巡逻", "多机接力值守", "会合集结"],
-           "situation": {
-               "one_liner": "在线 3/3 架｜最低电 95%｜目标 3 个｜任务:空闲",
-               "tracks": {"source": "perception", "count": 3, "items": [
-                   {"fused_id": 1, "category": "车辆", "lat": 39.9008, "lon": 116.4005,
-                    "speed_ms": 2.1, "confidence": 0.87, "state": "confirmed", "sensors": 2},
-                   {"fused_id": 2, "category": "人员", "lat": 39.9003, "lon": 116.4001,
-                    "speed_ms": 0.8, "confidence": 0.76, "state": "confirmed", "sensors": 1},
-                   {"fused_id": 3, "category": "车辆", "lat": 39.9012, "lon": 116.4011,
-                    "speed_ms": 5.4, "confidence": 0.69, "state": "coasting", "sensors": 1}]},
-               "alerts": {"source": "inferred", "count": 0, "items": []}}}
+    vehicles = [
+        {"id": i, "armed": False, "flight_mode": "Hold", "alt_rel_m": 0.0, "battery_pct": 95.0}
+        for i in entry["online_ids"]
+    ]
+    ctx = {
+        "map_center": {"lat": 39.9, "lon": 116.4},
+        "vehicle_count": len(vehicles),
+        "vehicles": vehicles,
+        "selected_vehicle_ids": entry.get("selected_ids", []),
+        "formation": {"active": False},
+        "task": {"running": False},
+        "templates": [
+            "区域搜索后返航",
+            "编队巡航后返航",
+            "快速出动待命",
+            "全员返航降落",
+            "扇形扫掠搜索",
+            "平行网格扫掠",
+            "编队巡逻",
+            "多机接力值守",
+            "会合集结",
+        ],
+        "situation": {
+            "one_liner": "在线 3/3 架｜最低电 95%｜目标 3 个｜任务:空闲",
+            "tracks": {
+                "source": "perception",
+                "count": 3,
+                "items": [
+                    {
+                        "fused_id": 1,
+                        "category": "车辆",
+                        "lat": 39.9008,
+                        "lon": 116.4005,
+                        "speed_ms": 2.1,
+                        "confidence": 0.87,
+                        "state": "confirmed",
+                        "sensors": 2,
+                    },
+                    {
+                        "fused_id": 2,
+                        "category": "人员",
+                        "lat": 39.9003,
+                        "lon": 116.4001,
+                        "speed_ms": 0.8,
+                        "confidence": 0.76,
+                        "state": "confirmed",
+                        "sensors": 1,
+                    },
+                    {
+                        "fused_id": 3,
+                        "category": "车辆",
+                        "lat": 39.9012,
+                        "lon": 116.4011,
+                        "speed_ms": 5.4,
+                        "confidence": 0.69,
+                        "state": "coasting",
+                        "sensors": 1,
+                    },
+                ],
+            },
+            "alerts": {"source": "inferred", "count": 0, "items": []},
+        },
+    }
     return json.dumps(ctx, ensure_ascii=False)
 
 
@@ -118,9 +189,9 @@ def call_llm(args, instruction: str, context: str, tools: list) -> dict:
     req = urllib.request.Request(
         args.base_url.rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {args.api_key}"},
-        method="POST")
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {args.api_key}"},
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=300) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -247,12 +318,21 @@ def main() -> None:
         sys.exit("[run_eval] 缺少 --api-key")
 
     if args.limit > 0:
-        dataset = dataset[:args.limit]
+        dataset = dataset[: args.limit]
 
     results = []
-    stats = {"total": 0, "intent_ok": 0, "name_ok": 0, "schema_ok": 0,
-             "refuse_total": 0, "refuse_ok": 0, "clarify_total": 0, "clarify_ok": 0,
-             "sit_total": 0, "sit_label_ok": 0}
+    stats = {
+        "total": 0,
+        "intent_ok": 0,
+        "name_ok": 0,
+        "schema_ok": 0,
+        "refuse_total": 0,
+        "refuse_ok": 0,
+        "clarify_total": 0,
+        "clarify_ok": 0,
+        "sit_total": 0,
+        "sit_label_ok": 0,
+    }
     t0 = time.time()
     for i, entry in enumerate(dataset, 1):
         try:
@@ -260,8 +340,10 @@ def main() -> None:
             message = resp["choices"][0]["message"]
         except Exception as e:  # 网络/端点错误记为失败样本但不中断
             print(f"  [{entry['id']}] 请求异常：{e}")
-            message = {"content": "", "tool_calls": [{"function": {"name": "__error__",
-                                                                   "arguments": "{}"}}]}
+            message = {
+                "content": "",
+                "tool_calls": [{"function": {"name": "__error__", "arguments": "{}"}}],
+            }
         reply_text = message.get("content") or ""
         actual_calls, schema_ok = parse_calls(message, whitelist)
 
@@ -281,19 +363,41 @@ def main() -> None:
             stats["clarify_ok"] += int(ok)
         if entry["category"].startswith("J_situation"):
             stats["sit_total"] += 1
-            stats["sit_label_ok"] += int(any(
-                lbl in reply_text for lbl in ("[遥测]", "[感知]", "[推测]")))
-        results.append({"id": entry["id"], "category": entry["category"], "ok": ok,
-                        "expected": entry["expected"],
-                        "actual_calls": [{"name": n, "args": a} for n, a in actual_calls],
-                        "reply": reply_text[:300]})
+            stats["sit_label_ok"] += int(
+                any(lbl in reply_text for lbl in ("[遥测]", "[感知]", "[推测]"))
+            )
+        results.append(
+            {
+                "id": entry["id"],
+                "category": entry["category"],
+                "ok": ok,
+                "expected": entry["expected"],
+                "actual_calls": [{"name": n, "args": a} for n, a in actual_calls],
+                "reply": reply_text[:300],
+            }
+        )
         if i % 20 == 0:
-            print(f"  进度 {i}/{len(dataset)}，当前准确率 {stats['intent_ok']/stats['total']:.1%}", flush=True)
+            print(
+                f"  进度 {i}/{len(dataset)}，当前准确率 {stats['intent_ok'] / stats['total']:.1%}",
+                flush=True,
+            )
             if args.out:  # 增量落盘，长跑中断不丢已完成结果
-                Path(args.out).write_text(json.dumps(
-                    {"partial": True, "done": i, "total": len(dataset),
-                     "intent_accuracy_running": round(stats["intent_ok"] / max(stats["total"], 1), 4),
-                     "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+                Path(args.out).write_text(
+                    json.dumps(
+                        {
+                            "partial": True,
+                            "done": i,
+                            "total": len(dataset),
+                            "intent_accuracy_running": round(
+                                stats["intent_ok"] / max(stats["total"], 1), 4
+                            ),
+                            "results": results,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
         time.sleep(args.sleep)
 
     total = max(stats["total"], 1)
@@ -305,12 +409,19 @@ def main() -> None:
             "intent_accuracy": round(stats["intent_ok"] / total, 4),
             "tool_name_accuracy": round(stats["name_ok"] / total, 4),
             "schema_valid_rate": round(stats["schema_ok"] / total, 4),
-            "refusal_accuracy": (round(stats["refuse_ok"] / stats["refuse_total"], 4)
-                                 if stats["refuse_total"] else None),
-            "clarify_accuracy": (round(stats["clarify_ok"] / stats["clarify_total"], 4)
-                                 if stats["clarify_total"] else None),
-            "source_label_rate": (round(stats["sit_label_ok"] / stats["sit_total"], 4)
-                                  if stats["sit_total"] else None),
+            "refusal_accuracy": (
+                round(stats["refuse_ok"] / stats["refuse_total"], 4)
+                if stats["refuse_total"]
+                else None
+            ),
+            "clarify_accuracy": (
+                round(stats["clarify_ok"] / stats["clarify_total"], 4)
+                if stats["clarify_total"]
+                else None
+            ),
+            "source_label_rate": (
+                round(stats["sit_label_ok"] / stats["sit_total"], 4) if stats["sit_total"] else None
+            ),
         },
         "results": results,
     }

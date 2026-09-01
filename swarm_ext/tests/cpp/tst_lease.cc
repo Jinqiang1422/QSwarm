@@ -17,6 +17,7 @@ private slots:
     void disconnectedVehicleIsForgotten();
     void modeAwareRequestRejectsUnconfirmedTakeover();
     void operatorAuthorizedRequestCanTakeInitialControl();
+    void transientUnknownModeDoesNotIndicateOverride();
 };
 
 void TstLease::grantsAndAutomates()
@@ -139,6 +140,16 @@ void TstLease::operatorAuthorizedRequestCanTakeInitialControl()
     SwarmControlLease autonomousLease;
     QVERIFY(!autonomousLease.requestLeaseForMode(2, "ai", "swarm", 1000, "Hold", autonomousModes, false).isEmpty());
     QVERIFY(autonomousLease.canAutomate(2, 1000));
+}
+
+void TstLease::transientUnknownModeDoesNotIndicateOverride()
+{
+    const QStringList autonomousModes = {QStringLiteral("Mission"), QStringLiteral("Hold")};
+
+    QVERIFY(!SwarmControlLease::indicatesManualOverride(QString(), autonomousModes));
+    QVERIFY(!SwarmControlLease::indicatesManualOverride(QStringLiteral("   "), autonomousModes));
+    QVERIFY(!SwarmControlLease::indicatesManualOverride(QStringLiteral("Hold"), autonomousModes));
+    QVERIFY(SwarmControlLease::indicatesManualOverride(QStringLiteral("Manual"), autonomousModes));
 }
 
 QTEST_GUILESS_MAIN(TstLease)

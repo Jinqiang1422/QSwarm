@@ -1,16 +1,16 @@
 #include "SwarmTaskLibrary.h"
 
-#include "SwarmManager.h"
-#include "SwarmAuditLogger.h"
-#include "SwarmTaskController.h"
-#include "QGCApplication.h"
-
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QStandardPaths>
-#include <QtGui/QDesktopServices>
 #include <QtCore/QUrl>
+#include <QtGui/QDesktopServices>
+
+#include "QGCApplication.h"
+#include "SwarmAuditLogger.h"
+#include "SwarmManager.h"
+#include "SwarmTaskController.h"
 
 // ---------------------------------------------------------------------------
 // 内置模板（首次启动落盘，之后与用户模板同等待遇、可编辑）
@@ -259,38 +259,38 @@ const char kTplRendezvous[] = R"TPL({
   ]
 })TPL";
 
-} // namespace
+}  // namespace
 
-SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager *swarmManager)
-    : QObject(swarmManager)
-    , _swarmManager(swarmManager)
-    , _templateDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                   + QStringLiteral("/SwarmTemplates"))
+SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager* swarmManager)
+    : QObject(swarmManager),
+      _swarmManager(swarmManager),
+      _templateDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                   QStringLiteral("/SwarmTemplates"))
 {
     QDir().mkpath(_templateDir);
     _ensureDefaults();
     _scan();
-    (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(), [](const QString &message) {
-        qgcApp()->showAppMessage(message);
-    });
+    (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(),
+                   [](const QString& message) { qgcApp()->showAppMessage(message); });
 }
 
 SwarmTaskLibrary::~SwarmTaskLibrary() = default;
 
 void SwarmTaskLibrary::_ensureDefaults()
 {
-    static const struct { const char *fileName; const char *json; } defaults[] = {
-        {"区域搜索后返航.json",   kTplSearchReturn},
-        {"编队巡航后返航.json",   kTplFormationCruise},
-        {"快速出动待命.json",     kTplQuickLaunch},
-        {"全员返航降落.json",     kTplAllReturn},
-        {"扇形扫掠搜索.json",     kTplSectorSweep},
-        {"平行网格扫掠.json",     kTplGridSweep},
-        {"编队巡逻.json",         kTplFormationPatrol},
-        {"多机接力值守.json",     kTplRelayWatch},
-        {"会合集结.json",         kTplRendezvous},
+    static const struct
+    {
+        const char* fileName;
+        const char* json;
+    } defaults[] = {
+        {"区域搜索后返航.json", kTplSearchReturn}, {"编队巡航后返航.json", kTplFormationCruise},
+        {"快速出动待命.json", kTplQuickLaunch},    {"全员返航降落.json", kTplAllReturn},
+        {"扇形扫掠搜索.json", kTplSectorSweep},    {"平行网格扫掠.json", kTplGridSweep},
+        {"编队巡逻.json", kTplFormationPatrol},    {"多机接力值守.json", kTplRelayWatch},
+        {"会合集结.json", kTplRendezvous},
     };
-    for (const auto &def : defaults) {
+
+    for (const auto& def : defaults) {
         const QString path = _templateDir + QLatin1Char('/') + QString::fromUtf8(def.fileName);
         if (!QFile::exists(path)) {
             QFile file(path);
@@ -304,18 +304,15 @@ void SwarmTaskLibrary::_ensureDefaults()
 void SwarmTaskLibrary::_scan()
 {
     static const QSet<QString> builtInNames = {
-        QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"),
-        QStringLiteral("快速出动待命"), QStringLiteral("全员返航降落"),
-        QStringLiteral("扇形扫掠搜索"), QStringLiteral("平行网格扫掠"),
-        QStringLiteral("编队巡逻"),     QStringLiteral("多机接力值守"),
-        QStringLiteral("会合集结")
-    };
+        QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"), QStringLiteral("快速出动待命"),
+        QStringLiteral("全员返航降落"),   QStringLiteral("扇形扫掠搜索"),   QStringLiteral("平行网格扫掠"),
+        QStringLiteral("编队巡逻"),       QStringLiteral("多机接力值守"),   QStringLiteral("会合集结")};
 
     _templates.clear();
     _templateList.clear();
 
     const QStringList files = QDir(_templateDir).entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
-    for (const QString &fileName : files) {
+    for (const QString& fileName : files) {
         QFile file(_templateDir + QLatin1Char('/') + fileName);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
             continue;
@@ -334,37 +331,37 @@ void SwarmTaskLibrary::_scan()
         }
 
         TaskTemplate tpl;
-        tpl.name        = name;
+        tpl.name = name;
         tpl.description = obj.value(QStringLiteral("description")).toString();
-        tpl.filePath    = file.fileName();
-        tpl.builtIn     = builtInNames.contains(name);
-        tpl.parameters  = obj.value(QStringLiteral("parameters")).toArray();
-        tpl.stages      = stages;
+        tpl.filePath = file.fileName();
+        tpl.builtIn = builtInNames.contains(name);
+        tpl.parameters = obj.value(QStringLiteral("parameters")).toArray();
+        tpl.stages = stages;
         // Schema v2 扩展字段（缺省兼容 v1）
-        tpl.schemaVersion   = obj.value(QStringLiteral("schema_version")).toInt(1);
-        tpl.minFleet        = obj.value(QStringLiteral("min_fleet")).toInt(0);
+        tpl.schemaVersion = obj.value(QStringLiteral("schema_version")).toInt(1);
+        tpl.minFleet = obj.value(QStringLiteral("min_fleet")).toInt(0);
         tpl.requiredPayload = obj.value(QStringLiteral("required_payload")).toString();
-        for (const QJsonValue &tv : obj.value(QStringLiteral("tags")).toArray()) {
+        for (const QJsonValue& tv : obj.value(QStringLiteral("tags")).toArray()) {
             tpl.tags.append(tv.toString());
         }
         _templates.append(tpl);
 
         QVariantMap summary;
-        summary[QStringLiteral("name")]        = tpl.name;
+        summary[QStringLiteral("name")] = tpl.name;
         summary[QStringLiteral("description")] = tpl.description;
-        summary[QStringLiteral("stageCount")]  = tpl.stages.count();
-        summary[QStringLiteral("builtIn")]     = tpl.builtIn;
-        summary[QStringLiteral("parameters")]  = tpl.parameters.toVariantList();
-        summary[QStringLiteral("tags")]        = tpl.tags;
-        summary[QStringLiteral("minFleet")]    = tpl.minFleet;
+        summary[QStringLiteral("stageCount")] = tpl.stages.count();
+        summary[QStringLiteral("builtIn")] = tpl.builtIn;
+        summary[QStringLiteral("parameters")] = tpl.parameters.toVariantList();
+        summary[QStringLiteral("tags")] = tpl.tags;
+        summary[QStringLiteral("minFleet")] = tpl.minFleet;
         _templateList.append(summary);
     }
     emit templatesChanged();
 }
 
-const SwarmTaskLibrary::TaskTemplate *SwarmTaskLibrary::_find(const QString &name) const
+const SwarmTaskLibrary::TaskTemplate* SwarmTaskLibrary::_find(const QString& name) const
 {
-    for (const TaskTemplate &tpl : _templates) {
+    for (const TaskTemplate& tpl : _templates) {
         if (tpl.name == name) {
             return &tpl;
         }
@@ -373,7 +370,7 @@ const SwarmTaskLibrary::TaskTemplate *SwarmTaskLibrary::_find(const QString &nam
 }
 
 // 递归替换：字符串值恰好为 "${key}" 时替换为参数值（保留类型）
-QJsonValue SwarmTaskLibrary::_substitute(const QJsonValue &value, const QJsonObject &params)
+QJsonValue SwarmTaskLibrary::_substitute(const QJsonValue& value, const QJsonObject& params)
 {
     if (value.isObject()) {
         QJsonObject out;
@@ -385,7 +382,7 @@ QJsonValue SwarmTaskLibrary::_substitute(const QJsonValue &value, const QJsonObj
     }
     if (value.isArray()) {
         QJsonArray out;
-        for (const QJsonValue &v : value.toArray()) {
+        for (const QJsonValue& v : value.toArray()) {
             out.append(_substitute(v, params));
         }
         return out;
@@ -403,9 +400,9 @@ QJsonValue SwarmTaskLibrary::_substitute(const QJsonValue &value, const QJsonObj
     return value;
 }
 
-QJsonArray SwarmTaskLibrary::instantiate(const QString &name, const QVariantMap &paramValues, QString &error) const
+QJsonArray SwarmTaskLibrary::instantiate(const QString& name, const QVariantMap& paramValues, QString& error) const
 {
-    const TaskTemplate *tpl = _find(name);
+    const TaskTemplate* tpl = _find(name);
     if (!tpl) {
         error = tr("模板「%1」不存在").arg(name);
         return QJsonArray();
@@ -413,7 +410,7 @@ QJsonArray SwarmTaskLibrary::instantiate(const QString &name, const QVariantMap 
 
     // 有效参数 = 模板默认值 ← 调用方覆盖，数值按 min/max 限幅
     QJsonObject effectiveParams;
-    for (const QJsonValue &pv : tpl->parameters) {
+    for (const QJsonValue& pv : tpl->parameters) {
         const QJsonObject p = pv.toObject();
         const QString key = p.value(QStringLiteral("key")).toString();
         QJsonValue value = p.value(QStringLiteral("default"));
@@ -445,65 +442,60 @@ QJsonArray SwarmTaskLibrary::instantiate(const QString &name, const QVariantMap 
 QJsonArray SwarmTaskLibrary::contextSummary() const
 {
     QJsonArray out;
-    for (const TaskTemplate &tpl : _templates) {
+    for (const TaskTemplate& tpl : _templates) {
         QJsonArray params;
-        for (const QJsonValue &pv : tpl.parameters) {
+        for (const QJsonValue& pv : tpl.parameters) {
             const QJsonObject p = pv.toObject();
-            params.append(QJsonObject{
-                {QStringLiteral("key"), p.value(QStringLiteral("key")).toString()},
-                {QStringLiteral("label"), p.value(QStringLiteral("label")).toString()},
-                {QStringLiteral("default"), p.value(QStringLiteral("default"))}
-            });
+            params.append(QJsonObject{{QStringLiteral("key"), p.value(QStringLiteral("key")).toString()},
+                                      {QStringLiteral("label"), p.value(QStringLiteral("label")).toString()},
+                                      {QStringLiteral("default"), p.value(QStringLiteral("default"))}});
         }
-        out.append(QJsonObject{
-            {QStringLiteral("name"), tpl.name},
-            {QStringLiteral("description"), tpl.description},
-            {QStringLiteral("stage_count"), tpl.stages.count()},
-            {QStringLiteral("tags"), QJsonArray::fromStringList(tpl.tags)},
-            {QStringLiteral("min_fleet"), tpl.minFleet},
-            {QStringLiteral("parameters"), params}
-        });
+        out.append(QJsonObject{{QStringLiteral("name"), tpl.name},
+                               {QStringLiteral("description"), tpl.description},
+                               {QStringLiteral("stage_count"), tpl.stages.count()},
+                               {QStringLiteral("tags"), QJsonArray::fromStringList(tpl.tags)},
+                               {QStringLiteral("min_fleet"), tpl.minFleet},
+                               {QStringLiteral("parameters"), params}});
     }
     return out;
 }
 
-QVariantMap SwarmTaskLibrary::templateMeta(const QString &name) const
+QVariantMap SwarmTaskLibrary::templateMeta(const QString& name) const
 {
-    const TaskTemplate *tpl = _find(name);
+    const TaskTemplate* tpl = _find(name);
     if (!tpl) {
         return {};
     }
     return {
-        {QStringLiteral("tags"),             tpl->tags},
-        {QStringLiteral("min_fleet"),        tpl->minFleet},
+        {QStringLiteral("tags"), tpl->tags},
+        {QStringLiteral("min_fleet"), tpl->minFleet},
         {QStringLiteral("required_payload"), tpl->requiredPayload},
-        {QStringLiteral("stage_count"),      tpl->stages.count()},
-        {QStringLiteral("schema_version"),   tpl->schemaVersion},
+        {QStringLiteral("stage_count"), tpl->stages.count()},
+        {QStringLiteral("schema_version"), tpl->schemaVersion},
     };
 }
 
-QVariantList SwarmTaskLibrary::templateParameters(const QString &name) const
+QVariantList SwarmTaskLibrary::templateParameters(const QString& name) const
 {
-    const TaskTemplate *tpl = _find(name);
+    const TaskTemplate* tpl = _find(name);
     return tpl ? tpl->parameters.toVariantList() : QVariantList();
 }
 
-bool SwarmTaskLibrary::runTemplate(const QString &name, const QVariantMap &paramValues,
-                                   double mapCenterLat, double mapCenterLon)
+bool SwarmTaskLibrary::runTemplate(const QString& name, const QVariantMap& paramValues, double mapCenterLat,
+                                   double mapCenterLon)
 {
     SwarmAuditLogger::instance()->logTemplateRun(name, paramValues);
 
     // Schema v2 模板级校验（WP2.1）：规模与载荷
-    if (const TaskTemplate *tpl = _find(name)) {
+    if (const TaskTemplate* tpl = _find(name)) {
         const int online = _swarmManager->vehicleCount();
         if (tpl->minFleet > 0 && online < tpl->minFleet) {
-            emit libraryFeedback(tr("模板执行失败：「%1」要求最少 %2 架在线，当前仅 %3 架")
-                                     .arg(name).arg(tpl->minFleet).arg(online));
+            emit libraryFeedback(
+                tr("模板执行失败：「%1」要求最少 %2 架在线，当前仅 %3 架").arg(name).arg(tpl->minFleet).arg(online));
             return false;
         }
         if (!tpl->requiredPayload.isEmpty()) {
-            emit libraryFeedback(tr("提示：模板要求载荷「%1」，请确认各机载荷配置")
-                                     .arg(tpl->requiredPayload));
+            emit libraryFeedback(tr("提示：模板要求载荷「%1」，请确认各机载荷配置").arg(tpl->requiredPayload));
         }
     }
 
@@ -515,9 +507,9 @@ bool SwarmTaskLibrary::runTemplate(const QString &name, const QVariantMap &param
     }
 
     QStringList warnings;
-    const QList<SwarmTaskController::Stage> stages = _swarmManager->taskController()->parseStages(
-                stagesJson, QGeoCoordinate(mapCenterLat, mapCenterLon), warnings);
-    for (const QString &w : warnings) {
+    const QList<SwarmTaskController::Stage> stages =
+        _swarmManager->taskController()->parseStages(stagesJson, QGeoCoordinate(mapCenterLat, mapCenterLon), warnings);
+    for (const QString& w : warnings) {
         emit libraryFeedback(w);
     }
     if (stages.isEmpty()) {
@@ -527,19 +519,19 @@ bool SwarmTaskLibrary::runTemplate(const QString &name, const QVariantMap &param
     return _swarmManager->taskController()->startTask(name, stages);
 }
 
-bool SwarmTaskLibrary::saveTemplate(const QString &name, const QString &description,
-                                    const QJsonArray &stages, const QJsonArray &parameters)
+bool SwarmTaskLibrary::saveTemplate(const QString& name, const QString& description, const QJsonArray& stages,
+                                    const QJsonArray& parameters)
 {
     if (name.trimmed().isEmpty() || stages.isEmpty()) {
         emit libraryFeedback(tr("保存失败：模板名或阶段为空"));
         return false;
     }
     QJsonObject obj;
-    obj[QStringLiteral("name")]        = name;
+    obj[QStringLiteral("name")] = name;
     obj[QStringLiteral("description")] = description;
-    obj[QStringLiteral("version")]     = 1;
-    obj[QStringLiteral("parameters")]  = parameters;
-    obj[QStringLiteral("stages")]      = stages;
+    obj[QStringLiteral("version")] = 1;
+    obj[QStringLiteral("parameters")] = parameters;
+    obj[QStringLiteral("stages")] = stages;
 
     QString fileName = name;
     fileName.replace(QLatin1Char('/'), QLatin1Char('_')).replace(QLatin1Char('\\'), QLatin1Char('_'));
@@ -554,9 +546,9 @@ bool SwarmTaskLibrary::saveTemplate(const QString &name, const QString &descript
     return true;
 }
 
-bool SwarmTaskLibrary::deleteTemplate(const QString &name)
+bool SwarmTaskLibrary::deleteTemplate(const QString& name)
 {
-    const TaskTemplate *tpl = _find(name);
+    const TaskTemplate* tpl = _find(name);
     if (!tpl) {
         return false;
     }

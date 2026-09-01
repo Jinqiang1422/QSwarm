@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -25,7 +26,22 @@ import sys
 import time
 from pathlib import Path
 
+from qgc_acceptance import (
+    QGCAcceptanceClient,
+    QGCAcceptanceError,
+    cop_truth_metrics,
+    formation_geometry_metrics,
+)
+
 HEARTBEAT_TIMEOUT_SEC = 5.0  # 超过该时长未收到心跳视为离线
+
+
+def _finite_float(value, default: float = math.nan) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
 
 
 class Fleet:
@@ -39,6 +55,7 @@ class Fleet:
         self.last_heartbeat = {}  # sysid -> (timestamp, custom_mode, base_mode)
         self.rel_alt = {}  # sysid -> 相对高度（米）
         self.amsl_alt = {}  # sysid -> AMSL 高度（米）
+        self.position = {}  # sysid -> (lat, lon)
         self.last_condition_detail = {}
 
     def remember(self, msg) -> None:
@@ -50,6 +67,7 @@ class Fleet:
         elif mtype == "GLOBAL_POSITION_INT":
             self.rel_alt[sid] = msg.relative_alt / 1000.0
             self.amsl_alt[sid] = msg.alt / 1000.0
+            self.position[sid] = (msg.lat / 1e7, msg.lon / 1e7)
 
     def pump(self, duration: float = 0.0) -> None:
         """处理积压消息并（可选）等待 duration 秒。"""
@@ -355,6 +373,171 @@ class Fleet:
         }
 
 
+class QGCFleet:
+    """Fleet telemetry/control facade backed exclusively by QGC's acceptance interface."""
+
+    def __init__(self, client: QGCAcceptanceClient):
+        self.client = client
+        self.position = {}
+        self.rel_alt = {}
+        self.amsl_alt = {}
+        self.last_condition_detail = {}
+        self._status = {}
+        self._expected_count = 0
+
+    def _refresh(self) -> dict:
+        self._status = self.client.request("status")
+        for vehicle in self._status.get("vehicles", []):
+            vehicle_id = int(vehicle["id"])
+            latitude = _finite_float(vehicle.get("lat"))
+            longitude = _finite_float(vehicle.get("lon"))
+            relative_altitude = _finite_float(vehicle.get("alt_rel_m"))
+            amsl_altitude = _finite_float(vehicle.get("alt_amsl_m"))
+            if math.isfinite(latitude) and math.isfinite(longitude):
+                self.position[vehicle_id] = (latitude, longitude)
+            if math.isfinite(relative_altitude):
+                self.rel_alt[vehicle_id] = relative_altitude
+            if math.isfinite(amsl_altitude):
+                self.amsl_alt[vehicle_id] = amsl_altitude
+        return self._status
+
+    def pump(self, duration: float = 0.0) -> None:
+        deadline = time.monotonic() + duration
+        while True:
+            self._refresh()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.5, remaining))
+
+    def online_ids(self) -> list[int]:
+        return sorted(int(vehicle["id"]) for vehicle in self._status.get("vehicles", []))
+
+    def wait_all_online(self, fleet: int, timeout: float) -> bool:
+        self._expected_count = fleet
+        status = self.client.wait_status(
+            lambda current: current.get("vehicle_count", 0) >= fleet, timeout
+        )
+        self._status = status
+        self.pump()
+        return len(self.online_ids()) >= fleet
+
+    def wait_all_airborne(self, min_alt: float, timeout: float, expected_count: int) -> bool:
+        status = self.client.wait_status(
+            lambda current: len(current.get("vehicles", [])) >= expected_count
+            and all(
+                _finite_float(vehicle.get("alt_rel_m"), -999.0) >= min_alt
+                for vehicle in current.get("vehicles", [])
+            ),
+            timeout,
+        )
+        self._status = status
+        self.pump()
+        online = self.online_ids()
+        self.last_condition_detail = {
+            "expected_online": expected_count,
+            "online": online,
+            "relative_altitudes_m": {
+                vehicle_id: round(self.rel_alt.get(vehicle_id, -999.0), 2) for vehicle_id in online
+            },
+        }
+        return len(online) >= expected_count and all(
+            self.rel_alt.get(vehicle_id, -999.0) >= min_alt for vehicle_id in online
+        )
+
+    def wait_all_disarmed_or_low(self, max_alt: float, timeout: float, expected_count: int) -> bool:
+        status = self.client.wait_status(
+            lambda current: len(current.get("vehicles", [])) >= expected_count
+            and all(
+                not vehicle.get("armed")
+                and _finite_float(vehicle.get("alt_rel_m"), 999.0) <= max_alt
+                for vehicle in current.get("vehicles", [])
+            ),
+            timeout,
+        )
+        self._status = status
+        self.pump()
+        vehicles = self._status.get("vehicles", [])
+        armed = [int(vehicle["id"]) for vehicle in vehicles if vehicle.get("armed")]
+        high = [
+            int(vehicle["id"])
+            for vehicle in vehicles
+            if _finite_float(vehicle.get("alt_rel_m"), 999.0) > max_alt
+        ]
+        self.last_condition_detail = {
+            "expected_online": expected_count,
+            "online": self.online_ids(),
+            "armed": armed,
+            "above_max_altitude": high,
+        }
+        return len(vehicles) >= expected_count and not armed and not high
+
+    def arm_all(self, retry_timeout: float = 60.0) -> dict:
+        """Wait for QGC/PX4 readiness, then retry transiently rejected arm requests."""
+        deadline = time.monotonic() + max(0.0, retry_timeout)
+        attempts = []
+        expected_count = max(1, self._expected_count)
+
+        def all_ready(current: dict) -> bool:
+            vehicles = current.get("vehicles", [])
+            return len(vehicles) >= expected_count and all(
+                vehicle.get("initial_connect_complete", False)
+                and (
+                    not vehicle.get("ready_to_fly_available", False)
+                    or vehicle.get("ready_to_fly", False)
+                )
+                for vehicle in vehicles
+            )
+
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            readiness = self.client.wait_status(all_ready, remaining)
+            if not all_ready(readiness):
+                return {
+                    "pass": False,
+                    "response": {},
+                    "vehicles": readiness.get("vehicles", []),
+                    "attempts": attempts,
+                    "readiness_timeout": True,
+                }
+
+            response = self.client.request("arm_all")
+            remaining = max(0.0, deadline - time.monotonic())
+            status = self.client.wait_status(
+                lambda current: len(current.get("vehicles", [])) >= expected_count
+                and all(vehicle.get("armed") for vehicle in current.get("vehicles", [])),
+                min(5.0, remaining),
+            )
+            vehicles = status.get("vehicles", [])
+            passed = (
+                bool(response.get("ok"))
+                and len(vehicles) >= expected_count
+                and all(vehicle.get("armed") for vehicle in vehicles)
+            )
+            attempts.append(
+                {
+                    "elapsed_sec": round(retry_timeout - max(0.0, deadline - time.monotonic()), 1),
+                    "response": response,
+                    "vehicles": vehicles,
+                }
+            )
+            if passed or not response.get("ok") or time.monotonic() >= deadline:
+                return {
+                    "pass": passed,
+                    "response": response,
+                    "vehicles": vehicles,
+                    "attempts": attempts,
+                }
+
+    def takeoff_all(self, altitude: float) -> dict:
+        response = self.client.request("takeoff_all", altitude_m=altitude)
+        return {"pass": bool(response.get("ok")), "response": response}
+
+    def rtl_all(self) -> dict:
+        response = self.client.request("rtl_all")
+        return {"pass": bool(response.get("ok")), "response": response}
+
+
 def _pid_of_instance(instance: int) -> int:
     """按启动命令行特征查找 SITL 进程 PID（px4 -i N）。"""
     out = subprocess.run(["pgrep", "-f", f"px4 -i {instance}"], capture_output=True, text=True)
@@ -392,12 +575,31 @@ def _remove_gazebo_model(instance: int) -> dict:
     }
 
 
-def run_scenario(scenario: dict, conn_str: str, dry_run: bool) -> dict:
+def run_scenario(
+    scenario: dict,
+    conn_str: str,
+    dry_run: bool,
+    qgc_client: QGCAcceptanceClient | None = None,
+) -> dict:
     fleet_size = scenario.get("fleet", 8)
     expected_online = fleet_size
     report = {"scenario": scenario["name"], "steps": [], "pass": True}
     t_start = time.time()
-    fleet = None if dry_run else Fleet(conn_str)
+    requires_qgc = bool(scenario.get("requires_qgc", False))
+    if dry_run:
+        fleet = None
+    elif requires_qgc and qgc_client:
+        fleet = QGCFleet(qgc_client)
+    elif requires_qgc:
+        return {
+            "scenario": scenario["name"],
+            "steps": [],
+            "pass": False,
+            "error": "scenario requires the QGC acceptance interface",
+            "total_sec": 0.0,
+        }
+    else:
+        fleet = Fleet(conn_str)
 
     def record(action_desc: str, ok: bool, extra: dict | None = None):
         entry = {"action": action_desc, "ok": ok, "elapsed_sec": round(time.time() - t_start, 1)}
@@ -424,27 +626,33 @@ def run_scenario(scenario: dict, conn_str: str, dry_run: bool) -> dict:
             record(desc, True, {"dry_run": True})
             continue
 
-        m = fleet.mavutil.mavlink
         if action == "wait_all_online":
             record(desc, fleet.wait_all_online(fleet_size, step.get("timeout_sec", 120)))
         elif action == "arm_all":
             result = fleet.arm_all(float(step.get("retry_timeout_sec", 60)))
             record(desc, result["pass"], result)
         elif action == "takeoff_all":
-            result = fleet.broadcast(
-                m.MAV_CMD_NAV_TAKEOFF,
-                p1=float("nan"),
-                p2=float("nan"),
-                p3=0.0,
-                p4=float("nan"),
-                p5=float("nan"),
-                p6=float("nan"),
-                p7=float(step.get("altitude", 30)),
-                relative_altitude=True,
-            )
+            if isinstance(fleet, QGCFleet):
+                result = fleet.takeoff_all(float(step.get("altitude", 30)))
+            else:
+                m = fleet.mavutil.mavlink
+                result = fleet.broadcast(
+                    m.MAV_CMD_NAV_TAKEOFF,
+                    p1=float("nan"),
+                    p2=float("nan"),
+                    p3=0.0,
+                    p4=float("nan"),
+                    p5=float("nan"),
+                    p6=float("nan"),
+                    p7=float(step.get("altitude", 30)),
+                    relative_altitude=True,
+                )
             record(desc, result["pass"], result)
         elif action == "rtl_all":
-            result = fleet.broadcast(m.MAV_CMD_NAV_RETURN_TO_LAUNCH)
+            if isinstance(fleet, QGCFleet):
+                result = fleet.rtl_all()
+            else:
+                result = fleet.broadcast(fleet.mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH)
             record(desc, result["pass"], result)
         elif action == "wait_all_airborne":
             ok = fleet.wait_all_airborne(
@@ -499,6 +707,239 @@ def run_scenario(scenario: dict, conn_str: str, dry_run: bool) -> dict:
             result = fleet.measure_pause_latency(int(step.get("threshold_ms", 1000)))
             report["pause_latency"] = result
             record(desc, result["pass"], result)
+        elif action == "qgc_plan_coverage":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            fleet.pump(1.0)
+            coordinates = [
+                fleet.position[sid] for sid in fleet.online_ids() if sid in fleet.position
+            ]
+            if not coordinates:
+                record(desc, False, {"error": "fleet positions are unavailable"})
+                continue
+            center_lat = sum(point[0] for point in coordinates) / len(coordinates)
+            center_lon = sum(point[1] for point in coordinates) / len(coordinates)
+            try:
+                response = qgc_client.request(
+                    "plan_coverage",
+                    center_lat=center_lat,
+                    center_lon=center_lon,
+                    length_m=float(step.get("length_m", 120.0)),
+                    width_m=float(step.get("width_m", 80.0)),
+                    angle_deg=float(step.get("angle_deg", 0.0)),
+                    assign_mode=step.get("assign_mode", "sequential"),
+                )
+                mission_vehicle_count = expected_online
+                status = qgc_client.wait_status(
+                    lambda current, required_count=mission_vehicle_count: len(
+                        current.get("mission", {}).get("status", {})
+                    )
+                    >= required_count,
+                    float(step.get("timeout_sec", 60.0)),
+                )
+                mission = status.get("mission", {})
+                uploaded = mission.get("status", {})
+                ok = (
+                    response.get("ok")
+                    and mission.get("vehicle_count") == expected_online
+                    and len(uploaded) >= expected_online
+                    and all(int(count) >= 3 for count in uploaded.values())
+                )
+                record(desc, ok, {"response": response, "mission": mission})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_start_mission":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request("start_mission")
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_start_formation":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request(
+                    "start_formation",
+                    leader_id=int(step.get("leader_id", 1)),
+                    type=step.get("type", "wedge"),
+                    spacing_m=float(step.get("spacing_m", 10.0)),
+                    vertical_step_m=float(step.get("vertical_step_m", 3.0)),
+                )
+                minimum_followers = int(step.get("min_followers", expected_online - 1))
+                status = qgc_client.wait_status(
+                    lambda current, required_count=minimum_followers: current.get(
+                        "formation", {}
+                    ).get("active")
+                    and current.get("formation", {}).get("follower_count", 0) >= required_count,
+                    float(step.get("timeout_sec", 15.0)),
+                )
+                ok = bool(response.get("ok")) and bool(status.get("formation", {}).get("active"))
+                record(desc, ok, {"response": response, "formation": status.get("formation", {})})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_check_formation":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                status = qgc_client.request("status")
+                metrics = formation_geometry_metrics(status)
+                max_horizontal = metrics.get("max_horizontal_error_m")
+                max_vertical = metrics.get("max_vertical_error_m")
+                ok = (
+                    metrics.get("pass")
+                    and metrics.get("follower_count", 0) >= int(step.get("min_followers", 1))
+                    and max_horizontal is not None
+                    and max_horizontal <= float(step.get("max_horizontal_error_m", 8.0))
+                    and max_vertical is not None
+                    and max_vertical <= float(step.get("max_vertical_error_m", 4.0))
+                )
+                record(desc, ok, {"formation_metrics": metrics})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_stop_formation":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request("stop_formation")
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_execute_actions":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request(
+                    "execute_actions",
+                    origin=step.get("origin", "operator"),
+                    actions=step.get("actions", []),
+                    center_lat=float(step.get("center_lat", 0.0)),
+                    center_lon=float(step.get("center_lon", 0.0)),
+                )
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_set_flight_mode":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request(
+                    "set_flight_mode",
+                    vehicle_id=int(step["vehicle_id"]),
+                    mode=step.get("mode", ""),
+                    mode_kind=step.get("mode_kind", ""),
+                )
+                expected_mode = response.get("requested_mode")
+                target_vehicle_id = int(step["vehicle_id"])
+                status = qgc_client.wait_status(
+                    lambda current, target_id=target_vehicle_id, target_mode=expected_mode: any(
+                        vehicle.get("id") == target_id and vehicle.get("flight_mode") == target_mode
+                        for vehicle in current.get("vehicles", [])
+                    ),
+                    float(step.get("timeout_sec", 10.0)),
+                )
+                changed = any(
+                    vehicle.get("id") == int(step["vehicle_id"])
+                    and vehicle.get("flight_mode") == expected_mode
+                    for vehicle in status.get("vehicles", [])
+                )
+                record(desc, bool(response.get("ok")) and changed, {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_expect_lease":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            vehicle_id = int(step["vehicle_id"])
+            expected_state = step["state"]
+            try:
+                status = qgc_client.wait_status(
+                    lambda current, target_id=vehicle_id, target_state=expected_state: any(
+                        vehicle.get("id") == target_id
+                        and vehicle.get("lease_state") == target_state
+                        for vehicle in current.get("vehicles", [])
+                    ),
+                    float(step.get("timeout_sec", 10.0)),
+                )
+                vehicle_status = next(
+                    (
+                        vehicle
+                        for vehicle in status.get("vehicles", [])
+                        if vehicle.get("id") == vehicle_id
+                    ),
+                    {},
+                )
+                record(
+                    desc,
+                    vehicle_status.get("lease_state") == expected_state,
+                    {"vehicle_status": vehicle_status},
+                )
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_start_task":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request(
+                    "start_task",
+                    name=str(step.get("name", "acceptance_task")),
+                    center_lat=float(step.get("center_lat", 39.9)),
+                    center_lon=float(step.get("center_lon", 116.4)),
+                    stages=step.get("stages", []),
+                )
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_expect_task":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            expected = {
+                key: step[key]
+                for key in ("running", "name", "stage_index", "waiting_for_proceed")
+                if key in step
+            }
+            try:
+                status = qgc_client.wait_status(
+                    lambda current, wanted=expected: all(
+                        current.get("task", {}).get(key) == value for key, value in wanted.items()
+                    ),
+                    float(step.get("timeout_sec", 10.0)),
+                )
+                task = status.get("task", {})
+                ok = bool(status.get("ok")) and all(
+                    task.get(key) == value for key, value in expected.items()
+                )
+                record(desc, ok, {"task": task, "expected": expected})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_proceed_task":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request("proceed_task")
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action == "qgc_abort_task":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request("abort_task")
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
         elif action == "note":
             record(f"note: {step.get('text', '')}", True)
         elif action == "perception_feed":
@@ -561,9 +1002,36 @@ def run_scenario(scenario: dict, conn_str: str, dry_run: bool) -> dict:
                     stats.get("heartbeat_hz", -1.0) >= float(expect.get("min_heartbeat_hz", 0))
                 ),
             }
-            unverified = sorted(
-                key for key in expect if key not in ("min_track_batches", "min_heartbeat_hz")
+            qgc_status = {}
+            if qgc_client:
+                try:
+                    qgc_status = qgc_client.wait_status(
+                        lambda current: current.get("cop", {}).get("track_count", 0) > 0,
+                        10.0,
+                    )
+                except QGCAcceptanceError:
+                    qgc_status = {}
+            perception = qgc_status.get("perception", {})
+            cop = qgc_status.get("cop", {})
+            truth_metrics = cop_truth_metrics(scenario, cop.get("tracks", []))
+            checked.update(
+                {
+                    "max_geo_error_m": (
+                        truth_metrics.get("pass", False)
+                        and truth_metrics.get("max_error_m") is not None
+                        and truth_metrics["max_error_m"]
+                        <= float(expect.get("max_geo_error_m", math.inf))
+                    ),
+                    "max_e2e_latency_ms": (
+                        perception.get("wire_latency_ms") is not None
+                        and float(perception.get("wire_latency_ms", math.inf))
+                        <= float(expect.get("max_e2e_latency_ms", math.inf))
+                    ),
+                    "qgc_cop_model": cop.get("track_count", 0) > 0,
+                    "qgc_cop_rendering": cop.get("rendered_track_count", 0) > 0,
+                }
             )
+            unverified = []
             ok = proc.returncode == 0 and bool(match) and all(checked.values())
             record(
                 desc,
@@ -573,6 +1041,9 @@ def run_scenario(scenario: dict, conn_str: str, dry_run: bool) -> dict:
                     "service_stats": stats,
                     "checked_expectations": checked,
                     "unverified_expectations": unverified,
+                    "qgc_perception": perception,
+                    "qgc_cop": cop,
+                    "truth_metrics": truth_metrics,
                 },
             )
         else:
@@ -591,6 +1062,9 @@ def main() -> None:
     ap.add_argument("--conn", default="udpin:0.0.0.0:14550", help="MAVLink 连接串")
     ap.add_argument("--report", default="", help="报告输出路径")
     ap.add_argument("--dry-run", action="store_true", help="只解析打印时间线，不连接机队")
+    ap.add_argument("--qgc-host", default="", help="QGC 验收接口地址；留空则不连接 QGC L2")
+    ap.add_argument("--qgc-port", type=int, default=15610, help="QGC 验收接口端口")
+    ap.add_argument("--qgc-token", default="", help="QGC 验收接口令牌（至少 16 字符）")
     args = ap.parse_args()
 
     scenario = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
@@ -599,7 +1073,10 @@ def main() -> None:
         f"{'（dry-run）' if args.dry_run else ''}"
     )
 
-    report = run_scenario(scenario, args.conn, args.dry_run)
+    qgc_client = None
+    if args.qgc_host:
+        qgc_client = QGCAcceptanceClient(args.qgc_host, args.qgc_port, args.qgc_token)
+    report = run_scenario(scenario, args.conn, args.dry_run, qgc_client)
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report:
         Path(args.report).write_text(text, encoding="utf-8")

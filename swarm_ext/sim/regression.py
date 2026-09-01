@@ -55,6 +55,9 @@ def main() -> None:
     ap.add_argument("--out", default="/tmp/sitl_regression", help="报告输出目录")
     ap.add_argument("--only", default="", help="逗号分隔场景号(如 01,05)，默认全跑")
     ap.add_argument("--dry-run", action="store_true", help="不连机队，仅解析场景+自检")
+    ap.add_argument("--qgc-host", default="", help="QGC 验收接口地址；留空则不连接 QGC L2")
+    ap.add_argument("--qgc-port", type=int, default=15610, help="QGC 验收接口端口")
+    ap.add_argument("--qgc-token", default="", help="QGC 验收接口令牌（至少 16 字符）")
     args = ap.parse_args()
 
     sim_dir = Path(__file__).resolve().parent
@@ -88,6 +91,9 @@ def main() -> None:
         )
 
     rows = []
+    qgc_client = None
+    if args.qgc_host:
+        qgc_client = rs.QGCAcceptanceClient(args.qgc_host, args.qgc_port, args.qgc_token)
     for scn_path in scenarios:
         try:
             scn = json.loads(scn_path.read_text(encoding="utf-8"))
@@ -100,7 +106,7 @@ def main() -> None:
             flush=True,
         )
         try:
-            report = rs.run_scenario(scn, args.conn, args.dry_run)
+            report = rs.run_scenario(scn, args.conn, args.dry_run, qgc_client)
         except Exception as e:  # 单场景异常不中断整轮回归
             report = {"pass": False, "error": str(e), "total_sec": 0}
         (out_dir / f"report_{scn_path.stem}.json").write_text(

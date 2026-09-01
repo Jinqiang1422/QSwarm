@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003
 """
 export_tools.py — 从 SwarmAIAgent.cc 提取 OpenAI tools 定义 → tools_schema.json
 
@@ -8,6 +8,7 @@ export_tools.py — 从 SwarmAIAgent.cc 提取 OpenAI tools 定义 → tools_sch
 
 用法：python3 export_tools.py [SwarmAIAgent.cc 路径] [输出路径]
 """
+
 import json
 import re
 import sys
@@ -19,9 +20,11 @@ DEFAULT_OUT = Path(__file__).resolve().parent / "tools_schema.json"
 
 # 两段式提取：先定位 fn(QStringLiteral("name"), QStringLiteral("desc"), params(R"( 起始，
 # 再文本搜索 raw string 结束符 )"（工具 Schema 的 JSON 内容中不含该序列，安全）。
+# description 支持 clang-format 拆分后的相邻 C++ 字符串字面量。
+CPP_STRING = r'"(?:[^"\\]|\\.)*"'
 FN_RE = re.compile(
-    r'fn\(QStringLiteral\("(?P<name>[^"]+)"\),\s*'
-    r'QStringLiteral\("(?P<desc>(?:[^"\\]|\\.)*)"\),\s*'
+    r'fn\(\s*QStringLiteral\(\s*"(?P<name>(?:[^"\\]|\\.)*)"\s*\)\s*,\s*'
+    rf"QStringLiteral\(\s*(?P<desc>(?:{CPP_STRING}\s*)+)\)\s*,\s*"
     r'(?P<tail>params\(R"\(|noParams)',
     re.DOTALL,
 )
@@ -31,21 +34,29 @@ def extract(src_path: Path) -> list:
     text = src_path.read_text(encoding="utf-8")
     tools = []
     for m in FN_RE.finditer(text):
-        name, desc, tail = m.group("name"), m.group("desc"), m.group("tail")
+        name, tail = m.group("name"), m.group("tail")
+        desc = "".join(json.loads(item) for item in re.findall(CPP_STRING, m.group("desc")))
         if tail == "noParams":
             parameters = {"type": "object", "properties": {}}
         else:
-            end = text.find(')"', m.end())   # raw string 结束符
+            end = text.find(')"', m.end())  # raw string 结束符
             if end < 0:
                 raise SystemExit(f"[export_tools] 找不到 raw string 结束符：{name}")
             try:
-                parameters = json.loads(text[m.end():end])
+                parameters = json.loads(text[m.end() : end])
             except json.JSONDecodeError as e:
-                raise SystemExit(f"[export_tools] {name} 参数 Schema 非法 JSON：{e}")
-        tools.append({
-            "type": "function",
-            "function": {"name": name, "description": desc, "parameters": parameters},
-        })
+                raise SystemExit(f"[export_tools] {name} 参数 Schema 非法 JSON：{e}") from e
+        tools.append(
+            {
+                "type": "function",
+                "function": {"name": name, "description": desc, "parameters": parameters},
+            }
+        )
+    declared_count = len(re.findall(r"\bfn\(\s*QStringLiteral\(", text))
+    if len(tools) != declared_count:
+        raise SystemExit(
+            f"[export_tools] 提取到 {len(tools)}/{declared_count} 个工具，C++ 声明格式可能未被解析"
+        )
     return tools
 
 

@@ -23,29 +23,28 @@
 class SwarmRehearsalEstimator
 {
 public:
-    struct Config {
+    struct Config
+    {
         double cruiseSpeedMs = 12.0;
-        double climbRateMs   = 2.5;
+        double climbRateMs = 2.5;
         double descentRateMs = 1.5;
-        double enduranceMin  = 25.0;   ///< 满电续航
+        double enduranceMin = 25.0;  ///< 满电续航
     };
 
-    struct Estimate {
-        double durationMin      = 0.0;  ///< 预计总时长（顺序执行累计）
-        double distanceKm       = 0.0;  ///< 全机队总里程
-        double batteryMarginPct = 100.0;///< 最差机剩余电量裕度
-        int    vehiclesUsed     = 0;
-        QStringList notes;              ///< 假设与未知项说明
+    struct Estimate
+    {
+        double durationMin = 0.0;         ///< 预计总时长（顺序执行累计）
+        double distanceKm = 0.0;          ///< 全机队总里程
+        double batteryMarginPct = 100.0;  ///< 最差机剩余电量裕度
+        int vehiclesUsed = 0;
+        QStringList notes;                ///< 假设与未知项说明
     };
 
-    Estimate estimate(const QList<SwarmAction> &plan,
-                      const QList<SwarmTypes::VehicleState> &vehicles,
+    Estimate estimate(const QList<SwarmAction>& plan, const QList<SwarmTypes::VehicleState>& vehicles,
                       double mapCenterLat, double mapCenterLon) const;
-    Estimate estimate(const QList<SwarmAction> &plan,
-                      const QList<SwarmTypes::VehicleState> &vehicles,
-                      double mapCenterLat, double mapCenterLon,
-                      const Config &cfg) const;
+    Estimate estimate(const QList<SwarmAction>& plan, const QList<SwarmTypes::VehicleState>& vehicles,
+                      double mapCenterLat, double mapCenterLon, const Config& cfg) const;
 
     /// 摘要串，如 "≈12.3 分钟｜8.4 km｜最低裕度 31%"
-    static QString summary(const Estimate &est);
+    static QString summary(const Estimate& est);
 };

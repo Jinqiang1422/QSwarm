@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003
 """
 WP3.2 检测跟踪服务 — 检测器层
 
@@ -15,12 +15,17 @@ DetectorBase：统一检测接口，输入相机位姿+帧元数据，输出像�
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # 类别表（与 mavlink/swarm_perception.xml SWARM_TARGET_CATEGORY 对齐）
 CATEGORY_NAMES = {
-    0: "unknown", 1: "person", 2: "vehicle", 3: "boat",
-    4: "animal", 5: "fire", 6: "smoke",
+    0: "unknown",
+    1: "person",
+    2: "vehicle",
+    3: "boat",
+    4: "animal",
+    5: "fire",
+    6: "smoke",
 }
 CATEGORY_IDS = {v: k for k, v in CATEGORY_NAMES.items()}
 
@@ -32,11 +37,10 @@ def destination_point(lat, lon, bearing_deg, dist_m):
     brg = math.radians(bearing_deg)
     lat1 = math.radians(lat)
     d = dist_m / EARTH_R
-    lat2 = math.asin(math.sin(lat1) * math.cos(d)
-                     + math.cos(lat1) * math.sin(d) * math.cos(brg))
+    lat2 = math.asin(math.sin(lat1) * math.cos(d) + math.cos(lat1) * math.sin(d) * math.cos(brg))
     lon2 = math.radians(lon) + math.atan2(
-        math.sin(brg) * math.sin(d) * math.cos(lat1),
-        math.cos(d) - math.sin(lat1) * math.sin(lat2))
+        math.sin(brg) * math.sin(d) * math.cos(lat1), math.cos(d) - math.sin(lat1) * math.sin(lat2)
+    )
     return math.degrees(lat2), math.degrees(lon2)
 
 
@@ -51,11 +55,12 @@ def latlon_to_local(ref_lat, ref_lon, lat, lon):
 @dataclass
 class CameraPose:
     """一帧对应的相机位姿（仿真/真实通用）。"""
-    lat: float            # 相机 WGS84
+
+    lat: float  # 相机 WGS84
     lon: float
-    alt_m: float          # 相对地面高度（米）
-    heading_deg: float    # 机头/云台球面方位（北起顺时针）
-    gimbal_pitch_deg: float   # 视轴下倾角（0=水平，90=垂直向下）
+    alt_m: float  # 相对地面高度（米）
+    heading_deg: float  # 机头/云台球面方位（北起顺时针）
+    gimbal_pitch_deg: float  # 视轴下倾角（0=水平，90=垂直向下）
     width_px: int = 1280
     height_px: int = 720
     hfov_deg: float = 60.0
@@ -64,9 +69,12 @@ class CameraPose:
 
     @property
     def vfov_deg(self):
-        return math.degrees(2.0 * math.atan(
-            math.tan(math.radians(self.hfov_deg) / 2.0)
-            * self.height_px / self.width_px))
+        return math.degrees(
+            2.0
+            * math.atan(
+                math.tan(math.radians(self.hfov_deg) / 2.0) * self.height_px / self.width_px
+            )
+        )
 
 
 @dataclass
@@ -90,10 +98,10 @@ def pixel_to_geo(px: float, py: float, cam: CameraPose):
     返回 (lat, lon)；射线不落地返回 None。
     """
     pitch = cam.gimbal_pitch_deg + (py / cam.height_px - 0.5) * cam.vfov_deg
-    if pitch <= 1.0:                      # 接近水平，交点过远不可靠
+    if pitch <= 1.0:  # 接近水平，交点过远不可靠
         return None
     ground_range = cam.alt_m / math.tan(math.radians(pitch))
-    if ground_range > 3000.0:             # 超可靠解算范围
+    if ground_range > 3000.0:  # 超可靠解算范围
         return None
     yaw = cam.heading_deg + (px / cam.width_px - 0.5) * cam.hfov_deg
     return destination_point(cam.lat, cam.lon, yaw, ground_range)
@@ -108,8 +116,8 @@ def geo_to_pixel(lat: float, lon: float, cam: CameraPose):
     east, north = latlon_to_local(cam.lat, cam.lon, lat, lon)
     ground_range = math.hypot(east, north)
     if ground_range < 1e-6:
-        return cam.width_px / 2.0, cam.height_px / 2.0   # 正下方
-    bearing = math.degrees(math.atan2(east, north))      # 北起
+        return cam.width_px / 2.0, cam.height_px / 2.0  # 正下方
+    bearing = math.degrees(math.atan2(east, north))  # 北起
     pitch = math.degrees(math.atan2(cam.alt_m, ground_range))
     rel_yaw = (bearing - cam.heading_deg + 540.0) % 360.0 - 180.0
     px = (rel_yaw / cam.hfov_deg + 0.5) * cam.width_px
@@ -130,12 +138,18 @@ class SimulatedDetector(DetectorBase):
     参数：pos_noise_px 定位噪声（像素）、miss_prob 漏检率、false_prob 虚警率/帧。
     """
 
-    def __init__(self, truths: list, pos_noise_px: float = 3.0,
-                 miss_prob: float = 0.05, false_prob: float = 0.02,
-                 seed: int = 7):
+    def __init__(
+        self,
+        truths: list,
+        pos_noise_px: float = 3.0,
+        miss_prob: float = 0.05,
+        false_prob: float = 0.02,
+        seed: int = 7,
+    ):
         import random
+
         self._rng = random.Random(seed)
-        self._truths = truths            # [{category, waypoints:[[t,lat,lon],...]}]
+        self._truths = truths  # [{category, waypoints:[[t,lat,lon],...]}]
         self._noise = pos_noise_px
         self._miss = miss_prob
         self._false = false_prob
@@ -165,16 +179,32 @@ class SimulatedDetector(DetectorBase):
                 continue
             px = proj[0] + self._rng.gauss(0, self._noise)
             py = proj[1] + self._rng.gauss(0, self._noise)
-            size = max(8.0, 200.0 * 2.0 / max(1.0, cam.alt_m))   # 粗略目标尺度
-            out.append(Detection(px, py, size, size * 1.4,
-                                 CATEGORY_IDS.get(truth.get("category", "unknown"), 0),
-                                 min(0.99, 0.75 + self._rng.random() * 0.2),
-                                 cam.sensor_id, cam.time_usec))
-        if self._rng.random() < self._false:                      # 虚警
-            out.append(Detection(
-                self._rng.uniform(0, cam.width_px),
-                self._rng.uniform(cam.height_px * 0.3, cam.height_px),
-                20, 28, 0, 0.35, cam.sensor_id, cam.time_usec))
+            size = max(8.0, 200.0 * 2.0 / max(1.0, cam.alt_m))  # 粗略目标尺度
+            out.append(
+                Detection(
+                    px,
+                    py,
+                    size,
+                    size * 1.4,
+                    CATEGORY_IDS.get(truth.get("category", "unknown"), 0),
+                    min(0.99, 0.75 + self._rng.random() * 0.2),
+                    cam.sensor_id,
+                    cam.time_usec,
+                )
+            )
+        if self._rng.random() < self._false:  # 虚警
+            out.append(
+                Detection(
+                    self._rng.uniform(0, cam.width_px),
+                    self._rng.uniform(cam.height_px * 0.3, cam.height_px),
+                    20,
+                    28,
+                    0,
+                    0.35,
+                    cam.sensor_id,
+                    cam.time_usec,
+                )
+            )
         return out
 
 
@@ -183,11 +213,12 @@ class OnnxDetector(DetectorBase):
 
     def __init__(self, model_path: str, conf_threshold: float = 0.4):
         try:
-            from ultralytics import YOLO   # noqa
+            from ultralytics import YOLO
         except ImportError as e:
             raise RuntimeError(
                 "OnnxDetector 需要 ultralytics（地面 GPU 工作站安装："
-                "pip install ultralytics；或使用 SimulatedDetector 做链路验证）") from e
+                "pip install ultralytics；或使用 SimulatedDetector 做链路验证）"
+            ) from e
         self._model = YOLO(model_path)
         self._conf = conf_threshold
 
@@ -199,8 +230,16 @@ class OnnxDetector(DetectorBase):
         for r in results:
             for b in r.boxes:
                 x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
-                out.append(Detection((x1 + x2) / 2, (y1 + y2) / 2,
-                                     x2 - x1, y2 - y1,
-                                     int(b.cls), float(b.conf),
-                                     cam.sensor_id, cam.time_usec))
+                out.append(
+                    Detection(
+                        (x1 + x2) / 2,
+                        (y1 + y2) / 2,
+                        x2 - x1,
+                        y2 - y1,
+                        int(b.cls),
+                        float(b.conf),
+                        cam.sensor_id,
+                        cam.time_usec,
+                    )
+                )
         return out

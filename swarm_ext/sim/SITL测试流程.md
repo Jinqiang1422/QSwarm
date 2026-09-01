@@ -2,7 +2,8 @@
 
 > 面向对象:测试/集成工程师
 > 版本:2026-08-25 · 分支 `main`
-> 配套资产:`launch_swarm_sitl.sh`(拉起机队,v2 修正版)、`run_scenario.py`(场景驱动)、`scenarios/*.json`(6 场景)
+> 配套资产：`strict_regression.py`（逐场景隔离编排）、`run_scenario.py`（场景驱动）、
+> `run_qgc_acceptance.sh`（QGC L2 headless 启动）、`scenarios/*.json`（8 场景）
 
 ---
 
@@ -13,9 +14,10 @@
 | 层 | 测什么 | 经过 QGC? | 驱动方式 | 自动化 |
 | --- | --- | --- | --- | --- |
 | **L1 机队/MAVLink 契约层** | SITL 机队能否正确接入、响应批量 MAVLink 指令、故障隔离、一键中止时延 | 否 | `run_scenario.py`(pymavlink 直驱) | ✅ 全自动、可 CI |
-| **L2 QGC 应用逻辑层** | 集群软件本身:编队算法、约束闸门、控制租约、任务状态机、AI 指挥、感知态势 | 是 | 定制 QGC 连 SITL,界面/接口操作 + 观察 | ⚠ 半自动(需显示环境) |
+| **L2 QGC 应用逻辑层** | 集群软件本身：编队算法、控制租约、任务状态机、覆盖规划、感知态势 | 是 | 测试构建 loopback 接口；COP 渲染用正常 GUI | 自动；QML 渲染需显示环境 |
 
-> **为什么分层**:`run_scenario.py` 绕过 QGC 直接对 SITL 发 MAVLink,验证的是"机队 + MAVLink 契约",**不触及 SwarmManager 的编队/租约/约束等逻辑**。这些逻辑必须由 QGC 连上 SITL、经界面或统一动作管线触发才能测到——即 L2。
+> **为什么分层**：03/04/05 直接对 SITL 发 MAVLink，验证“机队 + MAVLink 契约”；01/02/07/08
+> 由 QGC 独占 14550 并经统一动作管线驱动，覆盖 SwarmManager 的规划、编队、租约与任务状态机。
 
 ---
 
@@ -100,7 +102,7 @@ python3 run_scenario.py scenarios/01_area_search.json \
 
 ---
 
-## 4. L2 QGC 应用逻辑测试(半自动,需显示环境)
+## 4. L2 QGC 应用逻辑测试（接口自动化；COP 渲染需显示环境）
 
 **前置**:①`./launch_swarm_sitl.sh 8` 起机队;②启动定制 QGC(`./build/QGroundControl-x86_64.AppImage`),确认左上集群面板出现、8 架接入(sysid 1–8)。
 
@@ -223,11 +225,11 @@ python3 run_scenario.py scenarios/01_area_search.json \
 | SITL 环境启动(单机/多机) | ✅ **实测通过**(1/4/8) | 已修 GZ_SIM_RESOURCE_PATH，无阻塞 |
 | run_scenario 驱动通路 | ✅ **实测通过**(命令下发+ACK+时延) | 无 |
 | 一键中止 ≤1s 时延 | ✅ **实测达标**(8 机 max 16.3ms) | 无 |
-| L1 飞行场景 | ✅ **6/6 隔离报告通过** | 01/02 仅验证飞行骨架；06 已验航迹批次/发送心跳，未验 COP/接收时延 |
-| L2 QGC 应用用例(4.1–4.11) | 用例已设计、未执行 | 需可交互显示环境 |
+| L1 飞行场景 | ✅ **历史 6/6 隔离报告通过** | 2026-08-25 证据，见 §8.7 |
+| L2 QGC 自动化 | ✅ 驱动/断言/严格隔离已实现 | 01/02/07/08 可 headless；06 需正常 GUI 后实跑 |
 
-**结论**:SITL 环境和 L1/MAVLink 契约层已跑通，8 机核心指标达标。仍不能据此宣称 QGC 内部
-SwarmManager 编队、覆盖规划、租约和 COP 界面已端到端通过；这些必须按 §4 执行 L2 联调。
+**结论**：历史 SITL/L1 指标已达标；现在已有可重复的 QGC L2 自动化入口，但在实际执行
+`strict_regression.py` 并获得新报告之前，仍不能把“已实现”表述成“端到端实测通过”。
 
 ---
 
@@ -322,9 +324,9 @@ COP 渲染及 JSON 中的精度/时延阈值；这些仍属于 L2。严格飞行
 
 `run_official_sitl.sh`：拉官方镜像 → rsync 源码副本(排除本机 build) → 容器内 fresh build → 起 gazebo-classic iris，mavlink 经 `--network host` 直达宿主 14550。
 
-`auto_official_test.sh [机数]` 可做官方 Docker 环境的共享机队连续试跑：循环拉取镜像、启动一个
-具名 SITL 容器、等待 heartbeat 后运行 `regression.py`。它适合冒烟和发现问题；严格验收仍须
-逐场景重启机队。退出清理只针对本次具名容器，不会终止同镜像的其他任务。
+`auto_official_test.sh [机数]` 仅保留为 03/04/05 的共享机队 L1 冒烟。全量严格验收由
+`strict_regression.py` 逐场景启动具名 SITL 容器，并在托管 QGC 模式下为每场景分配独立 HOME。
+退出清理只针对本轮明确命名的容器，不会终止同镜像的其他任务。
 
 ```bash
 cd swarm_ext/sim
@@ -350,20 +352,27 @@ python3 run_scenario.py scenarios/01_area_search.json    --report /tmp/r01.json
 ### 9.4 预期与边界
 
 本地官方 PX4 源码构建的 gz 后端已完成 §8.7 的 L1 飞行闭环；Docker 官方镜像仍可作为干净工具链
-复测路径，但不是当前结果成立的前提。L2 编队/租约/COP 用例仍须启动定制 QGC 执行。
+复测路径，但不是历史 L1 结果成立的前提。L2 编队/租约/覆盖规划由 QGC 验收接口执行；COP 的
+QML delegate 数仍须由正常 GUI QGC 断言，headless 模式会明确报告 `ui.qml_ready=false`。
 
-### 9.5 一键回归(全场景 + 汇总报告)
+### 9.5 一键严格回归（全场景 + 汇总报告）
 
-机队就绪后，`regression.py` 一键跑完 `scenarios/` 全部场景并汇总(复用 `run_scenario.py` 驱动)：
+`strict_regression.py` 负责逐场景重建机队并汇总；01/02/07/08 同时启动测试构建的 headless QGC，
+避免 QGC 与 pymavlink 同时绑定 14550。令牌必须由运行环境注入，不写入仓库：
 
 ```bash
-python3 regression.py                    # 全跑(机队须 8 机、场景 fleet=8)
-python3 regression.py --only 01,05       # 只跑指定场景
-python3 regression.py --dry-run          # 不连机队，仅校验场景定义 + 自检脚本
+export QGC_SWARM_ACCEPTANCE_TOKEN='replace-with-at-least-16-random-characters'
+python3 strict_regression.py --px4-src ~/PX4-Autopilot --only 01,02,03,04,05,07,08
+python3 strict_regression.py --dry-run
+
+# 场景 06 要求真实 QML 渲染，先启动正常 GUI QGC，再运行：
+python3 strict_regression.py --only 06 --external-qgc \
+  --qgc-token "$QGC_SWARM_ACCEPTANCE_TOKEN"
 ```
 
-产出 `/tmp/sitl_regression/SUMMARY.md`(Markdown 汇总表：各场景 PASS/FAIL + 一键中止时延 / 故障隔离在线计数等关键指标) + 各场景 `report_*.json`；**退出码 0=全过 / 1=有失败**，可直接接 CI。单场景异常不中断整轮。本会话已 `--dry-run` 自检：6 场景解析全过、汇总格式正确。
+产出 `/tmp/sitl_strict_regression/SUMMARY.md`、各场景 `report_*.json` 及对应 QGC/SITL 日志；
+**退出码 0=全过 / 1=有失败**。场景 06 在托管 headless 模式下会失败并要求 `--external-qgc`，
+不会把模型更新冒充成实际地图渲染通过。`regression.py` 仍可用于 dry-run 或显式接受状态复用的冒烟。
 
-> 当前证据边界：本轮实际使用本机官方 PX4 源码 checkout/build；当前 Docker daemon 未发现
-> `px4io/px4-dev-simulation-focal:latest` 或 jammy 镜像。L1 的 1/4/8 机结果见 §8.7，Docker
-> 镜像路径尚未复测。在线多场景严格验收应由外层逐场景重启机队，不应复用一套机队连续执行。
+> 当前证据边界：L1 的 1/4/8 机历史结果见 §8.7。本次补齐的是严格执行器、QGC 驱动和硬断言；
+> 新链路仍需在具备 PX4 官方镜像及正常 GUI 的环境实际重跑，历史结果不能替代本次验收。

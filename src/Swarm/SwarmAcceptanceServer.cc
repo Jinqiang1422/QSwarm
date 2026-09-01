@@ -1,0 +1,424 @@
+#include "SwarmAcceptanceServer.h"
+
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonParseError>
+#include <QtCore/QSet>
+#include <QtCore/QVariantMap>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QWindow>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
+
+#include "Fact.h"
+#include "FirmwarePlugin.h"
+#include "FormationController.h"
+#include "MultiVehicleManager.h"
+#include "ParameterManager.h"
+#include "QmlObjectListModel.h"
+#include "SwarmCOPModel.h"
+#include "SwarmManager.h"
+#include "SwarmMissionPlanner.h"
+#include "SwarmPerceptionBridge.h"
+#include "SwarmTaskController.h"
+#include "Vehicle.h"
+#include "VehicleFactGroup.h"
+
+namespace {
+constexpr int kDefaultAcceptancePort = 15610;
+constexpr int kMinimumTokenLength = 16;
+constexpr qsizetype kMaximumRequestBytes = 64 * 1024;
+
+QJsonObject errorResponse(const QString& error)
+{
+    return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), error}};
+}
+
+QGeoCoordinate requestCoordinate(const QJsonObject& request)
+{
+    return {request.value(QStringLiteral("center_lat")).toDouble(),
+            request.value(QStringLiteral("center_lon")).toDouble()};
+}
+}  // namespace
+
+SwarmAcceptanceServer::SwarmAcceptanceServer(SwarmManager* manager)
+    : QObject(manager), _manager(manager), _server(new QTcpServer(this))
+{
+    (void) connect(_server, &QTcpServer::newConnection, this, &SwarmAcceptanceServer::_onNewConnection);
+}
+
+bool SwarmAcceptanceServer::startFromEnvironment()
+{
+    _token = qEnvironmentVariable("QGC_SWARM_ACCEPTANCE_TOKEN");
+    if (_token.size() < kMinimumTokenLength) {
+        return false;
+    }
+
+    bool portOk = false;
+    int port = qEnvironmentVariableIntValue("QGC_SWARM_ACCEPTANCE_PORT", &portOk);
+    if (!portOk) {
+        port = kDefaultAcceptancePort;
+    }
+    if (port < 1024 || port > 65535) {
+        return false;
+    }
+    return _server->listen(QHostAddress::LocalHost, quint16(port));
+}
+
+void SwarmAcceptanceServer::_onNewConnection()
+{
+    while (_server->hasPendingConnections()) {
+        QTcpSocket* socket = _server->nextPendingConnection();
+        if (!socket) {
+            continue;
+        }
+        _buffers.insert(socket, {});
+        (void) connect(socket, &QTcpSocket::readyRead, this, &SwarmAcceptanceServer::_onReadyRead);
+        (void) connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
+            _buffers.remove(socket);
+            socket->deleteLater();
+        });
+    }
+}
+
+void SwarmAcceptanceServer::_onReadyRead()
+{
+    QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+    if (!socket || !_buffers.contains(socket)) {
+        return;
+    }
+
+    QByteArray& buffer = _buffers[socket];
+    buffer.append(socket->readAll());
+    if (buffer.size() > kMaximumRequestBytes) {
+        _writeResponse(socket, errorResponse(QStringLiteral("request_too_large")));
+        socket->disconnectFromHost();
+        return;
+    }
+
+    qsizetype newline = -1;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+        const QByteArray line = buffer.left(newline).trimmed();
+        buffer.remove(0, newline + 1);
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(line, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            _writeResponse(socket, errorResponse(QStringLiteral("invalid_json")));
+            continue;
+        }
+        _writeResponse(socket, _handleRequest(document.object()));
+    }
+}
+
+QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
+{
+    if (request.value(QStringLiteral("token")).toString() != _token) {
+        return errorResponse(QStringLiteral("unauthorized"));
+    }
+
+    const QString command = request.value(QStringLiteral("command")).toString();
+    if (command == QStringLiteral("status")) {
+        return _status();
+    }
+    if (command == QStringLiteral("configure_px4_sitl")) {
+        return _configurePX4SITL();
+    }
+    if (command == QStringLiteral("plan_coverage")) {
+        const QGeoCoordinate center = requestCoordinate(request);
+        const bool accepted = _manager->planAndUploadCoverage(
+            center, request.value(QStringLiteral("length_m")).toDouble(120.0),
+            request.value(QStringLiteral("width_m")).toDouble(80.0),
+            request.value(QStringLiteral("angle_deg")).toDouble(0.0),
+            request.value(QStringLiteral("assign_mode")).toString(QStringLiteral("sequential")));
+        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("clear_missions")) {
+        _manager->clearAllMissions();
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("arm_all")) {
+        _manager->armAll(true);
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("takeoff_all")) {
+        _manager->takeoffAll(request.value(QStringLiteral("altitude_m")).toDouble(30.0));
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("start_formation")) {
+        FormationController* formation = _manager->formation();
+        const QString type = request.value(QStringLiteral("type")).toString(QStringLiteral("wedge"));
+        if (type == QStringLiteral("column")) {
+            formation->setFormationType(FormationController::FormationColumn);
+        } else if (type == QStringLiteral("line")) {
+            formation->setFormationType(FormationController::FormationLine);
+        } else if (type == QStringLiteral("circle")) {
+            formation->setFormationType(FormationController::FormationCircle);
+        } else if (type == QStringLiteral("wedge")) {
+            formation->setFormationType(FormationController::FormationWedge);
+        } else {
+            return errorResponse(QStringLiteral("invalid_formation_type"));
+        }
+        formation->setSpacingMeters(request.value(QStringLiteral("spacing_m")).toDouble(10.0));
+        formation->setVerticalStepMeters(request.value(QStringLiteral("vertical_step_m")).toDouble(3.0));
+        const bool accepted = _manager->startFormation(request.value(QStringLiteral("leader_id")).toInt());
+        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("stop_formation")) {
+        _manager->stopFormation();
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("start_mission")) {
+        _manager->startMissionAll();
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("pause_all")) {
+        _manager->pauseAll();
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("rtl_all")) {
+        _manager->rtlAll();
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("set_flight_mode")) {
+        return _setFlightMode(request);
+    }
+    if (command == QStringLiteral("execute_actions")) {
+        return _executeActions(request);
+    }
+    if (command == QStringLiteral("start_task")) {
+        QStringList warnings;
+        SwarmTaskController* taskController = _manager->taskController();
+        const QList<SwarmTaskController::Stage> stages = taskController->parseStages(
+            request.value(QStringLiteral("stages")).toArray(), requestCoordinate(request), warnings);
+        const bool accepted = taskController->startTask(request.value(QStringLiteral("name")).toString(), stages);
+        return {{QStringLiteral("ok"), accepted},
+                {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)},
+                {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("proceed_task")) {
+        _manager->taskController()->proceed();
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("abort_task")) {
+        _manager->taskController()->abort(QStringLiteral("acceptance_test"));
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    return errorResponse(QStringLiteral("unknown_command"));
+}
+
+QJsonObject SwarmAcceptanceServer::_configurePX4SITL() const
+{
+    constexpr double preflightDisarmSeconds = 60.0;
+    const QString parameterName = QStringLiteral("COM_DISARM_PRFLT");
+    QJsonArray configured;
+    QJsonArray missing;
+    QmlObjectListModel* vehicles = MultiVehicleManager::instance()->vehicles();
+    for (int i = 0; i < vehicles->count(); ++i) {
+        Vehicle* vehicle = qobject_cast<Vehicle*>(vehicles->get(i));
+        ParameterManager* parameters = vehicle ? vehicle->parameterManager() : nullptr;
+        if (!vehicle || !parameters ||
+            !parameters->parameterExists(ParameterManager::defaultComponentId, parameterName)) {
+            if (vehicle) {
+                missing.append(vehicle->id());
+            }
+            continue;
+        }
+        Fact* parameter = parameters->getParameter(ParameterManager::defaultComponentId, parameterName);
+        parameter->setRawValue(preflightDisarmSeconds);
+        configured.append(vehicle->id());
+    }
+
+    return {
+        {QStringLiteral("ok"), vehicles->count() > 0 && configured.count() == vehicles->count()},
+        {QStringLiteral("parameter"), parameterName},
+        {QStringLiteral("value"), preflightDisarmSeconds},
+        {QStringLiteral("configured_vehicle_ids"), configured},
+        {QStringLiteral("missing_vehicle_ids"), missing},
+    };
+}
+
+QJsonObject SwarmAcceptanceServer::_setFlightMode(const QJsonObject& request) const
+{
+    Vehicle* vehicle =
+        MultiVehicleManager::instance()->getVehicleById(request.value(QStringLiteral("vehicle_id")).toInt());
+    if (!vehicle) {
+        return errorResponse(QStringLiteral("vehicle_not_found"));
+    }
+
+    QString mode = request.value(QStringLiteral("mode")).toString();
+    const QString kind = request.value(QStringLiteral("mode_kind")).toString();
+    FirmwarePlugin* firmwarePlugin = vehicle->firmwarePlugin();
+    if (mode.isEmpty() && kind == QStringLiteral("manual") && firmwarePlugin) {
+        mode = firmwarePlugin->takeControlFlightMode();
+    } else if (mode.isEmpty() && kind == QStringLiteral("pause")) {
+        mode = vehicle->pauseFlightMode();
+    } else if (mode.isEmpty() && kind == QStringLiteral("mission")) {
+        mode = vehicle->missionFlightMode();
+    } else if (mode.isEmpty() && kind == QStringLiteral("rtl")) {
+        mode = vehicle->rtlFlightMode();
+    }
+    if (mode.isEmpty() || !vehicle->flightModes().contains(mode)) {
+        return errorResponse(QStringLiteral("flight_mode_not_supported"));
+    }
+
+    vehicle->setFlightMode(mode);
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("requested_mode"), mode}};
+}
+
+QJsonObject SwarmAcceptanceServer::_executeActions(const QJsonObject& request) const
+{
+    const QString origin = request.value(QStringLiteral("origin")).toString(QStringLiteral("operator"));
+    const QSet<QString> allowedOrigins = {
+        QStringLiteral("operator"), QStringLiteral("ai"),       QStringLiteral("ai_confirmed"),
+        QStringLiteral("task"),     QStringLiteral("template"),
+    };
+    if (!allowedOrigins.contains(origin)) {
+        return errorResponse(QStringLiteral("invalid_origin"));
+    }
+
+    QStringList warnings;
+    const QList<SwarmAction> actions = _manager->parseAndValidate(request.value(QStringLiteral("actions")).toArray(),
+                                                                  requestCoordinate(request), warnings);
+    if (actions.isEmpty()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("no_valid_actions")},
+                {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)}};
+    }
+    _manager->executeActions(actions, origin);
+    return {{QStringLiteral("ok"), true},
+            {QStringLiteral("action_count"), actions.count()},
+            {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)}};
+}
+
+QJsonObject SwarmAcceptanceServer::_status() const
+{
+    QJsonArray vehiclesJson;
+    MultiVehicleManager* multiVehicleManager = MultiVehicleManager::instance();
+    QmlObjectListModel* vehicles = multiVehicleManager->vehicles();
+    for (int i = 0; i < vehicles->count(); ++i) {
+        Vehicle* vehicle = qobject_cast<Vehicle*>(vehicles->get(i));
+        if (!vehicle) {
+            continue;
+        }
+        VehicleFactGroup* facts = qobject_cast<VehicleFactGroup*>(vehicle->vehicleFactGroup());
+        FirmwarePlugin* firmwarePlugin = vehicle->firmwarePlugin();
+        const QGeoCoordinate coordinate = vehicle->coordinate();
+        vehiclesJson.append(QJsonObject{
+            {QStringLiteral("id"), vehicle->id()},
+            {QStringLiteral("armed"), vehicle->armed()},
+            {QStringLiteral("initial_connect_complete"), vehicle->isInitialConnectComplete()},
+            {QStringLiteral("ready_to_fly_available"), vehicle->readyToFlyAvailable()},
+            {QStringLiteral("ready_to_fly"), vehicle->readyToFly()},
+            {QStringLiteral("all_sensors_healthy"), vehicle->allSensorsHealthy()},
+            {QStringLiteral("flight_mode"), vehicle->flightMode()},
+            {QStringLiteral("take_control_mode"), firmwarePlugin ? firmwarePlugin->takeControlFlightMode() : QString()},
+            {QStringLiteral("lat"), coordinate.latitude()},
+            {QStringLiteral("lon"), coordinate.longitude()},
+            {QStringLiteral("alt_rel_m"), facts ? facts->altitudeRelative()->rawValue().toDouble() : 0.0},
+            {QStringLiteral("alt_amsl_m"), facts ? facts->altitudeAMSL()->rawValue().toDouble() : 0.0},
+            {QStringLiteral("heading_deg"), facts ? facts->heading()->rawValue().toDouble() : 0.0},
+            {QStringLiteral("lease_state"), _manager->controlLeaseState(vehicle->id())},
+            {QStringLiteral("automation_allowed"), _manager->automationAllowed(vehicle->id())},
+        });
+    }
+
+    QJsonArray tracks;
+    SwarmCOPModel* copModel = _manager->copModel();
+    for (int row = 0; row < copModel->trackCount(); ++row) {
+        QVariantMap track = copModel->trackAt(row);
+        track[QStringLiteral("categoryId")] = copModel->data(copModel->index(row), SwarmCOPModel::CategoryRole).toInt();
+        tracks.append(QJsonObject::fromVariantMap(track));
+    }
+
+    FormationController* formation = _manager->formation();
+    SwarmTaskController* taskController = _manager->taskController();
+    SwarmPerceptionBridge* perception = _manager->perception();
+    const int windowCount = QGuiApplication::topLevelWindows().count();
+    const QJsonObject rendered = _renderedItemCounts();
+    return {
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("ui"),
+         QJsonObject{{QStringLiteral("window_count"), windowCount},
+                     {QStringLiteral("qml_ready"), windowCount > 0},
+                     {QStringLiteral("situation_layer_count"), rendered.value(QStringLiteral("situation_layers"))}}},
+        {QStringLiteral("vehicle_count"), vehiclesJson.count()},
+        {QStringLiteral("vehicles"), vehiclesJson},
+        {QStringLiteral("formation"),
+         QJsonObject{{QStringLiteral("active"), formation->active()},
+                     {QStringLiteral("leader_id"), formation->leaderVehicleId()},
+                     {QStringLiteral("follower_count"), formation->followerCount()},
+                     {QStringLiteral("type"), formation->formationType()},
+                     {QStringLiteral("spacing_m"), formation->spacingMeters()},
+                     {QStringLiteral("vertical_step_m"), formation->verticalStepMeters()}}},
+        {QStringLiteral("mission"),
+         QJsonObject{
+             {QStringLiteral("vehicle_count"), _manager->missionPlanner()->lastPlanVehicleCount()},
+             {QStringLiteral("waypoint_count"), _manager->missionPlanner()->lastPlanWaypointCount()},
+             {QStringLiteral("status"), QJsonObject::fromVariantMap(_manager->missionPlanner()->missionStatus())}}},
+        {QStringLiteral("task"),
+         QJsonObject{{QStringLiteral("running"), taskController->running()},
+                     {QStringLiteral("name"), taskController->taskName()},
+                     {QStringLiteral("stage_index"), taskController->currentStageIndex()},
+                     {QStringLiteral("state"), taskController->stateText()},
+                     {QStringLiteral("waiting_for_proceed"), taskController->waitingForProceed()}}},
+        {QStringLiteral("perception"), QJsonObject{{QStringLiteral("listening"), perception->listening()},
+                                                   {QStringLiteral("service_online"), perception->serviceOnline()},
+                                                   {QStringLiteral("heartbeat_hz"), perception->heartbeatHz()},
+                                                   {QStringLiteral("last_track_count"), perception->lastTrackCount()},
+                                                   {QStringLiteral("wire_latency_ms"), perception->wireLatencyMs()}}},
+        {QStringLiteral("cop"),
+         QJsonObject{{QStringLiteral("track_count"), copModel->trackCount()},
+                     {QStringLiteral("heatmap_cell_count"), copModel->heatmapCellCount()},
+                     {QStringLiteral("tracks"), tracks},
+                     {QStringLiteral("rendered_track_count"), rendered.value(QStringLiteral("tracks"))},
+                     {QStringLiteral("rendered_heatmap_count"), rendered.value(QStringLiteral("heatmap"))},
+                     {QStringLiteral("rendered_threat_count"), rendered.value(QStringLiteral("threats"))}}},
+    };
+}
+
+QJsonObject SwarmAcceptanceServer::_renderedItemCounts() const
+{
+    int situationLayers = 0;
+    int tracks = 0;
+    int heatmap = 0;
+    int threats = 0;
+    for (QWindow* window : QGuiApplication::topLevelWindows()) {
+        if (!window) {
+            continue;
+        }
+        const QList<QObject*> objects = window->findChildren<QObject*>();
+        for (QObject* object : objects) {
+            if (!object) {
+                continue;
+            }
+            const QString name = object->objectName();
+            if (name == QStringLiteral("swarmSituationLayer")) {
+                ++situationLayers;
+            } else if (name.startsWith(QStringLiteral("swarmTrackMarker_"))) {
+                ++tracks;
+            } else if (name == QStringLiteral("swarmHeatmapCell")) {
+                ++heatmap;
+            } else if (name == QStringLiteral("swarmThreatZone")) {
+                ++threats;
+            }
+        }
+    }
+    return {{QStringLiteral("situation_layers"), situationLayers},
+            {QStringLiteral("tracks"), tracks},
+            {QStringLiteral("heatmap"), heatmap},
+            {QStringLiteral("threats"), threats}};
+}
+
+void SwarmAcceptanceServer::_writeResponse(QTcpSocket* socket, const QJsonObject& response) const
+{
+    if (!socket) {
+        return;
+    }
+    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact));
+    socket->write("\n");
+}
