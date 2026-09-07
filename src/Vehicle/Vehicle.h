@@ -1057,7 +1057,7 @@ public:
     /// Ack timeout used in unit tests — kept on Vehicle for source-compat with
     /// existing tests (mirrors MavCommandQueue::kTestAckTimeoutMs).
     static constexpr int _mavCommandMaxRetryCount    = 3;
-    static constexpr int kTestMavCommandAckTimeoutMs = 500;
+    static constexpr int kTestMavCommandAckTimeoutMs = 1200;
     static constexpr int kTestMavCommandMaxWaitMs    = kTestMavCommandAckTimeoutMs * _mavCommandMaxRetryCount * 2;
 
     /// Test-only helper: forwards to MavCommandQueue::findEntryIndex.

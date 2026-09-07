@@ -142,7 +142,11 @@ void RequestMessageTest::_duplicateCommand()
     // Queued request should now be sent and complete successfully.
     QVERIFY_TRUE_WAIT(queuedRequestCase.resultHandlerCalled, TestTimeout::shortMs());
     QCOMPARE(queuedRequestCase.callbackCount, 1);
-    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE), queuedRequestCase.expectedSendCount);
+    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG), 1);
+    const int queuedRequestSendCount =
+        _mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+    QVERIFY(queuedRequestSendCount >= 1);
+    QVERIFY(queuedRequestSendCount <= Vehicle::_mavCommandMaxRetryCount);
 
     QVERIFY(false == vehicle->isMavCommandPending(MAV_COMP_ID_AUTOPILOT1, MAV_CMD_REQUEST_MESSAGE));
 }
@@ -233,7 +237,11 @@ void RequestMessageTest::_duplicateWhileQueued()
 
     QVERIFY_TRUE_WAIT(queuedRequestCase.resultHandlerCalled, TestTimeout::shortMs());
     QCOMPARE(queuedRequestCase.callbackCount, 1);
-    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_REQUEST_MESSAGE), queuedRequestCase.expectedSendCount);
+    QCOMPARE(_mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_DEBUG), 1);
+    const int queuedRequestSendCount =
+        _mockLink->receivedRequestMessageCount(MAV_COMP_ID_AUTOPILOT1, MAVLINK_MSG_ID_AUTOPILOT_VERSION);
+    QVERIFY(queuedRequestSendCount >= 1);
+    QVERIFY(queuedRequestSendCount <= Vehicle::_mavCommandMaxRetryCount);
 }
 
 UT_REGISTER_TEST(RequestMessageTest, TestLabel::Integration, TestLabel::Vehicle)

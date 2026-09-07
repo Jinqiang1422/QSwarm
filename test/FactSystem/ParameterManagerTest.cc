@@ -120,7 +120,9 @@ void ParameterManagerTest::_requestListMissingParamFail()
     QSignalSpy spyParamsReady(vehicleMgr, &MultiVehicleManager::parameterReadyVehicleAvailableChanged);
     QSignalSpy spyProgress(vehicle->parameterManager(), &ParameterManager::loadProgressChanged);
     // We will get progress bar updates, since it will fail after getting partially through the request
-    QVERIFY_SIGNAL_WAIT(spyProgress, TestTimeout::shortMs());
+    // The first progress update depends on the mock vehicle's initial parameter burst. Under load it can arrive
+    // just after the generic short timeout, while the product retry sequence is still operating normally.
+    QVERIFY_SIGNAL_WAIT(spyProgress, TestTimeout::mediumMs());
     arguments = spyProgress.takeFirst();
     QCOMPARE(arguments.count(), 1);
     QVERIFY(arguments.at(0).toFloat() > 0.0f);

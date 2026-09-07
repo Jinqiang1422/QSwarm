@@ -61,7 +61,10 @@ public:
     static void showCommandAckError(const mavlink_command_ack_t& ack);
 
     // Test tuning knobs.
-    static constexpr int kTestAckTimeoutMs = 500;
+    // Full QML integration tests can block the main event loop while pages are
+    // instantiated. Keep the test window aligned with production so a valid
+    // MockLink ACK is not discarded solely due to rendering work.
+    static constexpr int kTestAckTimeoutMs = 1200;
     static constexpr int kMaxRetryCount = 3;
     static constexpr int kTestMaxWaitMs = kTestAckTimeoutMs * kMaxRetryCount * 2;
 
