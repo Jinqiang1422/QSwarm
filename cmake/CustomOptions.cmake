@@ -35,6 +35,7 @@ option(QGC_USE_CACHE "Enable compiler caching (ccache/sccache)" ON)
 option(QGC_UNITY_BUILD "Enable unity builds for faster compilation" OFF)
 option(QGC_BUILD_INSTALLER "Build platform installers/packages" ON)
 option(QGC_ENABLE_WERROR "Treat compiler warnings as errors for QGC source code" ON)
+option(QGC_LINK_COMPILE_COMMANDS "Link compile_commands.json into the source directory" ON)
 
 # Debug-dependent options
 # Note: CMAKE_BUILD_TYPE is empty on multi-config generators (VS, Ninja Multi-Config).
