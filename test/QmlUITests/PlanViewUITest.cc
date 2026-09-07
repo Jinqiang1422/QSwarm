@@ -1,6 +1,7 @@
 #include "PlanViewUITest.h"
 
 #include <QtCore/QFile>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QTemporaryDir>
 #include <QtPositioning/QGeoCoordinate>
@@ -53,6 +54,15 @@ QGeoCoordinate PlanViewUITest::_plannedHomePosition()
 
 void PlanViewUITest::_navigateToPlanAndCenterMap()
 {
+    // The Plan tree uses asynchronously incubated, virtualized delegates. A
+    // collapse can invalidate a delegate context while Qt is cancelling its
+    // pending component creation. These exact warnings are a Qt teardown race;
+    // keep the suppression local to tests that exercise the Plan tree.
+    ignoreLogMessage("default", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("QQmlContext: Cannot set context object on invalid context")));
+    ignoreLogMessage("default", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("QQmlComponent: Cannot create a component in an invalid context")));
+
     QVERIFY2(clickToolSelectDropdownButton(QStringLiteral("toolbar_viewPlan")), "Failed to navigate to Plan view");
     QVERIFY2(findVisibleItem(_rootItem, QStringLiteral("mainView_plan"), 2000), "Plan view did not appear");
     QTest::qWait(_viewDelay);
@@ -78,6 +88,7 @@ void PlanViewUITest::_verifyWaypointToolAddsWaypointOnEmptyPlan(bool expectTakeo
 {
     startUI();
     if (QTest::currentTestFailed()) return;
+    const auto uiGuard = qScopeGuard([this] { stopUI(); });
 
     _navigateToPlanAndCenterMap();
     if (QTest::currentTestFailed()) return;
@@ -205,6 +216,7 @@ void PlanViewUITest::_testPlanViewStates()
 {
     startUI();
     if (QTest::currentTestFailed()) return;
+    const auto uiGuard = qScopeGuard([this] { stopUI(); });
 
     _navigateToPlanAndCenterMap();
     if (QTest::currentTestFailed()) return;
@@ -562,5 +574,4 @@ void PlanViewUITest::_testPlanViewStates()
         .itemCount        = 3,      // Settings + takeoff + waypoint
     }, QStringLiteral("1.10 open round trip"));
 
-    stopUI();
 }

@@ -256,7 +256,8 @@ bool QmlUITestBase::clickButton(const QString& objectName)
     return _clickItemAt(btn, 0.5, 0.5, objectName);
 }
 
-bool QmlUITestBase::_clickItemAt(QQuickItem* item, qreal fractionX, qreal fractionY, const QString& objectName)
+bool QmlUITestBase::_clickItemAt(QQuickItem* item, qreal fractionX, qreal fractionY, const QString& objectName,
+                                 bool allowVisibleFallback)
 {
     const QPointer<QQuickItem> guarded(item);
 
@@ -300,18 +301,35 @@ bool QmlUITestBase::_clickItemAt(QQuickItem* item, qreal fractionX, qreal fracti
     // unrelated failure (or silent no-op) later in the test. Validate in
     // floating-point space and convert by truncation: rounding could push an
     // in-window position like x=799.6 in an 800px window to the invalid x=800.
-    const QPointF scenePos = scenePoint();
-    if (scenePos.x() < 0 || scenePos.x() >= _window->width() || scenePos.y() < 0 || scenePos.y() >= _window->height()) {
-        QTest::qFail(qPrintable(QStringLiteral("%1 click point (%2, %3) is outside the window (%4x%5)")
-                                    .arg(objectName)
-                                    .arg(scenePos.x())
-                                    .arg(scenePos.y())
-                                    .arg(_window->width())
-                                    .arg(_window->height())),
-                     __FILE__, __LINE__);
-        return false;
+    const QPointF requestedScenePos = scenePoint();
+    QPointF clickScenePos = requestedScenePos;
+    if (requestedScenePos.x() < 0 || requestedScenePos.x() >= _window->width() || requestedScenePos.y() < 0 ||
+        requestedScenePos.y() >= _window->height()) {
+        QRectF visibleSceneRect;
+        if (allowVisibleFallback) {
+            const QRectF windowRect = QRectF(0, 0, _window->width(), _window->height()).adjusted(1, 1, -1, -1);
+            visibleSceneRect = guarded->mapRectToScene(guarded->boundingRect()).intersected(windowRect);
+            for (QQuickItem* ancestor = guarded->parentItem(); ancestor && !visibleSceneRect.isEmpty();
+                 ancestor = ancestor->parentItem()) {
+                if (ancestor->clip()) {
+                    visibleSceneRect = visibleSceneRect.intersected(ancestor->mapRectToScene(ancestor->boundingRect()));
+                }
+            }
+        }
+        if (!visibleSceneRect.isEmpty()) {
+            clickScenePos = visibleSceneRect.center();
+        } else {
+            QTest::qFail(qPrintable(QStringLiteral("%1 click point (%2, %3) is outside the window (%4x%5)")
+                                        .arg(objectName)
+                                        .arg(requestedScenePos.x())
+                                        .arg(requestedScenePos.y())
+                                        .arg(_window->width())
+                                        .arg(_window->height())),
+                         __FILE__, __LINE__);
+            return false;
+        }
     }
-    const QPoint clickPoint(qFloor(scenePos.x()), qFloor(scenePos.y()));
+    const QPoint clickPoint(qFloor(clickScenePos.x()), qFloor(clickScenePos.y()));
 
     QTest::mouseClick(_window, Qt::LeftButton, Qt::NoModifier, clickPoint);
     return true;
@@ -375,10 +393,14 @@ QQuickItem* QmlUITestBase::findVisibleItemScrolled(const QString& objectName, co
 
 bool QmlUITestBase::clickButtonScrolled(const QString& objectName, const QString& flickableObjectName)
 {
-    if (!findVisibleItemScrolled(objectName, flickableObjectName)) {
+    QQuickItem* item = findVisibleItemScrolled(objectName, flickableObjectName);
+    if (!item) {
         return false;
     }
-    return clickButton(objectName);
+    // Click the exact delegate that scrollIntoView validated. Re-finding by
+    // objectName can race a TreeView relayout and select an identically named
+    // delegate that has just moved outside the viewport.
+    return _clickItemAt(item, 0.5, 0.5, objectName, true);
 }
 
 bool QmlUITestBase::clickToolSelectDropdownButton(const QString& viewObjectName, int timeoutMs)

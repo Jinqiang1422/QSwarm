@@ -155,9 +155,12 @@ protected:
 
     /// Shared click implementation: waits for the item's mapped scene position to
     /// settle (positioners/animations may still be moving a freshly-visible item),
-    /// verifies the click point is inside the window, then clicks. Fails the test
-    /// and returns false if the point never lands inside the window.
-    bool _clickItemAt(QQuickItem *item, qreal fractionX, qreal fractionY, const QString &objectName);
+    /// verifies the click point is inside the window, then clicks. When
+    /// \a allowVisibleFallback is true, a partially clipped item is clicked in
+    /// the centre of its visible region. Fails the test and returns false if no
+    /// clickable part lands inside the window.
+    bool _clickItemAt(QQuickItem *item, qreal fractionX, qreal fractionY, const QString &objectName,
+                      bool allowVisibleFallback = false);
 
     /// Convenience wrapper: boots the UI, connects a MockLink, runs \a body
     /// with the active MockLink and Vehicle, then tears down in the correct

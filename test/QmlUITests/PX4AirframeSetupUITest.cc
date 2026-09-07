@@ -147,9 +147,35 @@ void PX4AirframeSetupUITest::_testAirframePrereqPages()
         { .objectName = "vehicleConfig_comp_Joystick",    .expectPrereqShown = false, .checkedSectionObjectName = "" },
         { .objectName = "vehicleConfig_comp_Airframe",    .expectPrereqShown = false, .checkedSectionObjectName = "" },
     };
+    QSignalSpy calibrationResults(vehicle, &Vehicle::mavCommandResult);
+    QVERIFY2(calibrationResults.isValid(), "Failed to create calibration command result spy");
+    mockLink->clearReceivedMavCommandCounts();
+    const auto acceptedCalibrationCommandCount = [&] {
+        int acceptedCount = 0;
+        for (const QList<QVariant> &args : calibrationResults) {
+            if (args.at(2).toInt() == MAV_CMD_PREFLIGHT_CALIBRATION && args.at(3).toInt() == MAV_RESULT_ACCEPTED) {
+                ++acceptedCount;
+            }
+        }
+        return acceptedCount;
+    };
     for (const PrereqCheck &check : checks) {
         _verifyAirframePrereq(QLatin1String(check.objectName), check.expectPrereqShown, QLatin1String(check.checkedSectionObjectName));
         if (QTest::currentTestFailed()) return;
+        if (QLatin1String(check.objectName) == QStringLiteral("vehicleConfig_comp_Radio")) {
+            // The calibration-start message deliberately bypasses MavCommandQueue,
+            // so observe it at the simulated firmware.
+            QVERIFY2(QTest::qWaitFor([&] { return mockLink->receivedMavCommandCount(MAV_CMD_PREFLIGHT_CALIBRATION) >= 1; },
+                                     TestTimeout::mediumMs()),
+                     "Radio page calibration-start command did not reach MockLink");
+        } else if (QLatin1String(check.objectName) == QStringLiteral("vehicleConfig_comp_Joystick")) {
+            // Leaving the Radio page destroys its controller and stops calibration.
+            QVERIFY2(QTest::qWaitFor([&] { return mockLink->receivedMavCommandCount(MAV_CMD_PREFLIGHT_CALIBRATION) >= 2; },
+                                     TestTimeout::mediumMs()),
+                     "Radio page calibration-stop command did not reach MockLink");
+            QVERIFY2(QTest::qWaitFor([&] { return acceptedCalibrationCommandCount() >= 1; }, TestTimeout::mediumMs()),
+                     "Radio page calibration-stop command was not acknowledged");
+        }
     }
     });
 }

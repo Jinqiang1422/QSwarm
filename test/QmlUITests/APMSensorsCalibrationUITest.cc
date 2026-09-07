@@ -4,6 +4,9 @@
 #include <QtQuick/QQuickItem>
 #include <QtTest/QTest>
 
+#include <algorithm>
+
+#include "BulkRefreshJob.h"
 #include "MockLink.h"
 #include "ParameterManager.h"
 #include "Vehicle.h"
@@ -14,7 +17,7 @@ namespace {
 
 /// Wait for _refreshParams() traffic to settle so link teardown doesn't cut off
 /// in-flight PARAM_REQUEST_READs (which can log warnings that fail strict mode).
-void waitForParamRefreshQuiet(Vehicle *vehicle)
+bool waitForParamRefreshQuiet(Vehicle *vehicle)
 {
     ParameterManager *mgr = vehicle->parameterManager();
     QElapsedTimer sinceLastResponse;
@@ -26,7 +29,15 @@ void waitForParamRefreshQuiet(Vehicle *vehicle)
     QObject::connect(mgr, &ParameterManager::_paramRequestReadFailure, &context,
                      [&] { sinceLastResponse.restart(); });
 
-    (void) QTest::qWaitFor([&] { return sinceLastResponse.elapsed() > 500; }, 10000);
+    return QTest::qWaitFor(
+        [&] {
+            const QObjectList children = mgr->children();
+            const bool refreshActive = std::any_of(children.cbegin(), children.cend(), [](QObject *child) {
+                return dynamic_cast<BulkRefreshJob *>(child) != nullptr;
+            });
+            return !refreshActive && !mgr->pendingWrites() && sinceLastResponse.elapsed() > 250;
+        },
+        TestTimeout::mediumMs());
 }
 
 } // namespace
@@ -173,7 +184,7 @@ void APMSensorsCalibrationUITest::_testCompassCalibration()
     _runFullAccelCal();
     if (QTest::currentTestFailed()) return;
 
-    waitForParamRefreshQuiet(vehicle);
+    QVERIFY2(waitForParamRefreshQuiet(vehicle), "Parameter refresh did not settle after accelerometer calibration");
 
     // Accel indicator should now be green; compass still orange
     _verifyCalIndicators(/*compassGreen=*/false, /*accelGreen=*/true, "after accel cal");
@@ -207,7 +218,7 @@ void APMSensorsCalibrationUITest::_testCompassCalibration()
     QVERIFY2(clickButton(QStringLiteral("popupDialog_acceptButton")),
              "Failed to dismiss post-compass-cal dialog");
 
-    waitForParamRefreshQuiet(vehicle);
+    QVERIFY2(waitForParamRefreshQuiet(vehicle), "Parameter refresh did not settle after compass calibration");
 
     // Both indicators must be green
     _verifyCalIndicators(/*compassGreen=*/true, /*accelGreen=*/true, "after compass cal");
@@ -234,7 +245,7 @@ void APMSensorsCalibrationUITest::_testCompassCalibrationCancel()
     // Must do accel first
     _runFullAccelCal();
     if (QTest::currentTestFailed()) return;
-    waitForParamRefreshQuiet(vehicle);
+    QVERIFY2(waitForParamRefreshQuiet(vehicle), "Parameter refresh did not settle after accelerometer calibration");
 
     // Start compass cal
     QVERIFY2(clickButton(QStringLiteral("sensorsSetup_calibrateCompass")),
@@ -270,6 +281,11 @@ void APMSensorsCalibrationUITest::_testCompassCalibrationCancel()
 
     // Compass indicator still orange
     _verifyCalIndicators(/*compassGreen=*/false, /*accelGreen=*/true, "after compass cal cancel");
+    if (QTest::currentTestFailed()) return;
+
+    // Cancellation restores COMPASS_CAL_FIT and starts a bulk refresh. Keep the
+    // link alive until both asynchronous operations finish.
+    QVERIFY2(waitForParamRefreshQuiet(vehicle), "Parameter operations did not settle after compass cancellation");
 
     });
 }
@@ -296,7 +312,7 @@ void APMSensorsCalibrationUITest::_testAccelCalibration()
     _runFullAccelCal();
     if (QTest::currentTestFailed()) return;
 
-    waitForParamRefreshQuiet(vehicle);
+    QVERIFY2(waitForParamRefreshQuiet(vehicle), "Parameter refresh did not settle after accelerometer calibration");
 
     // INS_ACCOFFS_X must be non-zero (MockLink writes 0.1 on SUCCESS)
     ParameterManager *mgr = vehicle->parameterManager();
