@@ -15,6 +15,8 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 | `regression.py` | **一键回归**：跑完全部场景 + 汇总 Markdown 报告(PASS/FAIL + 关键指标)，退出码可接 CI，`--dry-run` 自检 |
 | `strict_regression.py` | **严格回归**：逐场景重建 PX4/Gazebo 机群；托管 QGC 时也隔离 HOME，杜绝跨场景状态污染 |
 | `run_qgc_acceptance.sh` | 启动仅测试构建可用的 loopback QGC 验收接口；headless 模式不加载 QML |
+| `run_qgc_gui_acceptance.sh` | 在独立 Xvfb/HOME 中托管正常 GUI QGC，供 QML 场景自动验收 |
+| `test_qgc_lifecycle.py` | 重复验证 SIGINT/SIGTERM/正常 quit、启动中断、令牌脱敏、端口及容器清理 |
 | `run_official_sitl.sh` | **官方 PX4 SITL docker 方案**：拉官方镜像 + 源码副本 fresh build，打通起飞(本机固件环境受阻的推荐路径，见测试流程 §9) |
 | `auto_official_test.sh` | 官方 Docker 共享机队 L1 冒烟（03/04/05）；全量验收使用 `strict_regression.py` |
 | `新功能验收checklist.md` | 控制租约 / 任务持久化两项新功能的可勾选验收单(A 8 例 / B 5 例) |
@@ -59,13 +61,19 @@ just build
 
 # 2. 严格回归会逐场景自动启动/停止 QGC 与 PX4 机群
 pip install pymavlink
-export QGC_SWARM_ACCEPTANCE_TOKEN='replace-with-at-least-16-random-characters'
+umask 077
+openssl rand -hex 24 > /tmp/qgc-swarm-token
+export QGC_SWARM_ACCEPTANCE_TOKEN_FILE=/tmp/qgc-swarm-token
 python3 strict_regression.py --px4-src ~/PX4-Autopilot --only 01,02,07
 
-# 06 必须连接正常 GUI QGC，headless 结果不会冒充 QML 渲染通过
-QGC_SWARM_ACCEPTANCE_TOKEN="$QGC_SWARM_ACCEPTANCE_TOKEN" ./build/Debug/QGroundControl
-python3 strict_regression.py --only 06 --external-qgc \
-  --qgc-token "$QGC_SWARM_ACCEPTANCE_TOKEN"
+# 06 由 runner 托管正常 GUI/Xvfb；可重复执行且成功后自动删除临时 HOME
+python3 strict_regression.py --only 06 --qgc-mode managed-gui --repeat 3 \
+  --keep-workdir on-failure --qgc-token-file "$QGC_SWARM_ACCEPTANCE_TOKEN_FILE"
+
+# 也可连接人工启动的正常 GUI QGC
+QGC_SWARM_ACCEPTANCE_TOKEN_FILE="$QGC_SWARM_ACCEPTANCE_TOKEN_FILE" ./build/Debug/QGroundControl
+python3 strict_regression.py --only 06 --qgc-mode external \
+  --qgc-token-file "$QGC_SWARM_ACCEPTANCE_TOKEN_FILE"
 
 # 3. 只校验场景定义（无需机队）
 python3 run_scenario.py scenarios/05_emergency_stop.json --dry-run
@@ -77,9 +85,12 @@ python3 run_scenario.py scenarios/05_emergency_stop.json --dry-run
 - `strict_regression.py` 为每个场景重启一套全新机队；连续复用模式只保留给快速 L1 冒烟。
 - 01/02/07/08 使用 QGC loopback 验收接口，因此 QGC 与 Python 驱动不会同时争抢 UDP 14550；
   03/04/05 仍由 pymavlink 直接验证 MAVLink/PX4 契约。
-- 接口只编入 `QGC_BUILD_TESTING` 构建，绑定 `127.0.0.1`，且每个请求都要求至少 16 字符的令牌。
+- 接口只编入 `QGC_BUILD_TESTING` 构建并绑定 `127.0.0.1`。认证 Secret 必须来自 owner-only
+  普通文件（`0600` 权限、16–512 UTF-8 字节、单行、非符号链接）；不接受环境变量中的明文 Secret。
 - headless QGC 可执行任务/编队/租约逻辑，但明确报告 `ui.qml_ready=false`；场景 06 的渲染硬门槛
-  必须连接正常 GUI QGC，不能降级或跳过。
+  必须使用 `managed-gui` 或 `external`，不能降级或跳过。
+- `--keep-workdir` 支持 `always|on-failure|never`，默认只保留失败场景；每轮使用独立 HOME、端口、
+  日志和 JSON。托管 GUI 失败时会尽力保存 Xvfb 根窗口截图。
 - 报告中的 `pause_latency.per_vehicle_ms` 即"一键中止响应 ≤1s"的实测证据。
 
 ## 2026-08-25 实测结果

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests for QGC acceptance geometry and COP truth matching."""
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from qgc_acceptance import (
+    acceptance_secret_file,
     cop_truth_metrics,
     destination,
     distance_m,
     formation_geometry_metrics,
+    read_acceptance_token,
 )
 from run_scenario import QGCFleet
 
@@ -117,6 +122,21 @@ class QGCAcceptanceMetricsTest(unittest.TestCase):
         self.assertEqual(metrics["matched_truths"], 2)
         self.assertLess(metrics["max_error_m"], 2.0)
 
+    def test_cop_truth_metrics_interpolates_active_truths(self):
+        scenario = {
+            "truths": [
+                {"category": "vehicle", "waypoints": [[0, 0.0, 0.0], [10, 0.0, 0.001]]},
+                {"category": "person", "waypoints": [[6, 1.0, 1.0], [10, 1.0, 1.001]]},
+            ]
+        }
+        tracks = [{"categoryId": 2, "lat": 0.0, "lon": 0.0005}]
+
+        metrics = cop_truth_metrics(scenario, tracks, at_time_sec=5.0)
+
+        self.assertTrue(metrics["pass"])
+        self.assertEqual(metrics["truth_count"], 1)
+        self.assertEqual(metrics["errors_by_truth_m"], {"0": 0.0})
+
     def test_qgc_arm_retries_transient_preflight_rejection(self):
         client = FakeArmClient(ready_after=3)
 
@@ -143,6 +163,58 @@ class QGCAcceptanceMetricsTest(unittest.TestCase):
         self.assertEqual(fleet.position, {})
         self.assertEqual(fleet.rel_alt, {})
         self.assertEqual(fleet.amsl_alt, {})
+
+
+class AcceptanceSecretTest(unittest.TestCase):
+    def _write_secret(self, directory: str, content: bytes, mode: int = 0o600) -> Path:
+        path = Path(directory) / "token"
+        path.write_bytes(content)
+        path.chmod(mode)
+        return path
+
+    def test_reads_owner_only_single_line_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_secret(directory, b"0123456789abcdef\n")
+
+            self.assertEqual(read_acceptance_token(path), "0123456789abcdef")
+
+    def test_rejects_invalid_secret_files(self):
+        cases = (
+            (b"too-short", 0o600),
+            (b"0123456789abcdef\nsecond-line", 0o600),
+            (b"0123456789abcde\x00f", 0o600),
+            (b"\xff" * 16, 0o600),
+            (b"0123456789abcdef", 0o640),
+        )
+        for content, mode in cases:
+            with self.subTest(content=content, mode=oct(mode)):  # noqa: SIM117 -- Python 3.8
+                with tempfile.TemporaryDirectory() as directory:
+                    path = self._write_secret(directory, content, mode)
+
+                    with self.assertRaises(ValueError):
+                        read_acceptance_token(path)
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "platform does not support no-follow opens")
+    def test_rejects_symbolic_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = self._write_secret(directory, b"0123456789abcdef")
+            link = Path(directory) / "token-link"
+            link.symlink_to(target)
+
+            with self.assertRaises(ValueError):
+                read_acceptance_token(link)
+            with self.assertRaises(ValueError), acceptance_secret_file(link):
+                pass
+
+    def test_generated_secret_is_private_and_removed(self):
+        generated_path = None
+        with acceptance_secret_file() as path:
+            generated_path = path
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertGreaterEqual(len(read_acceptance_token(path).encode("utf-8")), 16)
+
+        self.assertIsNotNone(generated_path)
+        self.assertFalse(generated_path.exists())
 
 
 if __name__ == "__main__":

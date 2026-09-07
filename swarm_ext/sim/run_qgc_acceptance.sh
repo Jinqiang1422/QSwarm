@@ -10,13 +10,30 @@ QGC_HOME_DIR_INPUT="${2:-/tmp/qgc-swarm-acceptance-home}"
 QGC_IMAGE="${QGC_ACCEPTANCE_IMAGE:-qgc-ubuntu-docker:latest}"
 QGC_CONTAINER="${QGC_ACCEPTANCE_CONTAINER_NAME:-qgc-swarm-acceptance-$$}"
 QGC_PORT="${QGC_SWARM_ACCEPTANCE_PORT:-15610}"
-QGC_TOKEN="${QGC_SWARM_ACCEPTANCE_TOKEN:-}"
+QGC_TOKEN_FILE_INPUT="${QGC_SWARM_ACCEPTANCE_TOKEN_FILE:-}"
 QGC_BINARY="${QGC_ACCEPTANCE_BINARY:-Debug/QGroundControl}"
+QGC_CONTAINER_TOKEN_FILE="/run/secrets/qgc-swarm-acceptance-token"
 
-[[ ${#QGC_TOKEN} -ge 16 ]] || {
-    echo "[qgc-acceptance] QGC_SWARM_ACCEPTANCE_TOKEN 至少需要 16 个字符" >&2
+[[ -n "$QGC_TOKEN_FILE_INPUT" && -f "$QGC_TOKEN_FILE_INPUT" && ! -L "$QGC_TOKEN_FILE_INPUT" ]] || {
+    echo "[qgc-acceptance] QGC_SWARM_ACCEPTANCE_TOKEN_FILE 必须指向普通文件" >&2
     exit 2
 }
+QGC_TOKEN_FILE="$(realpath "$QGC_TOKEN_FILE_INPUT")"
+QGC_TOKEN_MODE="$(stat -c '%a' "$QGC_TOKEN_FILE")"
+(( (8#$QGC_TOKEN_MODE & 0077) == 0 && (8#$QGC_TOKEN_MODE & 0400) != 0 )) || {
+    echo "[qgc-acceptance] 令牌文件必须仅允许所有者访问" >&2
+    exit 2
+}
+IFS= read -r QGC_TOKEN_FIRST_LINE < "$QGC_TOKEN_FILE" || true
+[[ ${#QGC_TOKEN_FIRST_LINE} -ge 16 && ${#QGC_TOKEN_FIRST_LINE} -le 512 ]] || {
+    echo "[qgc-acceptance] 令牌必须包含 16 到 512 个字符" >&2
+    exit 2
+}
+[[ "$(wc -l < "$QGC_TOKEN_FILE")" -le 1 ]] || {
+    echo "[qgc-acceptance] 令牌文件只能包含一行" >&2
+    exit 2
+}
+unset QGC_TOKEN_FIRST_LINE
 [[ "$QGC_PORT" =~ ^[0-9]+$ && "$QGC_PORT" -ge 1024 && "$QGC_PORT" -le 65535 ]] || {
     echo "[qgc-acceptance] 非法端口：$QGC_PORT" >&2
     exit 2
@@ -51,8 +68,9 @@ exec docker run --rm --name "$QGC_CONTAINER" --network host \
     -e QT_QPA_PLATFORM=offscreen \
     -e QGC_SWARM_ACCEPTANCE_HEADLESS=1 \
     -e QGC_SWARM_ACCEPTANCE_PORT="$QGC_PORT" \
-    -e QGC_SWARM_ACCEPTANCE_TOKEN="$QGC_TOKEN" \
+    -e QGC_SWARM_ACCEPTANCE_TOKEN_FILE="$QGC_CONTAINER_TOKEN_FILE" \
     -v "$REPO_ROOT:/project/source:ro" \
     -v "$BUILD_ROOT:/project/build:ro" \
     -v "$QGC_HOME_DIR:/qgc-home" \
+    -v "$QGC_TOKEN_FILE:$QGC_CONTAINER_TOKEN_FILE:ro" \
     "$QGC_IMAGE" --allow-multiple

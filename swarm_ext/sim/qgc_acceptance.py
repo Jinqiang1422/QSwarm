@@ -3,10 +3,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
+import os
+import secrets
 import socket
+import stat
+import tempfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,10 +23,79 @@ class QGCAcceptanceError(RuntimeError):
     """The QGC acceptance interface was unavailable or rejected a request."""
 
 
+MINIMUM_TOKEN_BYTES = 16
+MAXIMUM_TOKEN_BYTES = 512
+
+
+def read_acceptance_token(path: str | Path) -> str:
+    """Read an owner-only acceptance token without following symbolic links."""
+    token_path = Path(path)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(token_path, flags)
+    except OSError as exc:
+        raise ValueError("QGC acceptance token file is not readable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("QGC acceptance token path must be a regular file")
+        if metadata.st_mode & 0o077:
+            raise ValueError("QGC acceptance token file must not grant group or other access")
+        if not metadata.st_mode & stat.S_IRUSR:
+            raise ValueError("QGC acceptance token file must be readable by its owner")
+        encoded = os.read(descriptor, MAXIMUM_TOKEN_BYTES + 3)
+    finally:
+        os.close(descriptor)
+
+    if encoded.endswith(b"\r\n"):
+        encoded = encoded[:-2]
+    elif encoded.endswith(b"\n"):
+        encoded = encoded[:-1]
+    if not MINIMUM_TOKEN_BYTES <= len(encoded) <= MAXIMUM_TOKEN_BYTES:
+        raise ValueError(
+            f"QGC acceptance token must contain {MINIMUM_TOKEN_BYTES} to "
+            f"{MAXIMUM_TOKEN_BYTES} UTF-8 bytes"
+        )
+    if b"\x00" in encoded or b"\r" in encoded or b"\n" in encoded:
+        raise ValueError("QGC acceptance token must contain exactly one line")
+    try:
+        return encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("QGC acceptance token must be valid UTF-8") from exc
+
+
+@contextlib.contextmanager
+def acceptance_secret_file(existing_path: str = ""):
+    """Yield a validated secret path, creating an ephemeral one when omitted."""
+    if existing_path:
+        # Keep the final path component unresolved so read_acceptance_token's
+        # O_NOFOLLOW check cannot be bypassed by normalizing a symlink first.
+        token_path = Path(existing_path).expanduser().absolute()
+        read_acceptance_token(token_path)
+        yield token_path
+        return
+
+    with tempfile.TemporaryDirectory(prefix="qgc-swarm-secret-") as directory:
+        secret_dir = Path(directory)
+        secret_dir.chmod(0o700)
+        token_path = secret_dir / "acceptance-token"
+        token_path.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+        token_path.chmod(0o600)
+        yield token_path
+
+
 class QGCAcceptanceClient:
     def __init__(self, host: str, port: int, token: str, timeout_sec: float = 5.0):
-        if len(token) < 16:
-            raise ValueError("QGC acceptance token must contain at least 16 characters")
+        token_bytes = token.encode("utf-8")
+        if not MINIMUM_TOKEN_BYTES <= len(token_bytes) <= MAXIMUM_TOKEN_BYTES:
+            raise ValueError(
+                f"QGC acceptance token must contain {MINIMUM_TOKEN_BYTES} to "
+                f"{MAXIMUM_TOKEN_BYTES} UTF-8 bytes"
+            )
         self.host = host
         self.port = port
         self.token = token
@@ -142,8 +217,31 @@ def formation_geometry_metrics(status: dict) -> dict:
     }
 
 
-def cop_truth_metrics(scenario: dict, tracks: list[dict]) -> dict:
-    """Greedily match final truth points to same-category COP tracks and report geo error."""
+def _truth_position_at(truth: dict, at_time_sec: float | None) -> tuple[float, float] | None:
+    waypoints = truth.get("waypoints", [])
+    if not waypoints:
+        return None
+    if at_time_sec is None or at_time_sec >= float(waypoints[-1][0]):
+        return float(waypoints[-1][1]), float(waypoints[-1][2])
+    if at_time_sec < float(waypoints[0][0]):
+        return None
+    for index in range(len(waypoints) - 1):
+        start = waypoints[index]
+        end = waypoints[index + 1]
+        start_time = float(start[0])
+        end_time = float(end[0])
+        if start_time <= at_time_sec <= end_time:
+            span = end_time - start_time
+            ratio = 0.0 if span <= 0.0 else (at_time_sec - start_time) / span
+            return (
+                float(start[1]) + (float(end[1]) - float(start[1])) * ratio,
+                float(start[2]) + (float(end[2]) - float(start[2])) * ratio,
+            )
+    return float(waypoints[-1][1]), float(waypoints[-1][2])
+
+
+def cop_truth_metrics(scenario: dict, tracks: list[dict], at_time_sec: float | None = None) -> dict:
+    """Greedily match active truth points to same-category COP tracks and report geo error."""
     category_ids = {
         "unknown": 0,
         "person": 1,
@@ -154,11 +252,13 @@ def cop_truth_metrics(scenario: dict, tracks: list[dict]) -> dict:
         "smoke": 6,
     }
     candidates = []
+    active_truths = []
     for truth_index, truth in enumerate(scenario.get("truths", [])):
-        waypoints = truth.get("waypoints", [])
-        if not waypoints:
+        position = _truth_position_at(truth, at_time_sec)
+        if position is None:
             continue
-        truth_lat, truth_lon = float(waypoints[-1][1]), float(waypoints[-1][2])
+        active_truths.append(truth_index)
+        truth_lat, truth_lon = position
         category = category_ids.get(str(truth.get("category", "unknown")), 0)
         for track_index, track in enumerate(tracks):
             if int(track.get("categoryId", track.get("category", -1))) != category:
@@ -179,17 +279,21 @@ def cop_truth_metrics(scenario: dict, tracks: list[dict]) -> dict:
     used_truths = set()
     used_tracks = set()
     errors = []
+    errors_by_truth = {}
     for error, truth_index, track_index in candidates:
         if truth_index in used_truths or track_index in used_tracks:
             continue
         used_truths.add(truth_index)
         used_tracks.add(track_index)
-        errors.append(round(error, 2))
-    truth_count = sum(bool(truth.get("waypoints")) for truth in scenario.get("truths", []))
+        rounded_error = round(error, 2)
+        errors.append(rounded_error)
+        errors_by_truth[str(truth_index)] = rounded_error
+    truth_count = len(active_truths)
     return {
         "pass": len(errors) == truth_count and truth_count > 0,
         "matched_truths": len(errors),
         "truth_count": truth_count,
         "errors_m": errors,
+        "errors_by_truth_m": errors_by_truth,
         "max_error_m": max(errors, default=None),
     }

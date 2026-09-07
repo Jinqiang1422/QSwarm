@@ -361,13 +361,15 @@ QML delegate 数仍须由正常 GUI QGC 断言，headless 模式会明确报告 
 避免 QGC 与 pymavlink 同时绑定 14550。令牌必须由运行环境注入，不写入仓库：
 
 ```bash
-export QGC_SWARM_ACCEPTANCE_TOKEN='replace-with-at-least-16-random-characters'
+umask 077
+openssl rand -hex 24 > /tmp/qgc-swarm-token
+export QGC_SWARM_ACCEPTANCE_TOKEN_FILE=/tmp/qgc-swarm-token
 python3 strict_regression.py --px4-src ~/PX4-Autopilot --only 01,02,03,04,05,07,08
 python3 strict_regression.py --dry-run
 
 # 场景 06 要求真实 QML 渲染，先启动正常 GUI QGC，再运行：
 python3 strict_regression.py --only 06 --external-qgc \
-  --qgc-token "$QGC_SWARM_ACCEPTANCE_TOKEN"
+  --qgc-token-file "$QGC_SWARM_ACCEPTANCE_TOKEN_FILE"
 ```
 
 产出 `/tmp/sitl_strict_regression/SUMMARY.md`、各场景 `report_*.json` 及对应 QGC/SITL 日志；

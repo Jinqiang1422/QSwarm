@@ -63,6 +63,13 @@ if [[ -z "${DISPLAY:-}" ]]; then
 fi
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe   # 无 GPU 时软件渲染
 
+# 每次机队启动使用独立 transport partition，避免上轮异常残留或并行作业的 gz server
+# 被 PX4 误判为当前 world。变量会由 env 继承给全部 PX4/gz 子进程。
+if [[ "$BACKEND" == "gz" ]]; then
+    export GZ_PARTITION="${GZ_PARTITION:-qgc_swarm_${BASHPID}}"
+    echo "[launch] Gazebo transport partition: $GZ_PARTITION"
+fi
+
 # ---- gz 资源环境（关键！直接调 px4 二进制 + `-w` 独立工作目录时，rcS 不会自动
 #      source rootfs/gz_env.sh，缺失会导致 gz_bridge "Service call timed out.
 #      Check GZ_SIM_RESOURCE_PATH" → spawn model 失败 → 无 heartbeat）----
@@ -88,7 +95,27 @@ cleanup() {
     echo "[launch] 停止全部 SITL 实例..."
     for pid in "${PIDS[@]}"; do
         if kill -0 -- "-$pid" 2>/dev/null; then
-            kill -- "-$pid" 2>/dev/null || true
+            kill -TERM -- "-$pid" 2>/dev/null || true
+        fi
+    done
+    # gz sim 是实例 0 的孙进程，可能不响应 TERM，不能只等待 shell 直接子进程。
+    for _ in {1..25}; do
+        groups_alive=false
+        for pid in "${PIDS[@]}"; do
+            if kill -0 -- "-$pid" 2>/dev/null; then
+                groups_alive=true
+                break
+            fi
+        done
+        if [[ "$groups_alive" == "false" ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    for pid in "${PIDS[@]}"; do
+        if kill -0 -- "-$pid" 2>/dev/null; then
+            echo "[launch] 进程组 $pid 未及时退出，发送 KILL"
+            kill -KILL -- "-$pid" 2>/dev/null || true
         fi
     done
     if [[ -n "$XVFB_PID" ]]; then
@@ -134,7 +161,13 @@ for ((i = 0; i < N; i++)); do
     if [[ $i -eq 0 ]]; then
         sleep 6
     else
-        sleep 2
+        # Gazebo create 服务返回后，传感器插件仍需时间完成 transport 注册；过快连续
+        # 生成多机偶发出现模型存在但 accel/barometer/EKF 永久缺失。
+        sleep 4
+    fi
+    if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
+        echo "[launch] 实例 $i 在启动宽限期内退出，详见 $INST/px4.log"
+        exit 1
     fi
 done
 

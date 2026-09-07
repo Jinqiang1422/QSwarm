@@ -31,6 +31,7 @@ from qgc_acceptance import (
     QGCAcceptanceError,
     cop_truth_metrics,
     formation_geometry_metrics,
+    read_acceptance_token,
 )
 
 HEARTBEAT_TIMEOUT_SEC = 5.0  # 超过该时长未收到心跳视为离线
@@ -545,9 +546,25 @@ def _pid_of_instance(instance: int) -> int:
     return pids[0] if pids else -1
 
 
-def _remove_gazebo_model(instance: int) -> dict:
+def _process_environment_value(pid: int, name: str) -> str:
+    try:
+        entries = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return ""
+    prefix = f"{name}=".encode()
+    for entry in entries:
+        if entry.startswith(prefix):
+            return entry[len(prefix) :].decode(errors="replace")
+    return ""
+
+
+def _remove_gazebo_model(instance: int, px4_pid: int) -> dict:
     """安全移除失效机模型，避免无控制机体使共享 ODE 世界崩溃。"""
     model = f"x500_{instance}"
+    environment = os.environ.copy()
+    partition = _process_environment_value(px4_pid, "GZ_PARTITION")
+    if partition:
+        environment["GZ_PARTITION"] = partition
     proc = subprocess.run(
         [
             "gz",
@@ -565,12 +582,14 @@ def _remove_gazebo_model(instance: int) -> dict:
         ],
         capture_output=True,
         text=True,
+        env=environment,
     )
     response = (proc.stdout or proc.stderr).strip()
     return {
         "model": model,
         "returncode": proc.returncode,
         "response": response,
+        "partition": partition,
         "pass": proc.returncode == 0 and "data: true" in response,
     }
 
@@ -670,7 +689,7 @@ def run_scenario(
         elif action == "kill_instance":
             pid = _pid_of_instance(int(step["instance"]))
             removal = (
-                _remove_gazebo_model(int(step["instance"]))
+                _remove_gazebo_model(int(step["instance"]), pid)
                 if pid > 0
                 else {
                     "pass": False,
@@ -958,7 +977,7 @@ def run_scenario(
                 "scenarios",
                 os.path.basename(step.get("scenario", "")),
             )
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 [
                     sys.executable,
                     svc,
@@ -969,11 +988,58 @@ def run_scenario(
                     "--realtime",
                     "--quiet",
                 ],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=float(scenario.get("duration_s", 30)) + 30.0,
             )
-            service_output = proc.stdout or proc.stderr
+            observation_started = time.monotonic()
+            observation_deadline = (
+                observation_started + float(scenario.get("duration_s", 30)) + 30.0
+            )
+            first_model_ms = None
+            first_delegate_ms = None
+            render_samples = []
+            best_truth_errors = {}
+            last_observed_status = {}
+            while proc.poll() is None and time.monotonic() < observation_deadline:
+                if qgc_client:
+                    try:
+                        last_observed_status = qgc_client.request("status")
+                        observed_cop = last_observed_status.get("cop", {})
+                        elapsed_ms = round((time.monotonic() - observation_started) * 1000.0, 1)
+                        model_count = int(observed_cop.get("track_count", 0))
+                        delegate_count = int(observed_cop.get("rendered_track_count", 0))
+                        render_samples.append(
+                            {
+                                "elapsed_ms": elapsed_ms,
+                                "model_count": model_count,
+                                "delegate_count": delegate_count,
+                            }
+                        )
+                        if model_count > 0 and first_model_ms is None:
+                            first_model_ms = elapsed_ms
+                        if delegate_count > 0 and first_delegate_ms is None:
+                            first_delegate_ms = elapsed_ms
+                        sample_truth_metrics = cop_truth_metrics(
+                            scenario,
+                            observed_cop.get("tracks", []),
+                            elapsed_ms / 1000.0,
+                        )
+                        for truth_index, error_m in sample_truth_metrics.get(
+                            "errors_by_truth_m", {}
+                        ).items():
+                            best_truth_errors[truth_index] = min(
+                                float(error_m),
+                                best_truth_errors.get(truth_index, math.inf),
+                            )
+                    except QGCAcceptanceError:
+                        pass
+                time.sleep(0.1)
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+            service_output, _ = proc.communicate(timeout=5)
+            service_output = service_output or ""
             match = re.search(
                 r"完成：(\d+) 帧，(\d+) 次检测，(\d+) 条航迹报文，"
                 r"(\d+) 次心跳，(\d+) 字节",
@@ -1002,7 +1068,7 @@ def run_scenario(
                     stats.get("heartbeat_hz", -1.0) >= float(expect.get("min_heartbeat_hz", 0))
                 ),
             }
-            qgc_status = {}
+            qgc_status = last_observed_status
             if qgc_client:
                 try:
                     qgc_status = qgc_client.wait_status(
@@ -1013,7 +1079,24 @@ def run_scenario(
                     qgc_status = {}
             perception = qgc_status.get("perception", {})
             cop = qgc_status.get("cop", {})
-            truth_metrics = cop_truth_metrics(scenario, cop.get("tracks", []))
+            ui = qgc_status.get("ui", {})
+            truth_count = sum(bool(truth.get("waypoints")) for truth in scenario.get("truths", []))
+            truth_errors = [
+                round(best_truth_errors[str(index)], 2)
+                for index in range(truth_count)
+                if str(index) in best_truth_errors
+            ]
+            truth_metrics = {
+                "pass": len(truth_errors) == truth_count and truth_count > 0,
+                "matched_truths": len(truth_errors),
+                "truth_count": truth_count,
+                "errors_m": truth_errors,
+                "errors_by_truth_m": {
+                    key: round(value, 2) for key, value in best_truth_errors.items()
+                },
+                "max_error_m": max(truth_errors, default=None),
+                "measurement": "best error per truth over observation window",
+            }
             checked.update(
                 {
                     "max_geo_error_m": (
@@ -1028,7 +1111,10 @@ def run_scenario(
                         <= float(expect.get("max_e2e_latency_ms", math.inf))
                     ),
                     "qgc_cop_model": cop.get("track_count", 0) > 0,
-                    "qgc_cop_rendering": cop.get("rendered_track_count", 0) > 0,
+                    "qgc_cop_rendering": (
+                        cop.get("rendered_track_count", 0) == cop.get("track_count", 0)
+                    ),
+                    "qgc_situation_layer": ui.get("situation_layer_count", 0) == 1,
                 }
             )
             unverified = []
@@ -1043,6 +1129,13 @@ def run_scenario(
                     "unverified_expectations": unverified,
                     "qgc_perception": perception,
                     "qgc_cop": cop,
+                    "qgc_ui": ui,
+                    "render_observation": {
+                        "first_model_ms": first_model_ms,
+                        "first_delegate_ms": first_delegate_ms,
+                        "sample_count": len(render_samples),
+                        "samples": render_samples,
+                    },
                     "truth_metrics": truth_metrics,
                 },
             )
@@ -1064,7 +1157,11 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="只解析打印时间线，不连接机队")
     ap.add_argument("--qgc-host", default="", help="QGC 验收接口地址；留空则不连接 QGC L2")
     ap.add_argument("--qgc-port", type=int, default=15610, help="QGC 验收接口端口")
-    ap.add_argument("--qgc-token", default="", help="QGC 验收接口令牌（至少 16 字符）")
+    ap.add_argument(
+        "--qgc-token-file",
+        default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN_FILE", ""),
+        help="QGC 验收接口 Secret 文件",
+    )
     args = ap.parse_args()
 
     scenario = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
@@ -1075,7 +1172,13 @@ def main() -> None:
 
     qgc_client = None
     if args.qgc_host:
-        qgc_client = QGCAcceptanceClient(args.qgc_host, args.qgc_port, args.qgc_token)
+        if not args.qgc_token_file:
+            ap.error("连接 QGC 验收接口需要 --qgc-token-file")
+        try:
+            token = read_acceptance_token(args.qgc_token_file)
+        except ValueError as exc:
+            ap.error(str(exc))
+        qgc_client = QGCAcceptanceClient(args.qgc_host, args.qgc_port, token)
     report = run_scenario(scenario, args.conn, args.dry_run, qgc_client)
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.report:

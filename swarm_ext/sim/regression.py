@@ -18,6 +18,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -57,7 +58,11 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="不连机队，仅解析场景+自检")
     ap.add_argument("--qgc-host", default="", help="QGC 验收接口地址；留空则不连接 QGC L2")
     ap.add_argument("--qgc-port", type=int, default=15610, help="QGC 验收接口端口")
-    ap.add_argument("--qgc-token", default="", help="QGC 验收接口令牌（至少 16 字符）")
+    ap.add_argument(
+        "--qgc-token-file",
+        default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN_FILE", ""),
+        help="QGC 验收接口 Secret 文件",
+    )
     args = ap.parse_args()
 
     sim_dir = Path(__file__).resolve().parent
@@ -93,7 +98,13 @@ def main() -> None:
     rows = []
     qgc_client = None
     if args.qgc_host:
-        qgc_client = rs.QGCAcceptanceClient(args.qgc_host, args.qgc_port, args.qgc_token)
+        if not args.qgc_token_file:
+            ap.error("连接 QGC 验收接口需要 --qgc-token-file")
+        try:
+            token = rs.read_acceptance_token(args.qgc_token_file)
+        except ValueError as exc:
+            ap.error(str(exc))
+        qgc_client = rs.QGCAcceptanceClient(args.qgc_host, args.qgc_port, token)
     for scn_path in scenarios:
         try:
             scn = json.loads(scn_path.read_text(encoding="utf-8"))

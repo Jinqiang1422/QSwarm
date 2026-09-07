@@ -7,11 +7,15 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
+from numbers import Real
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -19,6 +23,13 @@ import run_scenario as rs
 
 
 def _stop_process(process: subprocess.Popen | None, container_name: str) -> None:
+    if container_name:
+        subprocess.run(
+            ["docker", "stop", "--time", "15", container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
     if process and process.poll() is None:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
@@ -28,13 +39,66 @@ def _stop_process(process: subprocess.Popen | None, container_name: str) -> None
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
-    if container_name:
-        subprocess.run(
-            ["docker", "stop", "-t", "3", container_name],
+
+
+def _unused_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _unused_x_display(offset: int) -> int:
+    for display_number in range(100 + offset % 700, 1000):
+        if (
+            not Path(f"/tmp/.X11-unix/X{display_number}").exists()
+            and not Path(f"/tmp/.X{display_number}-lock").exists()
+        ):
+            return display_number
+    raise RuntimeError("no free X display is available")
+
+
+def _container_exists(container_name: str) -> bool:
+    if not container_name:
+        return False
+    result = subprocess.run(
+        ["docker", "container", "inspect", container_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _port_is_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _directory_size(path: Path) -> int:
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _capture_screenshot(display_number: int, output_path: Path) -> bool:
+    executable = shutil.which("import")
+    if not executable or display_number <= 0:
+        return False
+    environment = os.environ.copy()
+    environment["DISPLAY"] = f":{display_number}"
+    try:
+        result = subprocess.run(
+            [executable, "-window", "root", str(output_path)],
+            env=environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=10,
         )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and output_path.is_file()
 
 
 def _start_logged(command: list[str], log_path: Path, env: dict | None = None) -> subprocess.Popen:
@@ -71,17 +135,29 @@ def _wait_qgc(
                 len(vehicles) >= expected_vehicles
                 and all(vehicle.get("initial_connect_complete", False) for vehicle in vehicles)
             )
+            flight_telemetry_ready = expected_vehicles == 0 or (
+                len(vehicles) >= expected_vehicles
+                and all(
+                    all(
+                        isinstance(vehicle.get(field), Real)
+                        and math.isfinite(float(vehicle[field]))
+                        for field in ("lat", "lon", "alt_rel_m")
+                    )
+                    for vehicle in vehicles
+                )
+            )
             if (
                 last_status.get("ok")
                 and last_status.get("vehicle_count", 0) >= expected_vehicles
                 and initial_connect_complete
+                and flight_telemetry_ready
             ):
                 return last_status
         except rs.QGCAcceptanceError:
             pass
         time.sleep(1)
     raise TimeoutError(
-        f"QGC 在 {timeout_sec:.0f}s 内未达到 {expected_vehicles} 架在线；末次状态={last_status}"
+        f"QGC 在 {timeout_sec:.0f}s 内未达到 {expected_vehicles} 架可飞状态；末次状态={last_status}"
     )
 
 
@@ -102,23 +178,27 @@ def _wait_mavlink(expected_vehicles: int, timeout_sec: float, sitl: subprocess.P
     raise TimeoutError(f"SITL 在 {timeout_sec:.0f}s 内仅发现 {len(seen)}/{expected_vehicles} 架")
 
 
-def _summary(rows: list[dict], external_qgc: bool, sitl_backend: str) -> str:
+def _summary(rows: list[dict], qgc_mode: str, sitl_backend: str, keep_workdir: str) -> str:
     passed = sum(row["result"] == "PASS" for row in rows)
     lines = [
         "# 严格 SITL/QGC 场景回归",
         "",
         "- 隔离策略：每个场景重启 PX4/Gazebo 机群；托管 QGC 时同时使用独立 HOME",
         f"- SITL 后端：`{sitl_backend}`",
-        f"- QGC：{'外部正常 GUI' if external_qgc else '托管 headless（QML 场景会明确失败）'}",
+        f"- QGC 模式：`{qgc_mode}`",
+        f"- 工作目录保留：`{keep_workdir}`",
         f"- 场景：{len(rows)} · **PASS {passed} / FAIL {len(rows) - passed}**",
         "",
-        "| 场景 | 名称 | 结果 | 耗时(s) | 说明 |",
-        "|---|---|---|---|---|",
+        "| 轮次 | 场景 | 名称 | 结果 | 耗时(s) | 说明 |",
+        "|---:|---|---|---|---:|---|",
     ]
     for row in rows:
         mark = "✅ PASS" if row["result"] == "PASS" else "❌ FAIL"
         detail = str(row.get("error", "")).replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| {row['stem']} | {row['name']} | {mark} | {row['total_sec']} | {detail} |")
+        lines.append(
+            f"| {row['iteration']} | {row['stem']} | {row['name']} | {mark} | "
+            f"{row['total_sec']} | {detail} |"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -134,17 +214,39 @@ def main() -> None:
     parser.add_argument("--qgc-build", default=str(Path(__file__).resolve().parents[2] / "build"))
     parser.add_argument("--qgc-host", default="127.0.0.1")
     parser.add_argument("--qgc-port", type=int, default=15610)
-    parser.add_argument("--qgc-token", default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN", ""))
+    parser.add_argument(
+        "--qgc-token-file",
+        default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN_FILE", ""),
+        help="QGC 验收接口 Secret 文件",
+    )
+    parser.add_argument(
+        "--qgc-mode",
+        choices=("managed-headless", "managed-gui", "external"),
+        default="managed-headless",
+        help="托管 headless、托管正常 GUI/Xvfb，或连接外部 QGC",
+    )
     parser.add_argument(
         "--external-qgc",
         action="store_true",
-        help="使用已启动的正常 GUI QGC；requires_qml 场景必须使用此模式",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--out", default="/tmp/sitl_strict_regression")
     parser.add_argument("--only", default="", help="逗号分隔场景号，例如 01,02,06")
     parser.add_argument("--ready-timeout", type=float, default=2400.0)
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--keep-workdir",
+        choices=("always", "on-failure", "never"),
+        default="on-failure",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.external_qgc:
+        if args.qgc_mode != "managed-headless":
+            parser.error("--external-qgc cannot be combined with --qgc-mode")
+        args.qgc_mode = "external"
+    if args.repeat < 1:
+        parser.error("--repeat 必须大于 0")
 
     sim_dir = Path(__file__).resolve().parent
     output_dir = Path(args.out).resolve()
@@ -155,150 +257,222 @@ def main() -> None:
         scenarios = [path for path in scenarios if any(path.name.startswith(key) for key in keys)]
     if not scenarios:
         parser.error("没有匹配的场景")
-    if (
-        not args.dry_run
-        and any(
-            json.loads(path.read_text(encoding="utf-8")).get("requires_qgc") for path in scenarios
-        )
-        and len(args.qgc_token) < 16
-    ):
-        parser.error("QGC 场景要求 --qgc-token 至少 16 个字符")
+    requires_qgc = not args.dry_run and any(
+        json.loads(path.read_text(encoding="utf-8")).get("requires_qgc") for path in scenarios
+    )
+    token = ""
+    if requires_qgc:
+        if not args.qgc_token_file:
+            parser.error("QGC 场景要求 --qgc-token-file")
+        try:
+            token = rs.read_acceptance_token(args.qgc_token_file)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     rows = []
-    for index, scenario_path in enumerate(scenarios, start=1):
-        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
-        stem = scenario_path.stem
-        started = time.monotonic()
-        qgc_process = None
-        sitl_process = None
-        qgc_container = ""
-        sitl_container = ""
-        error = ""
-        report = {}
-        environment_config = {}
-        print(f"\n===== 严格场景 {stem}: {scenario['name']} =====", flush=True)
-        try:
-            if args.dry_run:
-                report = rs.run_scenario(scenario, "udpin:0.0.0.0:14550", True)
-            else:
-                requires_qgc = bool(scenario.get("requires_qgc"))
-                if scenario.get("requires_qml") and not args.external_qgc:
-                    raise RuntimeError(
-                        "该场景要求真实 QML 渲染，请用 --external-qgc 连接正常 GUI QGC"
+    run_number = 0
+    for iteration in range(1, args.repeat + 1):
+        for scenario_path in scenarios:
+            run_number += 1
+            scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+            stem = scenario_path.stem
+            run_dir = output_dir / "runs" / f"{run_number:03d}-{stem}-repeat-{iteration:03d}"
+            work_dir = run_dir / "work"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            started = time.monotonic()
+            qgc_process = None
+            sitl_process = None
+            qgc_container = ""
+            qgc_display = 0
+            sitl_container = ""
+            error = ""
+            report = {}
+            environment_config = {}
+            managed_qgc = args.qgc_mode != "external"
+            qgc_port = _unused_loopback_port() if managed_qgc else args.qgc_port
+            print(
+                f"\n===== 严格场景 {stem}: {scenario['name']} "
+                f"(repeat {iteration}/{args.repeat}) =====",
+                flush=True,
+            )
+            try:
+                if args.dry_run:
+                    report = rs.run_scenario(scenario, "udpin:0.0.0.0:14550", True)
+                else:
+                    scenario_requires_qgc = bool(scenario.get("requires_qgc"))
+                    if scenario.get("requires_qml") and args.qgc_mode == "managed-headless":
+                        raise RuntimeError(
+                            "该场景要求真实 QML 渲染，请使用 --qgc-mode managed-gui 或 external"
+                        )
+
+                    qgc_client = None
+                    if scenario_requires_qgc:
+                        if managed_qgc:
+                            qgc_container = f"qgc-swarm-qgc-{os.getpid()}-{run_number}"
+                            qgc_env = os.environ.copy()
+                            qgc_env.update(
+                                {
+                                    "QGC_ACCEPTANCE_CONTAINER_NAME": qgc_container,
+                                    "QGC_SWARM_ACCEPTANCE_PORT": str(qgc_port),
+                                    "QGC_SWARM_ACCEPTANCE_TOKEN_FILE": str(
+                                        Path(args.qgc_token_file).resolve()
+                                    ),
+                                }
+                            )
+                            if args.qgc_mode == "managed-gui":
+                                qgc_script = sim_dir / "run_qgc_gui_acceptance.sh"
+                                qgc_display = _unused_x_display(run_number)
+                                qgc_env["QGC_ACCEPTANCE_DISPLAY_NUMBER"] = str(qgc_display)
+                            else:
+                                qgc_script = sim_dir / "run_qgc_acceptance.sh"
+                            qgc_process = _start_logged(
+                                [
+                                    str(qgc_script),
+                                    args.qgc_build,
+                                    str(work_dir / "qgc-home"),
+                                ],
+                                run_dir / "qgc.log",
+                                qgc_env,
+                            )
+                        qgc_client = rs.QGCAcceptanceClient(args.qgc_host, qgc_port, token)
+                        _wait_qgc(qgc_client, 0, 60, [p for p in [qgc_process] if p])
+
+                    fleet_size = int(scenario.get("fleet", 8))
+                    if fleet_size > 0:
+                        sitl_env = os.environ.copy()
+                        if args.sitl_backend == "official":
+                            sitl_container = f"qgc-swarm-sitl-{os.getpid()}-{run_number}"
+                            sitl_env["QGC_SITL_CONTAINER_NAME"] = sitl_container
+                            sitl_command = [
+                                str(sim_dir / "run_official_sitl.sh"),
+                                args.px4_src,
+                                str(fleet_size),
+                            ]
+                        else:
+                            sitl_env.update(
+                                {
+                                    "QGC_SKIP_READY_PROBE": "1",
+                                    "WORK_DIR": str(work_dir / "px4"),
+                                }
+                            )
+                            sitl_command = [
+                                str(sim_dir / "launch_swarm_sitl.sh"),
+                                str(fleet_size),
+                                args.px4_src,
+                                "gz",
+                            ]
+                        sitl_process = _start_logged(
+                            sitl_command,
+                            run_dir / "sitl.log",
+                            sitl_env,
+                        )
+                        if qgc_client:
+                            _wait_qgc(
+                                qgc_client,
+                                fleet_size,
+                                args.ready_timeout,
+                                [p for p in [qgc_process, sitl_process] if p],
+                            )
+                            if args.sitl_backend == "local" and managed_qgc:
+                                environment_config = qgc_client.request("configure_px4_sitl")
+                                if not environment_config.get("ok"):
+                                    raise RuntimeError(
+                                        f"本地 PX4 SITL 参数配置失败：{environment_config}"
+                                    )
+                                time.sleep(2.0)
+                        else:
+                            _wait_mavlink(fleet_size, args.ready_timeout, sitl_process)
+
+                    report = rs.run_scenario(
+                        scenario,
+                        "udpin:0.0.0.0:14550",
+                        False,
+                        qgc_client,
                     )
-
-                qgc_client = None
-                if requires_qgc:
-                    if not args.external_qgc:
-                        qgc_container = f"qgc-swarm-qgc-{os.getpid()}-{index}"
-                        qgc_home = output_dir / f"qgc-home-{stem}-{time.time_ns()}"
-                        qgc_env = os.environ.copy()
-                        qgc_env.update(
-                            {
-                                "QGC_ACCEPTANCE_CONTAINER_NAME": qgc_container,
-                                "QGC_SWARM_ACCEPTANCE_PORT": str(args.qgc_port),
-                                "QGC_SWARM_ACCEPTANCE_TOKEN": args.qgc_token,
-                            }
-                        )
-                        qgc_process = _start_logged(
-                            [
-                                str(sim_dir / "run_qgc_acceptance.sh"),
-                                args.qgc_build,
-                                str(qgc_home),
-                            ],
-                            output_dir / f"qgc_{stem}.log",
-                            qgc_env,
-                        )
-                    qgc_client = rs.QGCAcceptanceClient(
-                        args.qgc_host, args.qgc_port, args.qgc_token
+                    if not report.get("pass"):
+                        error = str(report.get("error", "场景步骤失败"))
+            except Exception as exc:
+                error = str(exc)
+                report = {
+                    "scenario": scenario["name"],
+                    "pass": False,
+                    "error": error,
+                    "steps": report.get("steps", []),
+                }
+            finally:
+                if qgc_display and not report.get("pass", False):
+                    report["failure_screenshot"] = (
+                        str(run_dir / "failure.png")
+                        if _capture_screenshot(qgc_display, run_dir / "failure.png")
+                        else ""
                     )
-                    _wait_qgc(qgc_client, 0, 60, [p for p in [qgc_process] if p])
+                _stop_process(sitl_process, sitl_container)
+                if managed_qgc:
+                    _stop_process(qgc_process, qgc_container)
 
-                fleet_size = int(scenario.get("fleet", 8))
-                if fleet_size > 0:
-                    sitl_env = os.environ.copy()
-                    if args.sitl_backend == "official":
-                        sitl_container = f"qgc-swarm-sitl-{os.getpid()}-{index}"
-                        sitl_env["QGC_SITL_CONTAINER_NAME"] = sitl_container
-                        sitl_command = [
-                            str(sim_dir / "run_official_sitl.sh"),
-                            args.px4_src,
-                            str(fleet_size),
-                        ]
-                    else:
-                        sitl_env.update(
-                            {
-                                "QGC_SKIP_READY_PROBE": "1",
-                                "WORK_DIR": str(output_dir / f"px4-work-{stem}-{time.time_ns()}"),
-                            }
-                        )
-                        sitl_command = [
-                            str(sim_dir / "launch_swarm_sitl.sh"),
-                            str(fleet_size),
-                            args.px4_src,
-                            "gz",
-                        ]
-                    sitl_process = _start_logged(
-                        sitl_command,
-                        output_dir / f"sitl_{stem}.log",
-                        sitl_env,
-                    )
-                    if qgc_client:
-                        _wait_qgc(
-                            qgc_client,
-                            fleet_size,
-                            args.ready_timeout,
-                            [p for p in [qgc_process, sitl_process] if p],
-                        )
-                        if args.sitl_backend == "local" and not args.external_qgc:
-                            environment_config = qgc_client.request("configure_px4_sitl")
-                            if not environment_config.get("ok"):
-                                raise RuntimeError(
-                                    f"本地 PX4 SITL 参数配置失败：{environment_config}"
-                                )
-                            time.sleep(2.0)
-                    else:
-                        _wait_mavlink(fleet_size, args.ready_timeout, sitl_process)
+            cleanup_errors = []
+            if _container_exists(sitl_container):
+                cleanup_errors.append(f"SITL 容器残留：{sitl_container}")
+            if managed_qgc and _container_exists(qgc_container):
+                cleanup_errors.append(f"QGC 容器残留：{qgc_container}")
+            if (
+                managed_qgc
+                and scenario.get("requires_qgc")
+                and _port_is_open("127.0.0.1", qgc_port)
+            ):
+                cleanup_errors.append(f"QGC 验收端口残留：{qgc_port}")
+            if cleanup_errors:
+                error = "; ".join(filter(None, [error, *cleanup_errors]))
+                report["pass"] = False
+                report["error"] = error
 
-                report = rs.run_scenario(
-                    scenario,
-                    "udpin:0.0.0.0:14550",
-                    False,
-                    qgc_client,
-                )
-                if not report.get("pass"):
-                    error = str(report.get("error", "场景步骤失败"))
-        except Exception as exc:
-            error = str(exc)
-            report = {
-                "scenario": scenario["name"],
-                "pass": False,
-                "error": error,
-                "steps": report.get("steps", []),
-            }
-        finally:
-            _stop_process(sitl_process, sitl_container)
-            if not args.external_qgc:
-                _stop_process(qgc_process, qgc_container)
+            report["fresh_fleet"] = not args.dry_run
+            report["iteration"] = iteration
+            report["qgc_mode"] = args.qgc_mode
+            report["cleanup_errors"] = cleanup_errors
+            if environment_config:
+                report["environment_config"] = environment_config
+            report["total_sec"] = round(time.monotonic() - started, 1)
+            keep_workdir = args.keep_workdir == "always" or (
+                args.keep_workdir == "on-failure" and not report.get("pass")
+            )
+            if not keep_workdir:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            report["workdir_retained"] = keep_workdir and work_dir.exists()
+            report["evidence_size_bytes"] = _directory_size(run_dir)
+            report_path = run_dir / "report.json"
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            rows.append(
+                {
+                    "iteration": iteration,
+                    "stem": stem,
+                    "name": scenario["name"],
+                    "result": "PASS" if report.get("pass") else "FAIL",
+                    "total_sec": report["total_sec"],
+                    "error": error,
+                    "report": str(report_path),
+                    "workdir_retained": report["workdir_retained"],
+                }
+            )
 
-        report["fresh_fleet"] = not args.dry_run
-        if environment_config:
-            report["environment_config"] = environment_config
-        report["total_sec"] = round(time.monotonic() - started, 1)
-        (output_dir / f"report_{stem}.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        rows.append(
+    (output_dir / "report.json").write_text(
+        json.dumps(
             {
-                "stem": stem,
-                "name": scenario["name"],
-                "result": "PASS" if report.get("pass") else "FAIL",
-                "total_sec": report["total_sec"],
-                "error": error,
-            }
-        )
-
-    summary = _summary(rows, args.external_qgc, args.sitl_backend)
+                "version": 2,
+                "qgc_mode": args.qgc_mode,
+                "sitl_backend": args.sitl_backend,
+                "repeat": args.repeat,
+                "keep_workdir": args.keep_workdir,
+                "results": rows,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    summary = _summary(rows, args.qgc_mode, args.sitl_backend, args.keep_workdir)
     (output_dir / "SUMMARY.md").write_text(summary, encoding="utf-8")
     print("\n" + summary)
     raise SystemExit(0 if all(row["result"] == "PASS" for row in rows) else 1)
