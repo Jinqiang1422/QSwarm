@@ -24,16 +24,18 @@
 `run_all.py` 对每个必测项只给出四种结果：`PASS`、`FAIL`、`BLOCKED`、`SKIP`。
 缺少 Qt、PX4、显示环境或外部模型时使用 `BLOCKED`，不会把未运行项目伪装成通过。
 
-| 层级 | 内容 | smoke | standard | full |
-|---|---|:---:|:---:|:---:|
-| L0 源码契约 | diff、格式、lint、场景/模板/CMake/Schema/XML 一致性 | ✓ | ✓ | ✓ |
-| L1 Python/算法 | 感知、几何、COP 真值、LLM 数据集 dry-run | ✓ | ✓ | ✓ |
-| L2 场景解析 | 8 个场景的动作识别和报告编排 | ✓ | ✓ | ✓ |
-| L3 C++ 模块 | P1/P2/P3、战术、管线、租约、持久化、COP |  | ✓ | ✓ |
-| L4 QGC 集成 | 容器内增量构建和 QGC Unit/Integration |  |  | ✓ |
-| L5 SITL/QGC | 8 机覆盖、编队、故障、租约、任务人工门控与中止 |  |  | ✓ |
-| L6 GUI/QML | 正常 GUI 中的 COP delegate、时延和地理误差 |  |  | ✓ |
-| L7 外部模型 | 559 条自然语言指令在线评测 |  |  | 可选 |
+| 层级 | 内容 | smoke | standard | full | qualification |
+|---|---|:---:|:---:|:---:|:---:|
+| L0 源码契约 | diff、格式、lint、场景/模板/CMake/Schema/XML 一致性 | ✓ | ✓ | ✓ | ✓ |
+| L1 Python/算法 | 感知、几何、COP 真值、LLM 数据集 dry-run | ✓ | ✓ | ✓ | ✓ |
+| L2 场景解析 | 8 个场景的动作识别和报告编排 | ✓ | ✓ | ✓ | ✓ |
+| L3 C++ 模块 | P1/P2/P3、战术、管线、租约、持久化、COP、容量门槛 |  | ✓ | ✓ | ✓ |
+| L4 QGC 集成 | 容器内增量构建、QGC Unit/Integration、进程生命周期 |  |  | ✓ | ✓ |
+| L5 SITL/QGC | 8 机覆盖、编队、故障、租约、任务人工门控与中止 |  |  | ✓ | ✓ |
+| L6 GUI/QML | runner 托管正常 GUI/Xvfb，验证 delegate、时延和地理误差 |  |  | ✓ | ✓ |
+| Q1 稳定性资格 | 生命周期 20 轮、Unit/Integration 50 轮、场景 03 20 轮 |  |  |  | ✓ |
+| Q2 发布资格 | 非测试 Release 构建及验收接口产物审计 |  |  |  | ✓ |
+| L7 外部模型 | 559 条自然语言指令在线评测 |  |  | 可选 | 可选 |
 
 ## 使用
 
@@ -54,9 +56,19 @@ python3 swarm_ext/tests/run_all.py --profile full \
 python3 swarm_ext/tests/run_all.py --profile full \
   --sitl-backend local --px4-src ~/PX4-Autopilot
 
-# 场景 06 必须提前启动正常 GUI QGC；令牌与 QGC 环境变量一致
+# 场景 06 默认由 runner 在隔离 Xvfb/HOME/端口中托管正常 GUI，无需人工启动
 python3 swarm_ext/tests/run_all.py --profile full \
-  --external-qgc --qgc-token "$QGC_SWARM_ACCEPTANCE_TOKEN"
+  --qgc-mode managed-gui --repeat 3 --keep-workdir on-failure
+
+# 连接人工启动的外部 GUI 时，双方使用同一个 owner-only Secret 文件
+umask 077
+openssl rand -hex 24 > /tmp/qgc-swarm-token
+python3 swarm_ext/tests/run_all.py --profile full --qgc-mode external \
+  --qgc-token-file /tmp/qgc-swarm-token
+
+# 发布前稳定性资格入口；每轮 CTest 都保存独立 JUnit/日志，首次失败即停
+python3 swarm_ext/tests/run_all.py --profile qualification \
+  --sitl-backend local --px4-src ~/PX4-Autopilot
 
 # 只跑指定项目
 python3 swarm_ext/tests/run_all.py --profile standard \
@@ -67,8 +79,10 @@ python3 swarm_ext/tests/run_all.py --profile standard \
 
 - `SUMMARY.md`：人可读结论；
 - `report.json`：机器可读结果；
+- `environment.json`：提交/Dirty 状态、宿主、Qt/CMake/GStreamer/PX4 与镜像摘要；
 - `logs/*.log`：每项测试的完整输出；
-- 分层子报告：场景、SITL、LLM 和资产契约的原始证据。
+- 分层子报告：场景、SITL、LLM 和资产契约的原始证据；
+- `report.json.artifacts`：成功证据的大小和 SHA-256 索引；失败场景另保留工作目录和截图。
 
 退出码约定：`0` 全部必测项通过，`1` 存在实际失败，`2` 存在环境阻塞。只有明确接受不完整
 证据时才使用 `--allow-blocked`。

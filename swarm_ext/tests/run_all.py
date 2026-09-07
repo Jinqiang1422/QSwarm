@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
 import os
-import secrets
+import platform
 import shlex
 import shutil
 import subprocess
@@ -20,12 +22,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWARM_ROOT = REPO_ROOT / "swarm_ext"
-PROFILE_LEVEL = {"smoke": 0, "standard": 1, "full": 2}
+sys.path.insert(0, str(SWARM_ROOT / "sim"))
+from qgc_acceptance import acceptance_secret_file  # noqa: E402
+
+PROFILE_LEVEL = {"smoke": 0, "standard": 1, "full": 2, "qualification": 3}
 PASS = "PASS"
 FAIL = "FAIL"
 BLOCKED = "BLOCKED"
 SKIP = "SKIP"
-SENSITIVE_ARGUMENTS = {"--api-key", "--qgc-token"}
+SENSITIVE_ARGUMENTS = {"--api-key", "--qgc-token-file"}
 
 
 Prerequisite = Callable
@@ -399,6 +404,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                     ],
                     qgc_mounts,
                     workdir="/project/source",
+                    user=f"{os.getuid()}:{os.getgid()}",
                 ),
                 timeout_sec=7200,
                 min_profile="full",
@@ -435,6 +441,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                     qgc_prerequisite,
                     _path_exists(build_dir / "Debug" / "QGroundControl", "QGC 测试可执行文件"),
                 ),
+                environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
             ),
             TestSpec(
                 "qgc.ctest_integration",
@@ -468,10 +475,33 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                     _path_exists(build_dir / "Debug" / "QGroundControl", "QGC 测试可执行文件"),
                 ),
             ),
+            TestSpec(
+                "qgc.lifecycle",
+                "L4 QGC 集成",
+                "验证 headless QGC 的 SIGINT/SIGTERM 退出、Secret 脱敏和资源清理",
+                [
+                    sys.executable,
+                    str(SWARM_ROOT / "sim" / "test_qgc_lifecycle.py"),
+                    "--build-dir",
+                    str(build_dir),
+                    "--token-file",
+                    str(Path(args.qgc_token_file).resolve()),
+                    "--early-interrupt",
+                    "--out",
+                    str(report_dir / "qgc-lifecycle"),
+                ],
+                timeout_sec=180,
+                min_profile="full",
+                prerequisite=_all_prerequisites(
+                    qgc_prerequisite,
+                    _path_exists(build_dir / "Debug" / "QGroundControl", "QGC 测试可执行文件"),
+                ),
+                environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+            ),
         ]
     )
 
-    token = args.qgc_token or secrets.token_urlsafe(24)
+    token_file = str(Path(args.qgc_token_file).resolve())
     px4_source = Path(args.px4_src).expanduser().resolve()
     local_px4 = px4_source / "build" / "px4_sitl_default" / "bin" / "px4"
     local_gz_env = px4_source / "build" / "px4_sitl_default" / "rootfs" / "gz_env.sh"
@@ -506,10 +536,16 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 str(px4_source),
                 "--qgc-build",
                 str(build_dir),
-                "--qgc-token",
-                token,
+                "--qgc-token-file",
+                token_file,
                 "--sitl-backend",
                 sitl_backend,
+                "--qgc-mode",
+                "managed-headless",
+                "--repeat",
+                str(args.repeat),
+                "--keep-workdir",
+                args.keep_workdir,
                 "--only",
                 "01,02,03,04,05,07,08",
                 "--out",
@@ -519,9 +555,33 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             timeout_sec=14400,
             min_profile="full",
             prerequisite=sitl_prerequisite,
+            environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
         )
     )
-    external_qgc_ok = bool(args.external_qgc and args.qgc_token)
+    if args.qgc_mode == "managed-gui":
+        qml_prerequisite = _all_prerequisites(
+            _executable("docker"),
+            _executable("Xvfb"),
+            _docker_image(args.container_image),
+            _path_exists(build_dir / "Debug" / "QGroundControl", "QGC 测试可执行文件"),
+        )
+    elif args.qgc_mode == "external":
+
+        def external_qml_prerequisite() -> tuple[bool, str]:
+            return (
+                args.qgc_token_file_supplied,
+                "已配置外部 GUI QGC"
+                if args.qgc_token_file_supplied
+                else "external 模式需要调用方提供 --qgc-token-file",
+            )
+
+        qml_prerequisite = external_qml_prerequisite
+    else:
+
+        def blocked_qml_prerequisite() -> tuple[bool, str]:
+            return False, "场景 06 需要 --qgc-mode managed-gui 或 external"
+
+        qml_prerequisite = blocked_qml_prerequisite
     specs.append(
         TestSpec(
             "sitl.qml_acceptance",
@@ -532,25 +592,26 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 "strict_regression.py",
                 "--only",
                 "06",
-                "--external-qgc",
+                "--qgc-mode",
+                args.qgc_mode,
                 "--qgc-host",
                 args.qgc_host,
                 "--qgc-port",
                 str(args.qgc_port),
-                "--qgc-token",
-                args.qgc_token,
+                "--qgc-token-file",
+                token_file,
+                "--repeat",
+                str(args.repeat),
+                "--keep-workdir",
+                args.keep_workdir,
                 "--out",
                 str(report_dir / "sitl-qml"),
             ],
             cwd=SWARM_ROOT / "sim",
             timeout_sec=1800,
             min_profile="full",
-            prerequisite=lambda: (
-                external_qgc_ok,
-                "已配置外部 GUI QGC"
-                if external_qgc_ok
-                else "场景 06 需要 --external-qgc 和 --qgc-token",
-            ),
+            prerequisite=qml_prerequisite,
+            environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
         )
     )
 
@@ -582,6 +643,236 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 ),
             )
         )
+
+    qualification_mounts = [
+        (REPO_ROOT, "/project/source", True),
+        (build_dir, "/project/build", False),
+        (report_dir, "/project/report", False),
+    ]
+    release_build_dir = Path(args.release_build_dir).resolve()
+    release_mounts = [
+        (REPO_ROOT, "/project/source", True),
+        (REPO_ROOT / ".cache" / "CPM", "/project/source/.cache/CPM", False),
+        (release_build_dir, "/project/release", False),
+    ]
+
+    def repeated_ctest_command(
+        output_name: str,
+        repeat: int,
+        jobs: int,
+        include_labels: str,
+        test_regex: str = "",
+    ) -> list[str]:
+        arguments = [
+            "/project/source/swarm_ext/tests/repeat_ctest.py",
+            "--build-dir",
+            "/project/build",
+            "--out",
+            f"/project/report/{output_name}",
+            "--repeat",
+            str(repeat),
+            "--jobs",
+            str(jobs),
+            "--include-labels",
+            include_labels,
+            "--exclude-labels",
+            "Flaky|Network",
+        ]
+        if test_regex:
+            arguments.extend(["--test-regex", test_regex])
+        return _container_command(
+            args.container_image,
+            "/usr/bin/python3",
+            arguments,
+            qualification_mounts,
+            workdir="/project/build",
+            user=f"{os.getuid()}:{os.getgid()}",
+        )
+
+    specs.extend(
+        [
+            TestSpec(
+                "qualification.release_configure",
+                "Q2 发布资格",
+                "配置不含测试接口的 Release 构建",
+                _container_command(
+                    args.container_image,
+                    "/opt/Qt/6.11.1/gcc_64/bin/qt-cmake",
+                    [
+                        "-S",
+                        "/project/source",
+                        "-B",
+                        "/project/release",
+                        "-G",
+                        "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        "-DQGC_BUILD_TESTING=OFF",
+                        "-DQGC_LINK_COMPILE_COMMANDS=OFF",
+                        "-DQT_QML_GENERATE_QMLLS_INI=OFF",
+                        "-DPython3_EXECUTABLE=/opt/qgc-venv/bin/python",
+                        "-DPython_EXECUTABLE=/opt/qgc-venv/bin/python",
+                    ],
+                    release_mounts,
+                    workdir="/project/source",
+                    environment={"CCACHE_DIR": "/project/release/.ccache"},
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=1800,
+                min_profile="qualification",
+                prerequisite=_docker_image(args.container_image),
+            ),
+            TestSpec(
+                "qualification.release_build",
+                "Q2 发布资格",
+                "编译非测试 Release QGC 产物",
+                _container_command(
+                    args.container_image,
+                    "/usr/bin/cmake",
+                    ["--build", "/project/release", "--parallel", str(args.jobs)],
+                    release_mounts,
+                    workdir="/project/source",
+                    environment={"CCACHE_DIR": "/project/release/.ccache"},
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=_path_exists(
+                    release_build_dir / "CMakeCache.txt", "Release CMakeCache"
+                ),
+            ),
+            TestSpec(
+                "qualification.release_audit",
+                "Q2 发布资格",
+                "验证 Release 产物不含验收服务符号、环境开关或端口入口",
+                [
+                    sys.executable,
+                    str(SWARM_ROOT / "tests" / "audit_release_artifact.py"),
+                    "--build-dir",
+                    str(release_build_dir),
+                    "--out",
+                    str(report_dir / "release-audit.json"),
+                ],
+                timeout_sec=300,
+                min_profile="qualification",
+                prerequisite=lambda: (
+                    any(
+                        path.is_file()
+                        for path in (
+                            release_build_dir / "Release" / "QGroundControl",
+                            release_build_dir / "QGroundControl",
+                        )
+                    ),
+                    "Release QGC 已构建"
+                    if any(
+                        path.is_file()
+                        for path in (
+                            release_build_dir / "Release" / "QGroundControl",
+                            release_build_dir / "QGroundControl",
+                        )
+                    )
+                    else f"缺少 Release QGC：{release_build_dir}",
+                ),
+            ),
+            TestSpec(
+                "qualification.lifecycle_20",
+                "Q1 稳定性资格",
+                "SIGINT/SIGTERM 各循环 20 次并检查 Secret 与资源残留",
+                [
+                    sys.executable,
+                    str(SWARM_ROOT / "sim" / "test_qgc_lifecycle.py"),
+                    "--build-dir",
+                    str(build_dir),
+                    "--token-file",
+                    token_file,
+                    "--iterations",
+                    "20",
+                    "--out",
+                    str(report_dir / "qualification-lifecycle-20"),
+                ],
+                timeout_sec=1800,
+                min_profile="qualification",
+                prerequisite=qgc_prerequisite,
+                environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+            ),
+            TestSpec(
+                "qualification.parameter_serial_20",
+                "Q1 稳定性资格",
+                "ParameterManagerTest 串行 20 轮，逐轮保存 JUnit 与日志",
+                repeated_ctest_command(
+                    "qualification-parameter-serial-20",
+                    20,
+                    1,
+                    "Integration",
+                    "^ParameterManagerTest$",
+                ),
+                timeout_sec=3600,
+                min_profile="qualification",
+                prerequisite=qgc_prerequisite,
+            ),
+            TestSpec(
+                "qualification.integration_parallel_50",
+                "Q1 稳定性资格",
+                "Integration 在 CI 并发度下执行 50 轮，覆盖 ParameterManager 并行压力",
+                repeated_ctest_command(
+                    "qualification-integration-parallel-50",
+                    50,
+                    args.jobs,
+                    "Integration",
+                ),
+                timeout_sec=14400,
+                min_profile="qualification",
+                prerequisite=qgc_prerequisite,
+            ),
+            TestSpec(
+                "qualification.unit_parallel_50",
+                "Q1 稳定性资格",
+                "Unit 在 CI 并发度下执行 50 轮，覆盖历史退出竞态",
+                repeated_ctest_command(
+                    "qualification-unit-parallel-50",
+                    50,
+                    args.jobs,
+                    "Unit",
+                ),
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=qgc_prerequisite,
+            ),
+            TestSpec(
+                "qualification.scenario03_20",
+                "Q1 稳定性资格",
+                "场景 03 使用全新机队和工作目录执行 20 轮",
+                [
+                    sys.executable,
+                    "strict_regression.py",
+                    "--px4-src",
+                    str(px4_source),
+                    "--qgc-build",
+                    str(build_dir),
+                    "--qgc-token-file",
+                    token_file,
+                    "--sitl-backend",
+                    sitl_backend,
+                    "--qgc-mode",
+                    "managed-headless",
+                    "--only",
+                    "03",
+                    "--repeat",
+                    "20",
+                    "--ready-timeout",
+                    "180",
+                    "--keep-workdir",
+                    args.keep_workdir,
+                    "--out",
+                    str(report_dir / "qualification-scenario03-20"),
+                ],
+                cwd=SWARM_ROOT / "sim",
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=sitl_prerequisite,
+                environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+            ),
+        ]
+    )
     return specs
 
 
@@ -642,6 +933,111 @@ def _run_spec(spec: TestSpec, logs_dir: Path) -> TestResult:
     )
 
 
+def _capture(command: list[str], cwd: Path = REPO_ROOT) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _first_line(command: list[str], cwd: Path = REPO_ROOT) -> str:
+    output = _capture(command, cwd)
+    return output.splitlines()[0] if output else ""
+
+
+def _cache_value(cache_path: Path, key: str) -> str:
+    if not cache_path.is_file():
+        return ""
+    prefix = f"{key}:"
+    for line in cache_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(prefix):
+            return line.split("=", 1)[-1]
+    return ""
+
+
+def _environment_manifest(args: argparse.Namespace) -> dict:
+    cache_path = Path(args.build_dir).resolve() / "CMakeCache.txt"
+    px4_source = Path(args.px4_src).expanduser().resolve()
+    image_json = _capture(
+        [
+            "docker",
+            "image",
+            "inspect",
+            args.container_image,
+            "--format",
+            "{{json .}}",
+        ]
+    )
+    image = {}
+    if image_json:
+        with contextlib.suppress(json.JSONDecodeError):
+            image_info = json.loads(image_json)
+            image = {
+                "id": image_info.get("Id", ""),
+                "repo_digests": image_info.get("RepoDigests", []),
+            }
+    return {
+        "git": {
+            "commit": _capture(["git", "rev-parse", "HEAD"]),
+            "dirty": bool(_capture(["git", "status", "--porcelain=v1", "--untracked-files=no"])),
+        },
+        "host": {
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "cpu_count": os.cpu_count(),
+        },
+        "tools": {
+            "cmake": _first_line(["cmake", "--version"]),
+            "docker": _first_line(["docker", "--version"]),
+            "ruff": _first_line(["ruff", "--version"]),
+            "clang_format": _first_line(["clang-format", "--version"]),
+            "gstreamer": _capture(["pkg-config", "--modversion", "gstreamer-1.0"]),
+        },
+        "qgc_build": {
+            "directory": str(Path(args.build_dir).resolve()),
+            "qt_root": _cache_value(cache_path, "Qt6Core_DIR"),
+            "compiler": _cache_value(cache_path, "CMAKE_CXX_COMPILER"),
+            "gstreamer_root": _cache_value(cache_path, "GStreamer_ROOT_DIR"),
+        },
+        "px4": {
+            "directory": str(px4_source),
+            "commit": _capture(["git", "rev-parse", "HEAD"], px4_source)
+            if px4_source.is_dir()
+            else "",
+        },
+        "container_image": {"name": args.container_image, **image},
+    }
+
+
+def _artifact_index(report_dir: Path) -> list[dict]:
+    artifacts = []
+    for path in sorted(report_dir.rglob("*")):
+        if not path.is_file() or "cpp-build" in path.relative_to(report_dir).parts:
+            continue
+        if "work" in path.relative_to(report_dir).parts:
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as artifact:
+            for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+                digest.update(chunk)
+        artifacts.append(
+            {
+                "path": str(path.relative_to(report_dir)),
+                "size_bytes": path.stat().st_size,
+                "sha256": digest.hexdigest(),
+            }
+        )
+    return artifacts
+
+
 def _write_reports(
     report_dir: Path, args: argparse.Namespace, results: list[TestResult], started_at: str
 ) -> None:
@@ -649,14 +1045,20 @@ def _write_reports(
         status: sum(result.status == status for result in results)
         for status in (PASS, FAIL, BLOCKED, SKIP)
     }
+    environment = _environment_manifest(args)
+    (report_dir / "environment.json").write_text(
+        json.dumps(environment, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     payload = {
-        "version": 1,
+        "version": 2,
         "profile": args.profile,
         "started_at": started_at,
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "repository": str(REPO_ROOT),
+        "environment": environment,
         "counts": counts,
         "results": [asdict(result) for result in results],
+        "artifacts": _artifact_index(report_dir),
     }
     (report_dir / "report.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -665,6 +1067,8 @@ def _write_reports(
         "# QGC Swarm 全面测试报告",
         "",
         f"- Profile: `{args.profile}`",
+        f"- Commit: `{environment['git']['commit']}`（dirty={str(environment['git']['dirty']).lower()}）",
+        f"- 场景重复次数：`{args.repeat}`；QGC GUI 模式：`{args.qgc_mode}`；工作目录：`{args.keep_workdir}`",
         f"- 结果：PASS {counts[PASS]} / FAIL {counts[FAIL]} / BLOCKED {counts[BLOCKED]} / SKIP {counts[SKIP]}",
         "",
         "| 层级 | 测试 | 结果 | 耗时(s) | 说明 |",
@@ -690,42 +1094,14 @@ def _write_reports(
     (report_dir / "SUMMARY.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--profile", choices=sorted(PROFILE_LEVEL, key=PROFILE_LEVEL.get), default="standard"
-    )
-    parser.add_argument("--report-dir", default="")
-    parser.add_argument("--build-dir", default=str(REPO_ROOT / "build"))
-    parser.add_argument("--qt-root", default="")
-    parser.add_argument("--container-image", default="qgc-ubuntu-docker:latest")
-    parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 2))
-    parser.add_argument("--px4-src", default=str(Path.home() / "PX4-Autopilot"))
-    parser.add_argument(
-        "--sitl-backend",
-        choices=("auto", "official", "local"),
-        default="auto",
-        help="SITL 后端；auto 优先复用已构建的本地 PX4/gz",
-    )
-    parser.add_argument("--qgc-host", default="127.0.0.1")
-    parser.add_argument("--qgc-port", type=int, default=15610)
-    parser.add_argument("--qgc-token", default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN", ""))
-    parser.add_argument("--external-qgc", action="store_true")
-    parser.add_argument("--with-llm", action="store_true")
-    parser.add_argument("--llm-base-url", default=os.environ.get("SWARM_LLM_BASE_URL", ""))
-    parser.add_argument("--llm-api-key", default=os.environ.get("SWARM_LLM_API_KEY", ""))
-    parser.add_argument("--llm-model", default=os.environ.get("SWARM_LLM_MODEL", ""))
-    parser.add_argument("--only", default="", help="逗号分隔测试 ID")
-    parser.add_argument("--list", action="store_true", help="列出所选 profile 的测试而不执行")
-    parser.add_argument("--allow-blocked", action="store_true")
-    args = parser.parse_args()
-    if args.jobs < 1:
-        parser.error("--jobs 必须大于 0")
+def _execute(args: argparse.Namespace) -> int:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     report_dir = Path(args.report_dir or f"/tmp/qgc-swarm-tests-{timestamp}").resolve()
     report_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = report_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+    if args.profile == "qualification":
+        Path(args.release_build_dir).resolve().mkdir(parents=True, exist_ok=True)
     specs = [
         spec
         for spec in _build_specs(args, report_dir)
@@ -735,7 +1111,7 @@ def main() -> int:
         selected = {item.strip() for item in args.only.split(",") if item.strip()}
         unknown = selected - {spec.test_id for spec in specs}
         if unknown:
-            parser.error(f"未知或不属于当前 profile 的测试：{', '.join(sorted(unknown))}")
+            raise ValueError(f"未知或不属于当前 profile 的测试：{', '.join(sorted(unknown))}")
         specs = [spec for spec in specs if spec.test_id in selected]
     if args.list:
         for spec in specs:
@@ -759,6 +1135,65 @@ def main() -> int:
     ):
         return 2
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile", choices=sorted(PROFILE_LEVEL, key=PROFILE_LEVEL.get), default="standard"
+    )
+    parser.add_argument("--report-dir", default="")
+    parser.add_argument("--build-dir", default=str(REPO_ROOT / "build"))
+    parser.add_argument("--release-build-dir", default=str(REPO_ROOT / "build-release"))
+    parser.add_argument("--qt-root", default="")
+    parser.add_argument("--container-image", default="qgc-ubuntu-docker:latest")
+    parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 2))
+    parser.add_argument("--px4-src", default=str(Path.home() / "PX4-Autopilot"))
+    parser.add_argument(
+        "--sitl-backend",
+        choices=("auto", "official", "local"),
+        default="auto",
+        help="SITL 后端；auto 优先复用已构建的本地 PX4/gz",
+    )
+    parser.add_argument("--qgc-host", default="127.0.0.1")
+    parser.add_argument("--qgc-port", type=int, default=15610)
+    parser.add_argument(
+        "--qgc-token-file",
+        default=os.environ.get("QGC_SWARM_ACCEPTANCE_TOKEN_FILE", ""),
+    )
+    parser.add_argument(
+        "--qgc-mode",
+        choices=("managed-headless", "managed-gui", "external"),
+        default="managed-gui",
+    )
+    parser.add_argument("--external-qgc", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--repeat", type=int, default=1, help="每个 SITL/QML 场景的重复次数")
+    parser.add_argument(
+        "--keep-workdir",
+        choices=("always", "on-failure", "never"),
+        default="on-failure",
+    )
+    parser.add_argument("--with-llm", action="store_true")
+    parser.add_argument("--llm-base-url", default=os.environ.get("SWARM_LLM_BASE_URL", ""))
+    parser.add_argument("--llm-api-key", default=os.environ.get("SWARM_LLM_API_KEY", ""))
+    parser.add_argument("--llm-model", default=os.environ.get("SWARM_LLM_MODEL", ""))
+    parser.add_argument("--only", default="", help="逗号分隔测试 ID")
+    parser.add_argument("--list", action="store_true", help="列出所选 profile 的测试而不执行")
+    parser.add_argument("--allow-blocked", action="store_true")
+    args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs 必须大于 0")
+    if args.repeat < 1:
+        parser.error("--repeat 必须大于 0")
+    if args.external_qgc:
+        args.qgc_mode = "external"
+    args.qgc_token_file_supplied = bool(args.qgc_token_file)
+    try:
+        with acceptance_secret_file(args.qgc_token_file) as token_file:
+            args.qgc_token_file = str(token_file)
+            return _execute(args)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":
