@@ -11,6 +11,7 @@ class QGCCacheWorkerTest : public UnitTest
 private slots:
     void initTestCase() override;
     void _testStartAndStop();
+    void _testImmediateStopAfterStart();
     void _testEnqueueBeforeInit();
     void _testUpdateTotalsOnInit();
     void _testSaveAndFetchTile();

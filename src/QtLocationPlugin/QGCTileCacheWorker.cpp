@@ -40,12 +40,10 @@ QGCCacheWorker::~QGCCacheWorker()
 
 void QGCCacheWorker::stop()
 {
-    _stopRequested = true;
     QMutexLocker lock(&_taskQueueMutex);
+    _stopRequested = true;
     qDeleteAll(_taskQueue);
     _taskQueue.clear();
-    lock.unlock();
-
     if (isRunning()) {
         _waitc.wakeAll();
     }
@@ -60,8 +58,10 @@ bool QGCCacheWorker::enqueueTask(QGCMapTask *task)
     }
 
     QMutexLocker lock(&_taskQueueMutex);
+    if (!isRunning()) {
+        _stopRequested = false;
+    }
     _taskQueue.enqueue(task);
-    lock.unlock();
 
     if (isRunning()) {
         _waitc.wakeAll();
@@ -74,7 +74,6 @@ bool QGCCacheWorker::enqueueTask(QGCMapTask *task)
 
 void QGCCacheWorker::run()
 {
-    _stopRequested = false;
     _database = std::make_unique<QGCTileCacheDatabase>(_databasePath);
 
     if (!_database->init()) {

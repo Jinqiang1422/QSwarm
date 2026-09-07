@@ -57,6 +57,19 @@ void QGCCacheWorkerTest::_testStartAndStop()
     QVERIFY(!worker.isRunning());
 }
 
+void QGCCacheWorkerTest::_testImmediateStopAfterStart()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        QGCCacheWorker worker;
+        worker.setDatabaseFile(tempDir.filePath(QStringLiteral("immediate_stop_%1.db").arg(iteration)));
+        QVERIFY(worker.enqueueTask(new QGCMapTask(QGCMapTask::TaskType::taskInit)));
+        worker.stop();
+        QVERIFY2(worker.wait(TestTimeout::mediumMs()), "worker did not stop after an immediate start/stop sequence");
+    }
+}
+
 void QGCCacheWorkerTest::_testEnqueueBeforeInit()
 {
     QTemporaryDir tempDir;
