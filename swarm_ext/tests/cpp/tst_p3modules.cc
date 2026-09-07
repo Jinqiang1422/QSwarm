@@ -35,6 +35,7 @@ class tst_p3modules : public QObject
 private slots:
     void fusion_crossSensorMerge();
     void fusion_separateTargets();
+    void fusion_stableSourceIdentity();
     void fusion_lifecycle();
     void fusion_rejectsInvalidLatLon();
     void fusion_dropsLowConfidence();
@@ -81,6 +82,19 @@ void tst_p3modules::fusion_separateTargets()
     SwarmTrackFusion fusion;
     fusion.ingest(makeReport(1, 1, 39.90000, 116.40000), 1000);
     fusion.ingest(makeReport(2, 1, 39.90200, 116.40000), 1000);  // 相距 ~220m
+    QCOMPARE(fusion.allTracks().count(), 2);
+}
+
+void tst_p3modules::fusion_stableSourceIdentity()
+{
+    SwarmTrackFusion fusion;
+    const int firstId = fusion.ingest(makeReport(1, 1, 39.90000, 116.40000), 1000);
+    const int secondId = fusion.ingest(makeReport(2, 1, 39.90200, 116.40000), 1000);
+    QVERIFY(firstId != secondId);
+
+    // A stable upstream identity must not jump to a nearby fused track when targets cross.
+    const int updatedId = fusion.ingest(makeReport(1, 1, 39.90199, 116.40000), 1100);
+    QCOMPARE(updatedId, firstId);
     QCOMPARE(fusion.allTracks().count(), 2);
 }
 

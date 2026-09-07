@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <QtCore/QHash>
 #include <QtCore/QList>
 #include <QtCore/QSet>
 #include <QtCore/QString>
@@ -78,6 +79,9 @@ public:
     /// 周期维护：状态迁移与过期删除（建议 ≥2Hz 调用）
     void prune(qint64 monoMs);
 
+    /// 清空当前融合会话；保留配置，但重置参考点、ID 和诊断计数。
+    void clear();
+
     /// 统一目标清单（confirmed + coasting，供 COP 显示与事件检测）
     QList<FusedTrack> tracks() const;
 
@@ -92,10 +96,14 @@ public:
 
 private:
     int _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
+    static quint64 _sourceKey(int sensorId, int trackId);
+    void _rebuildTrackIndexes();
     void _localToGeo(double eastM, double northM, double& lat, double& lon) const;
 
     Config _cfg;
     QList<FusedTrack> _tracks;
+    QHash<quint64, int> _sourceAssociations;  ///< (sensorId, trackId) → fusedId
+    QHash<int, int> _trackIndexes;            ///< fusedId → _tracks index
     double _refLat = 0.0, _refLon = 0.0;
     bool _refSet = false;
     int _nextFusedId = 1;

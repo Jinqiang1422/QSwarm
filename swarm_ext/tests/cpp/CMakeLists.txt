@@ -129,3 +129,19 @@ add_executable(
 target_include_directories(tst_cop PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_cop PRIVATE Qt6::Core Qt6::Network Qt6::Positioning Qt6::Qml Qt6::Test)
 add_test(NAME cop COMMAND tst_cop)
+
+# --- 本地容量门槛（PT-008 / PT-012 的确定性突发负载部分） ---
+add_executable(
+    tst_performance
+    tst_performance.cc
+    ${SWARM_SRC}/SwarmAuditLogger.cc
+    ${SWARM_SRC}/SwarmAuditLogger.h
+    ${SWARM_SRC}/SwarmCOPModel.cc
+    ${SWARM_SRC}/SwarmCOPModel.h
+    ${SWARM_SRC}/SwarmTrackFusion.cc
+    ${SWARM_SRC}/SwarmTrackFusion.h
+    ${SWARM_SRC}/SwarmTypes.h
+)
+target_include_directories(tst_performance PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_performance PRIVATE Qt6::Core Qt6::Positioning Qt6::Test)
+add_test(NAME performance COMMAND tst_performance)

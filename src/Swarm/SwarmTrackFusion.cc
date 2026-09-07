@@ -64,6 +64,28 @@ int SwarmTrackFusion::_associate(double eastM, double northM, qint64 monoMs) con
     return bestIdx;
 }
 
+quint64 SwarmTrackFusion::_sourceKey(int sensorId, int trackId)
+{
+    return (quint64(quint32(sensorId)) << 32) | quint32(trackId);
+}
+
+void SwarmTrackFusion::_rebuildTrackIndexes()
+{
+    _trackIndexes.clear();
+    _trackIndexes.reserve(_tracks.size());
+    for (int index = 0; index < _tracks.size(); ++index) {
+        _trackIndexes.insert(_tracks.at(index).fusedId, index);
+    }
+
+    for (auto it = _sourceAssociations.begin(); it != _sourceAssociations.end();) {
+        if (_trackIndexes.contains(it.value())) {
+            ++it;
+        } else {
+            it = _sourceAssociations.erase(it);
+        }
+    }
+}
+
 void SwarmTrackFusion::_localToGeo(double eastM, double northM, double& lat, double& lon) const
 {
     lat = _refLat + northM / 110540.0;
@@ -85,7 +107,20 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
     double eastM, northM;
     SwarmTypes::latLonToLocalM(_refLat, _refLon, r.lat, r.lon, eastM, northM);
 
-    const int idx = _associate(eastM, northM, monoMs);
+    const quint64 sourceKey = _sourceKey(r.sensorId, r.trackId);
+    int idx = -1;
+    const int knownFusedId = _sourceAssociations.value(sourceKey, -1);
+    const int knownIndex = _trackIndexes.value(knownFusedId, -1);
+    if (knownIndex >= 0 && knownIndex < _tracks.size()) {
+        const FusedTrack& knownTrack = _tracks.at(knownIndex);
+        if (knownTrack.fusedId == knownFusedId && monoMs - knownTrack.lastSeenMs <= _cfg.dropMs) {
+            idx = knownIndex;
+        }
+    }
+    if (idx < 0) {
+        _sourceAssociations.remove(sourceKey);
+        idx = _associate(eastM, northM, monoMs);
+    }
     if (idx < 0) {  // 新建融合航迹
         FusedTrack t;
         t.fusedId = _nextFusedId++;
@@ -102,10 +137,13 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
         t.lastSeenMs = monoMs;
         t.state = QStringLiteral("tentative");
         _tracks.append(t);
+        _trackIndexes.insert(t.fusedId, _tracks.size() - 1);
+        _sourceAssociations.insert(sourceKey, t.fusedId);
         return t.fusedId;
     }
 
     FusedTrack& t = _tracks[idx];
+    _sourceAssociations.insert(sourceKey, t.fusedId);
     // 置信度加权融合（权重 = 上报置信度，融合置信度递推）
     const double w = qBound(0.05, r.confidence, 1.0);
     const double k = w / (t.confidence + w);  // 归一化新息权重
@@ -149,6 +187,19 @@ void SwarmTrackFusion::prune(qint64 monoMs)
             _tracks.removeAt(i);
         }
     }
+    _rebuildTrackIndexes();
+}
+
+void SwarmTrackFusion::clear()
+{
+    _tracks.clear();
+    _sourceAssociations.clear();
+    _trackIndexes.clear();
+    _refLat = 0.0;
+    _refLon = 0.0;
+    _refSet = false;
+    _nextFusedId = 1;
+    _rejectedCount = 0;
 }
 
 QList<SwarmTrackFusion::FusedTrack> SwarmTrackFusion::tracks() const
