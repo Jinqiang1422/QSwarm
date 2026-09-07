@@ -65,6 +65,8 @@ public:
     explicit SwarmAIAgent(SwarmManager* swarmManager);
     ~SwarmAIAgent();
 
+    void shutdown();
+
     QString apiBaseUrl() const { return _apiBaseUrl; }
 
     void setApiBaseUrl(const QString& url);

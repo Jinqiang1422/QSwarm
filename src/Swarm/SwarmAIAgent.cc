@@ -89,6 +89,17 @@ void SwarmAIAgent::setSituationIntervalSec(int sec)
 
 SwarmAIAgent::~SwarmAIAgent() = default;
 
+void SwarmAIAgent::shutdown()
+{
+    _situationTimer->stop();
+    if (_reply) {
+        (void) QObject::disconnect(_reply, nullptr, this, nullptr);
+        _reply->abort();
+        _reply->deleteLater();
+        _reply = nullptr;
+    }
+}
+
 void SwarmAIAgent::setApiBaseUrl(const QString& url)
 {
     if (_apiBaseUrl != url) {

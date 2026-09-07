@@ -119,6 +119,25 @@ void SwarmManager::init()
 #endif
 }
 
+void SwarmManager::shutdown()
+{
+    if (_shutdownComplete) {
+        return;
+    }
+    _shutdownComplete = true;
+
+    _formation->stop();
+    _taskController->shutdown();
+    _aiAgent->shutdown();
+    _perceptionTimer->stop();
+    _perception->stop();
+#ifdef QGC_UNITTEST_BUILD
+    if (_acceptanceServer) {
+        _acceptanceServer->stop();
+    }
+#endif
+}
+
 QmlObjectListModel* SwarmManager::vehicles() const
 {
     return MultiVehicleManager::instance()->vehicles();

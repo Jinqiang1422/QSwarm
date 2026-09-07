@@ -148,6 +148,8 @@ private:
     QElapsedTimer _msecsElapsedTime;
     bool _videoManagerInitialized = false;
     bool _bootTestPassed = true;
+    bool _headlessAcceptanceBoot = false;
+    bool _shutdownComplete = false;
 
     QList<QPair<QString /* title */, QString /* message */>> _delayedAppMessages;
 

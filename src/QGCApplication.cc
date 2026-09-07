@@ -303,7 +303,8 @@ void QGCApplication::_initForNormalAppBoot()
     // vehicle/mission/lease integration tests usable on CI hosts without a functional scene graph.
     // Rendering acceptance still requires a normal GUI boot and is reported separately by the API.
     if (qEnvironmentVariableIntValue("QGC_SWARM_ACCEPTANCE_HEADLESS") == 1 &&
-        !qEnvironmentVariableIsEmpty("QGC_SWARM_ACCEPTANCE_TOKEN")) {
+        !qEnvironmentVariableIsEmpty("QGC_SWARM_ACCEPTANCE_TOKEN_FILE")) {
+        _headlessAcceptanceBoot = true;
         QGCCorePlugin::instance()->init();
         MAVLinkProtocol::instance()->init();
         MultiVehicleManager::instance()->init();
@@ -751,7 +752,18 @@ QGCImageProvider* QGCApplication::qgcImageProvider()
 
 void QGCApplication::shutdown()
 {
+    if (_shutdownComplete) {
+        return;
+    }
+    _shutdownComplete = true;
+
     qCDebug(QGCApplicationLog) << "Exit";
+
+    if (_headlessAcceptanceBoot) {
+        SwarmManager::instance()->shutdown();
+        LinkManager::instance()->shutdown();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
 
     if (_videoManagerInitialized) {
         VideoManager::instance()->cleanup();
@@ -795,4 +807,5 @@ void QGCApplication::shutdown()
 
     // This is bad, but currently qobject inheritances are incorrect and cause crashes on exit without
     delete _qmlAppEngine;
+    _qmlAppEngine = nullptr;
 }

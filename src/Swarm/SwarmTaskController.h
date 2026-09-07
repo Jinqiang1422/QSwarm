@@ -53,6 +53,8 @@ public:
     explicit SwarmTaskController(SwarmManager* swarmManager);
     ~SwarmTaskController();
 
+    void shutdown();
+
     /// 一个任务阶段：进入时执行 actions，之后由状态机监控 complete_when 条件
     struct Stage
     {

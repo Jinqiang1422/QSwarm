@@ -1,15 +1,21 @@
 #include "SwarmAcceptanceServer.h"
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonParseError>
 #include <QtCore/QSet>
+#include <QtCore/QTimer>
 #include <QtCore/QVariantMap>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QWindow>
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
+#include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
 
 #include "Fact.h"
 #include "FirmwarePlugin.h"
@@ -27,7 +33,8 @@
 
 namespace {
 constexpr int kDefaultAcceptancePort = 15610;
-constexpr int kMinimumTokenLength = 16;
+constexpr qsizetype kMinimumTokenBytes = 16;
+constexpr qsizetype kMaximumTokenBytes = 512;
 constexpr qsizetype kMaximumRequestBytes = 64 * 1024;
 
 QJsonObject errorResponse(const QString& error)
@@ -40,6 +47,44 @@ QGeoCoordinate requestCoordinate(const QJsonObject& request)
     return {request.value(QStringLiteral("center_lat")).toDouble(),
             request.value(QStringLiteral("center_lon")).toDouble()};
 }
+
+QString readAcceptanceToken()
+{
+    const QString path = qEnvironmentVariable("QGC_SWARM_ACCEPTANCE_TOKEN_FILE");
+    if (path.isEmpty()) {
+        return {};
+    }
+
+    const QFileInfo fileInfo(path);
+    if (!fileInfo.isFile() || fileInfo.isSymLink()) {
+        return {};
+    }
+    constexpr QFileDevice::Permissions unsafePermissions = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
+                                                           QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                                           QFileDevice::WriteOther | QFileDevice::ExeOther;
+    const QFileDevice::Permissions permissions = fileInfo.permissions();
+    if (!(permissions & QFileDevice::ReadOwner) || (permissions & unsafePermissions)) {
+        return {};
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QByteArray encoded = file.read(kMaximumTokenBytes + 3);
+    if (encoded.endsWith("\r\n")) {
+        encoded.chop(2);
+    } else if (encoded.endsWith('\n')) {
+        encoded.chop(1);
+    }
+    if (encoded.size() < kMinimumTokenBytes || encoded.size() > kMaximumTokenBytes || encoded.contains('\0') ||
+        encoded.contains('\r') || encoded.contains('\n')) {
+        return {};
+    }
+
+    const QString token = QString::fromUtf8(encoded);
+    return token.toUtf8() == encoded ? token : QString();
+}
 }  // namespace
 
 SwarmAcceptanceServer::SwarmAcceptanceServer(SwarmManager* manager)
@@ -50,8 +95,8 @@ SwarmAcceptanceServer::SwarmAcceptanceServer(SwarmManager* manager)
 
 bool SwarmAcceptanceServer::startFromEnvironment()
 {
-    _token = qEnvironmentVariable("QGC_SWARM_ACCEPTANCE_TOKEN");
-    if (_token.size() < kMinimumTokenLength) {
+    _token = readAcceptanceToken();
+    if (_token.isEmpty()) {
         return false;
     }
 
@@ -64,6 +109,22 @@ bool SwarmAcceptanceServer::startFromEnvironment()
         return false;
     }
     return _server->listen(QHostAddress::LocalHost, quint16(port));
+}
+
+void SwarmAcceptanceServer::stop()
+{
+    _server->close();
+    const QList<QTcpSocket*> sockets = _buffers.keys();
+    _buffers.clear();
+    for (QTcpSocket* socket : sockets) {
+        if (!socket) {
+            continue;
+        }
+        (void) QObject::disconnect(socket, nullptr, this, nullptr);
+        socket->abort();
+        socket->deleteLater();
+    }
+    _token.clear();
 }
 
 void SwarmAcceptanceServer::_onNewConnection()
@@ -124,6 +185,10 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
     const QString command = request.value(QStringLiteral("command")).toString();
     if (command == QStringLiteral("status")) {
         return _status();
+    }
+    if (command == QStringLiteral("quit")) {
+        QTimer::singleShot(0, QCoreApplication::instance(), &QCoreApplication::quit);
+        return {{QStringLiteral("ok"), true}};
     }
     if (command == QStringLiteral("configure_px4_sitl")) {
         return _configurePX4SITL();
@@ -384,32 +449,40 @@ QJsonObject SwarmAcceptanceServer::_status() const
 QJsonObject SwarmAcceptanceServer::_renderedItemCounts() const
 {
     int situationLayers = 0;
-    int tracks = 0;
     int heatmap = 0;
     int threats = 0;
+    QSet<const QQuickItem*> visitedItems;
+    QSet<QString> visibleTrackIds;
+
+    const auto countVisualItems = [&](const auto& self, QQuickItem* item) -> void {
+        if (!item || visitedItems.contains(item) || !item->isVisible()) {
+            return;
+        }
+        visitedItems.insert(item);
+        const QString name = item->objectName();
+        if (name == QStringLiteral("swarmSituationLayer")) {
+            ++situationLayers;
+        } else if (name.startsWith(QStringLiteral("swarmTrackMarker_"))) {
+            visibleTrackIds.insert(name);
+        } else if (name == QStringLiteral("swarmHeatmapCell")) {
+            ++heatmap;
+        } else if (name == QStringLiteral("swarmThreatZone")) {
+            ++threats;
+        }
+        for (QQuickItem* child : item->childItems()) {
+            self(self, child);
+        }
+    };
+
     for (QWindow* window : QGuiApplication::topLevelWindows()) {
-        if (!window) {
+        QQuickWindow* quickWindow = qobject_cast<QQuickWindow*>(window);
+        if (!quickWindow || !quickWindow->isVisible()) {
             continue;
         }
-        const QList<QObject*> objects = window->findChildren<QObject*>();
-        for (QObject* object : objects) {
-            if (!object) {
-                continue;
-            }
-            const QString name = object->objectName();
-            if (name == QStringLiteral("swarmSituationLayer")) {
-                ++situationLayers;
-            } else if (name.startsWith(QStringLiteral("swarmTrackMarker_"))) {
-                ++tracks;
-            } else if (name == QStringLiteral("swarmHeatmapCell")) {
-                ++heatmap;
-            } else if (name == QStringLiteral("swarmThreatZone")) {
-                ++threats;
-            }
-        }
+        countVisualItems(countVisualItems, quickWindow->contentItem());
     }
     return {{QStringLiteral("situation_layers"), situationLayers},
-            {QStringLiteral("tracks"), tracks},
+            {QStringLiteral("tracks"), visibleTrackIds.size()},
             {QStringLiteral("heatmap"), heatmap},
             {QStringLiteral("threats"), threats}};
 }

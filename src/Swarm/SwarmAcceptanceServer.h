@@ -8,19 +8,23 @@
 class QTcpServer;
 class QTcpSocket;
 class SwarmManager;
+class SwarmSituationLayerUITest;
 
 /// Loopback-only acceptance interface for test-capable QGC builds.
 ///
-/// The server remains disabled unless QGC_SWARM_ACCEPTANCE_TOKEN contains at least 16 characters.
+/// The server remains disabled unless QGC_SWARM_ACCEPTANCE_TOKEN_FILE names a valid owner-only secret file.
 /// Requests are newline-delimited JSON and must carry the same token. Production builds do not compile this class.
 class SwarmAcceptanceServer : public QObject
 {
     Q_OBJECT
 
+    friend class SwarmSituationLayerUITest;
+
 public:
     explicit SwarmAcceptanceServer(SwarmManager* manager);
 
     bool startFromEnvironment();
+    void stop();
 
 private slots:
     void _onNewConnection();

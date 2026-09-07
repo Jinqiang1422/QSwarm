@@ -87,6 +87,7 @@ public:
 
     static SwarmManager* instance();
     void init();
+    void shutdown();
 
     QmlObjectListModel* vehicles() const;
     QmlObjectListModel* selectedVehicles() const;
@@ -274,6 +275,7 @@ private:
     QStringList _l3AllowedTypes;            ///< L3 限定域自主白名单（动作类型）
     SwarmControlLease _lease;               ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     bool _automationDispatchInProgress = false;
+    bool _shutdownComplete = false;
     FormationController* _formation = nullptr;
     SwarmMissionPlanner* _missionPlanner = nullptr;
     SwarmAIAgent* _aiAgent = nullptr;

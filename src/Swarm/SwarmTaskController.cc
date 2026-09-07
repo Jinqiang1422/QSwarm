@@ -55,6 +55,12 @@ SwarmTaskController::SwarmTaskController(SwarmManager* swarmManager)
 
 SwarmTaskController::~SwarmTaskController() = default;
 
+void SwarmTaskController::shutdown()
+{
+    _tickTimer.stop();
+    _running = false;
+}
+
 QString SwarmTaskController::currentStageName() const
 {
     if (_currentStage >= 0 && _currentStage < _stages.count()) {
