@@ -62,11 +62,11 @@ public:
     /// @param angleDeg        航线方向方位角（度，0=北，90=东）
     /// @param assignMode      条带分配方式：sequential（id 升序，默认）/ auction（集中式拍卖，WP2.4）/
     /// cbba（分布式一致性拍卖）
-    Q_INVOKABLE bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
-                                           double angleDeg, const QString& assignMode = QStringLiteral("sequential"));
+    bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters, double angleDeg,
+                               const QString& assignMode = QStringLiteral("sequential"));
 
     /// 清空全部目标车辆上的任务
-    Q_INVOKABLE void clearAllMissions();
+    void clearAllMissions();
 
     /// 构建单架机的区域覆盖任务项序列（起飞→航点→返航）。
     /// 与上传逻辑分离，供预览/测试/其他调用方复用；调用方负责释放返回的 MissionItem。

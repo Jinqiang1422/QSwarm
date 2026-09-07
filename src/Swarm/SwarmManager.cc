@@ -35,12 +35,99 @@
 #include "SwarmTaskLibrary.h"
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
+#include "VehicleLinkManager.h"
 
 #ifdef QGC_UNITTEST_BUILD
 #include "SwarmAcceptanceServer.h"
 #endif
 
 namespace {
+QString validateActionInput(const QJsonObject& obj)
+{
+    const QString type = obj.value(QStringLiteral("type")).toString();
+    QMap<QString, QPair<double, double>> numbers;
+    QStringList required;
+    QStringList extra;
+    if (type == QStringLiteral("takeoff")) {
+        numbers = {{"altitude", {2, 120}}};
+        required = {"altitude"};
+    } else if (type == QStringLiteral("arm")) {
+        extra = {"arm"};
+        if (!obj.value(QStringLiteral("arm")).isBool())
+            return QStringLiteral("arm 必须为布尔值");
+    } else if (type == QStringLiteral("set_selection")) {
+        extra = {"vehicle_ids"};
+        const auto ids = obj.value(QStringLiteral("vehicle_ids"));
+        if (!ids.isArray() || ids.toArray().isEmpty())
+            return QStringLiteral("目标机号不能为空");
+        for (const auto& id : ids.toArray()) {
+            if (!id.isDouble() || id.toDouble() != id.toInt(-1) || id.toInt(-1) < 1 || id.toInt() > 255)
+                return QStringLiteral("机号必须为 1–255 的整数");
+        }
+    } else if (type == QStringLiteral("start_formation")) {
+        numbers = {{"leader_id", {1, 255}}, {"spacing", {2, 500}}, {"vertical_step", {0, 50}}};
+        required = {"leader_id", "formation"};
+        extra = {"formation"};
+        if (!QStringList{"wedge", "column", "line", "circle"}.contains(obj.value("formation").toString()) ||
+            obj.value("leader_id").toDouble() != obj.value("leader_id").toInt(-1))
+            return QStringLiteral("队形或长机机号无效");
+    } else if (type == QStringLiteral("plan_coverage")) {
+        numbers = {{"length", {10, 100000}},   {"width", {10, 100000}}, {"angle", {0, 360}},
+                   {"spacing", {2, 1000}},     {"altitude", {3, 120}},  {"center_lat", {-90, 90}},
+                   {"center_lon", {-180, 180}}};
+        required = {"length", "width"};
+        extra = {"center", "assign"};
+        if (obj.contains("assign") &&
+            !QStringList{"sequential", "auction", "cbba"}.contains(obj.value("assign").toString()))
+            return QStringLiteral("分配方式无效");
+        if (obj.contains("center_lat") != obj.contains("center_lon"))
+            return QStringLiteral("区域中心经纬度必须成对提供");
+        if (obj.contains("center") && obj.contains("center_lat"))
+            return QStringLiteral("区域中心只能使用一种坐标格式");
+        if (obj.contains("center") && obj.value("center").toString() != QStringLiteral("map_center")) {
+            const auto center = obj.value("center").toArray();
+            if (center.size() != 2 || !center[0].isDouble() || !center[1].isDouble() ||
+                !QGeoCoordinate(center[0].toDouble(), center[1].toDouble()).isValid())
+                return QStringLiteral("区域中心坐标无效");
+        }
+    } else if (type == QStringLiteral("plan_tactic")) {
+        numbers = {{"target_lat", {-90, 90}},  {"target_lon", {-180, 180}},  {"radius", {10, 5000}},
+                   {"target_speed", {0, 340}}, {"target_heading", {0, 360}}, {"intercept_speed", {1, 100}}};
+        extra = {"scenario", "polygon"};
+        const QString scenario = obj.value("scenario").toString();
+        if (!QStringList{"track", "encircle", "intercept", "patrol"}.contains(scenario))
+            return QStringLiteral("战术类型无效");
+        if (scenario == QStringLiteral("patrol")) {
+            const auto polygon = obj.value("polygon").toArray();
+            if (polygon.size() < 3)
+                return QStringLiteral("巡逻多边形至少需要三个顶点");
+            for (const auto& point : polygon) {
+                const auto pair = point.toArray();
+                if (pair.size() != 2 || !pair[0].isDouble() || !pair[1].isDouble() ||
+                    !QGeoCoordinate(pair[0].toDouble(), pair[1].toDouble()).isValid())
+                    return QStringLiteral("巡逻顶点无效");
+            }
+        } else {
+            required = {"target_lat", "target_lon"};
+        }
+    }
+    for (const auto& key : required) {
+        if (!obj.contains(key))
+            return QStringLiteral("缺少必填参数：%1").arg(key);
+    }
+    for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+        if (numbers.contains(it.key())) {
+            const auto range = numbers.value(it.key());
+            if (!it.value().isDouble() || !std::isfinite(it.value().toDouble()) ||
+                it.value().toDouble() < range.first || it.value().toDouble() > range.second)
+                return QStringLiteral("参数类型或范围无效：%1").arg(it.key());
+        } else if (it.key() != QStringLiteral("type") && !extra.contains(it.key())) {
+            return QStringLiteral("未知参数：%1").arg(it.key());
+        }
+    }
+    return {};
+}
+
 bool originHasOperatorAuthorization(const QString& origin, const SwarmTaskController* taskController)
 {
     if (origin == QStringLiteral("operator") || origin == QStringLiteral("ai_confirmed") ||
@@ -70,8 +157,10 @@ SwarmManager::SwarmManager(QObject* parent)
 
     _formation->setVehicleAutomationAllowedCallback(
         [this](int vehicleId) { return _formationAutomationAllowed(vehicleId); });
-    _missionPlanner->setVehicleAutomationAllowedCallback(
-        [this](int vehicleId) { return _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch()); });
+    _missionPlanner->setVehicleAutomationAllowedCallback([this](int vehicleId) {
+        return (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicleId)) &&
+               _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch());
+    });
 
     // P3：感知链路 → 航迹融合；2Hz 节拍驱动 prune/COP/事件检测/态势
     (void) connect(_perception, &SwarmPerceptionBridge::trackBatchReceived, this, &SwarmManager::_onTrackBatch);
@@ -180,6 +269,8 @@ void SwarmManager::setAutonomyLevel(int level)
     level = qBound(1, level, 3);
     if (_autonomyLevel != level) {
         _autonomyLevel = level;
+        if (level == 1)
+            ++_takeoffCommandGeneration;
         QSettings().setValue(QStringLiteral("Swarm/autonomyLevel"), level);
         SwarmAuditLogger::instance()->logAutonomyChange(level);
         emit autonomyLevelChanged();
@@ -289,13 +380,16 @@ bool SwarmManager::needsConfirmation(const QList<SwarmAction>& actions, QString*
 // 约束引擎（WP2.1）与解析式预演（WP2.7）
 // ---------------------------------------------------------------------------
 
-QList<SwarmTypes::VehicleState> SwarmManager::_vehicleStates() const
+QList<SwarmTypes::VehicleState> SwarmManager::_vehicleStates(const std::optional<QList<int>>& ids) const
 {
     QList<SwarmTypes::VehicleState> out;
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
-    QmlObjectListModel* model = (mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles();
+    QmlObjectListModel* model =
+        ids ? mvm->vehicles() : ((mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles());
     for (int i = 0; i < model->count(); i++) {
         Vehicle* vehicle = qobject_cast<Vehicle*>(model->get(i));
+        if (vehicle && ids && !ids->contains(vehicle->id()))
+            continue;
         if (!vehicle) {
             continue;
         }
@@ -303,7 +397,10 @@ QList<SwarmTypes::VehicleState> SwarmManager::_vehicleStates() const
         v.id = vehicle->id();
         v.lat = vehicle->coordinate().latitude();
         v.lon = vehicle->coordinate().longitude();
-        v.online = true;
+        v.online = !vehicle->vehicleLinkManager()->communicationLost();
+        const QGeoCoordinate home = vehicle->homePosition().isValid() ? vehicle->homePosition() : vehicle->coordinate();
+        v.homeLat = home.latitude();
+        v.homeLon = home.longitude();
         if (vehicle->batteries()->count() > 0) {
             FactGroup* bg = qobject_cast<FactGroup*>(vehicle->batteries()->get(0));
             if (bg && bg->getFact(QStringLiteral("percentRemaining"))) {
@@ -323,7 +420,19 @@ SwarmConstraintChecker::Config SwarmManager::_constraintConfig() const
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/SwarmConfig/fences.json");
     QFile file(path);
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return SwarmConstraintChecker::configFromJson(QJsonDocument::fromJson(file.readAll()).object());
+        QJsonParseError error;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) {
+            SwarmConstraintChecker::Config cfg;
+            cfg.error = tr("围栏配置 JSON 损坏或格式错误");
+            return cfg;
+        }
+        return SwarmConstraintChecker::configFromJson(document.object());
+    }
+    if (file.exists()) {
+        SwarmConstraintChecker::Config cfg;
+        cfg.error = tr("无法读取围栏配置");
+        return cfg;
     }
     // 首次运行：写默认配置（全部不限制），供用户按需编辑
     const SwarmConstraintChecker::Config cfg;
@@ -338,10 +447,33 @@ SwarmConstraintChecker::Config SwarmManager::_constraintConfig() const
     return cfg;
 }
 
-QVariantList SwarmManager::checkConstraints(const QList<SwarmAction>& plan, double mapLat, double mapLon)
+QList<SwarmConstraintChecker::Violation> SwarmManager::_planViolations(const QList<SwarmAction>& actions, double mapLat,
+                                                                       double mapLon) const
 {
     SwarmConstraintChecker checker;
-    const auto violations = checker.check(plan, _vehicleStates(), _constraintConfig(), mapLat, mapLon);
+    const auto config = _constraintConfig();
+    QList<SwarmConstraintChecker::Violation> result;
+    for (const auto& action : actions) {
+        const auto states = _vehicleStates(action.targetIds);
+        const bool requiresTargets = action.type != QStringLiteral("stop_formation");
+        if (requiresTargets &&
+            (states.isEmpty() || states.size() != action.targetIds.size() ||
+             std::any_of(states.cbegin(), states.cend(), [](const auto& state) { return !state.online; }))) {
+            result.append({QStringLiteral("error"), QStringLiteral("fleet"), tr("目标机缺失或离线"),
+                           tr("重新选择目标并生成计划")});
+        }
+        // Use the same physical reference during preview, confirmation and stage execution.
+        const double referenceLat = states.isEmpty() ? mapLat : states.first().homeLat;
+        const double referenceLon = states.isEmpty() ? mapLon : states.first().homeLon;
+        result.append(checker.check({action}, states, config, referenceLat, referenceLon));
+    }
+    result.append(checker.checkDeconfliction(actions, config, mapLat, mapLon));
+    return result;
+}
+
+QVariantList SwarmManager::checkConstraints(const QList<SwarmAction>& plan, double mapLat, double mapLon)
+{
+    const auto violations = _planViolations(plan, mapLat, mapLon);
 
     int errors = 0;
     QVariantList out;
@@ -365,17 +497,19 @@ QVariantList SwarmManager::checkConstraints(const QList<SwarmAction>& plan, doub
 
 bool SwarmManager::planHasConstraintError(const QList<SwarmAction>& actions) const
 {
-    // 用实时机况重校验:电量/规模类约束不依赖坐标,坐标类约束在任务创建时已校验且
-    // 不随运行变化,故 mapCenter 传 0(主要抓运行中电量下降/机离线导致的 error)。
-    SwarmConstraintChecker checker;
-    const auto violations = checker.check(actions, _vehicleStates(), _constraintConfig(), 0.0, 0.0);
-    return SwarmConstraintChecker::hasError(violations);
+    return SwarmConstraintChecker::hasError(_planViolations(actions, 0.0, 0.0));
 }
 
 QVariantMap SwarmManager::estimatePlan(const QList<SwarmAction>& plan, double mapLat, double mapLon)
 {
     SwarmRehearsalEstimator estimator;
-    const SwarmRehearsalEstimator::Estimate r = estimator.estimate(plan, _vehicleStates(), mapLat, mapLon);
+    QList<int> ids;
+    for (const auto& action : plan) {
+        for (int id : action.targetIds)
+            if (!ids.contains(id))
+                ids.append(id);
+    }
+    const SwarmRehearsalEstimator::Estimate r = estimator.estimate(plan, _vehicleStates(ids), mapLat, mapLon);
     return {
         {QStringLiteral("duration_min"), r.durationMin},
         {QStringLiteral("distance_km"), r.distanceKm},
@@ -526,11 +660,13 @@ QList<Vehicle*> SwarmManager::_targetVehicles(bool requireActiveLease) const
 {
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
     // 优先作用于界面中选中的车辆，否则作用于全部在线车辆
-    QmlObjectListModel* model = (mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles();
+    QmlObjectListModel* model =
+        _dispatchTargetIds ? mvm->vehicles()
+                           : ((mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles());
     QList<Vehicle*> result;
     for (int i = 0; i < model->count(); i++) {
         Vehicle* vehicle = qobject_cast<Vehicle*>(model->get(i));
-        if (vehicle) {
+        if (vehicle && (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicle->id()))) {
             result.append(vehicle);
         }
     }
@@ -564,10 +700,13 @@ void SwarmManager::_forEachVehicleStaggered(const QString& commandName, int stag
         return;
     }
 
+    const bool automated = _automationDispatchInProgress;
     int delayMs = 0;
     for (Vehicle* vehicle : targets) {
         QPointer<Vehicle> vehiclePtr(vehicle);
-        QTimer::singleShot(delayMs, this, [this, vehiclePtr, action, commandName, requireActiveLease]() {
+        QTimer::singleShot(delayMs, this, [this, vehiclePtr, action, commandName, requireActiveLease, automated]() {
+            if (automated && aiExecutionBlocked())
+                return;
             if (vehiclePtr && _automationAllowedAtDispatch(vehiclePtr->id(), requireActiveLease, commandName)) {
                 action(vehiclePtr.data(), requireActiveLease);
             }
@@ -616,6 +755,8 @@ bool SwarmManager::_automationAllowedAtDispatch(int vehicleId, bool requireActiv
 
 bool SwarmManager::_formationAutomationAllowed(int vehicleId)
 {
+    if (!_formationTargetIds.contains(vehicleId) || (_formationAutomated && aiExecutionBlocked()))
+        return false;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(vehicleId);
     if (!vehicle) {
@@ -642,6 +783,17 @@ void SwarmManager::armAll(bool arm)
 
 void SwarmManager::takeoffAll(double altitudeRelative)
 {
+    SwarmAction action;
+    action.type = QStringLiteral("takeoff");
+    action.params = {{QStringLiteral("altitude"), altitudeRelative}};
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            action.targetIds.append(vehicle->id());
+    if (!std::isfinite(altitudeRelative) || altitudeRelative < 2 || altitudeRelative > 120 ||
+        planHasConstraintError({action})) {
+        emit swarmCommandFeedback(tr("起飞被拒绝：高度或实时约束无效"));
+        return;
+    }
     const quint64 commandGeneration = ++_takeoffCommandGeneration;
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("takeoffAll"),
                                                      {{QStringLiteral("altitude"), altitudeRelative}});
@@ -718,6 +870,12 @@ void SwarmManager::pauseAll()
                              [](Vehicle* vehicle, bool) { vehicle->pauseVehicle(); });
 }
 
+void SwarmManager::pauseTargets(const QList<int>& ids)
+{
+    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, ids);
+    pauseAll();
+}
+
 void SwarmManager::startMissionAll()
 {
     ++_takeoffCommandGeneration;
@@ -739,6 +897,18 @@ void SwarmManager::emergencyDisarmAll()
 
 bool SwarmManager::startFormation(int leaderVehicleId)
 {
+    SwarmAction action;
+    action.type = QStringLiteral("start_formation");
+    action.params = {{QStringLiteral("spacing"), _formation->spacingMeters()}};
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            action.targetIds.append(vehicle->id());
+    if (!action.targetIds.contains(leaderVehicleId) || planHasConstraintError({action})) {
+        emit swarmCommandFeedback(tr("编队被拒绝：目标集或实时约束无效"));
+        return false;
+    }
+    _formationAutomated = false;
+    _formationTargetIds = QSet<int>(action.targetIds.cbegin(), action.targetIds.cend());
     _requestAutomationLeases(QStringLiteral("operator"));
     return _formation->start(leaderVehicleId);
 }
@@ -751,12 +921,34 @@ void SwarmManager::stopFormation()
 bool SwarmManager::planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
                                          double angleDeg, const QString& assignMode)
 {
+    QStringList errors;
+    const auto actions =
+        parseAndValidate(QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("plan_coverage")},
+                                                {QStringLiteral("center_lat"), center.latitude()},
+                                                {QStringLiteral("center_lon"), center.longitude()},
+                                                {QStringLiteral("length"), lengthMeters},
+                                                {QStringLiteral("width"), widthMeters},
+                                                {QStringLiteral("angle"), angleDeg},
+                                                {QStringLiteral("altitude"), _missionPlanner->surveyAltitude()},
+                                                {QStringLiteral("spacing"), _missionPlanner->surveySpacing()},
+                                                {QStringLiteral("assign"), assignMode}}},
+                         center, errors);
+    if (actions.isEmpty() || planHasConstraintError(actions)) {
+        emit swarmCommandFeedback(tr("覆盖规划被拒绝：%1").arg(errors.join(QStringLiteral("；"))));
+        return false;
+    }
+    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, actions.first().targetIds);
     _requestAutomationLeases(QStringLiteral("operator"));
     return _missionPlanner->planAndUploadCoverage(center, lengthMeters, widthMeters, angleDeg, assignMode);
 }
 
 void SwarmManager::clearAllMissions()
 {
+    QList<int> ids;
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            ids.append(vehicle->id());
+    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, ids);
     _requestAutomationLeases(QStringLiteral("operator"));
     _missionPlanner->clearAllMissions();
 }
@@ -765,7 +957,7 @@ void SwarmManager::clearAllMissions()
 // 统一动作管线：解析校验（大模型 / 任务状态机 / 人工界面共用）
 // ---------------------------------------------------------------------------
 QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson, const QGeoCoordinate& mapCenter,
-                                                  QStringList& warnings) const
+                                                  QStringList& warnings, const QList<int>& initialTargets) const
 {
     static const QSet<QString> knownTypes = {QStringLiteral("set_selection"),
                                              QStringLiteral("arm"),
@@ -793,15 +985,33 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
         }
     }
 
-    const int actionCount = qMin(actionsJson.count(), 10);  // 单次最多执行 10 个动作，防失控输出
+    if (actionsJson.size() > 10) {
+        warnings.append(tr("动作数超过 10，整个计划已拒绝"));
+        return {};
+    }
+    QList<int> targets = initialTargets;
+    if (targets.isEmpty()) {
+        QmlObjectListModel* selected = mvm->selectedVehicles()->count() > 0 ? mvm->selectedVehicles() : mvm->vehicles();
+        for (int i = 0; i < selected->count(); ++i) {
+            Vehicle* vehicle = qobject_cast<Vehicle*>(selected->get(i));
+            if (vehicle)
+                targets.append(vehicle->id());
+        }
+    }
+    const int actionCount = actionsJson.count();  // 单次最多执行 10 个动作，防失控输出
     for (int i = 0; i < actionCount; i++) {
         const QJsonObject obj = actionsJson.at(i).toObject();
         const QString type = obj.value(QStringLiteral("type")).toString();
         if (!knownTypes.contains(type)) {
             warnings.append(tr("已忽略未知动作类型：%1").arg(type));
-            continue;
+            return {};
         }
 
+        const QString inputError = validateActionInput(obj);
+        if (!inputError.isEmpty()) {
+            warnings.append(tr("动作 %1：%2；整个计划已拒绝").arg(i + 1).arg(inputError));
+            return {};
+        }
         SwarmAction action;
         action.type = type;
         action.dangerous = SwarmAction::isDangerousType(type);
@@ -811,15 +1021,18 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             for (const QJsonValue& v : obj.value(QStringLiteral("vehicle_ids")).toArray()) {
                 const int id = v.toInt(-1);
                 if (online.contains(id)) {
-                    ids.append(id);
+                    if (!ids.contains(id))
+                        ids.append(id);
                 } else {
-                    warnings.append(tr("机号 %1 不在线，已从选择中剔除").arg(id));
+                    warnings.append(tr("机号 %1 不在线，整个计划已拒绝").arg(id));
+                    return {};
                 }
             }
             if (ids.isEmpty()) {
                 warnings.append(tr("set_selection 无有效机号，已忽略"));
-                continue;
+                return {};
             }
+            targets = ids;
             action.params[QStringLiteral("vehicle_ids")] = QVariant::fromValue(ids);
             QStringList idStrings;
             for (int id : ids) {
@@ -854,7 +1067,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             const int leaderId = obj.value(QStringLiteral("leader_id")).toInt(-1);
             if (!online.contains(leaderId)) {
                 warnings.append(tr("长机 %1 不在线，编队动作已忽略").arg(leaderId));
-                continue;
+                return {};
             }
             static const QMap<QString, QString> typeNameMap = {{QStringLiteral("wedge"), tr("楔形")},
                                                                {QStringLiteral("column"), tr("纵队")},
@@ -880,6 +1093,10 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             action.description = tr("停止编队");
         } else if (type == QStringLiteral("plan_coverage")) {
             double centerLat = mapCenter.latitude(), centerLon = mapCenter.longitude();
+            if (obj.contains(QStringLiteral("center_lat"))) {
+                centerLat = obj.value(QStringLiteral("center_lat")).toDouble();
+                centerLon = obj.value(QStringLiteral("center_lon")).toDouble();
+            }
             const QJsonValue centerVal = obj.value(QStringLiteral("center"));
             if (centerVal.isArray() && centerVal.toArray().count() >= 2) {
                 centerLat = centerVal.toArray().at(0).toDouble();
@@ -888,7 +1105,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             const QGeoCoordinate center(centerLat, centerLon);
             if (!center.isValid()) {
                 warnings.append(tr("区域中心坐标无效，任务规划动作已忽略"));
-                continue;
+                return {};
             }
             const double length = qBound(10.0, obj.value(QStringLiteral("length")).toDouble(200.0), 100000.0);
             const double width = qBound(10.0, obj.value(QStringLiteral("width")).toDouble(120.0), 100000.0);
@@ -904,8 +1121,8 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             } else if (!assignRaw.isEmpty()) {
                 warnings.append(tr("未知分配方式「%1」，已回退为顺序分配").arg(assignRaw));
             }
-            action.params[QStringLiteral("lat")] = centerLat;
-            action.params[QStringLiteral("lon")] = centerLon;
+            action.params[QStringLiteral("center_lat")] = centerLat;
+            action.params[QStringLiteral("center_lon")] = centerLon;
             action.params[QStringLiteral("length")] = length;
             action.params[QStringLiteral("width")] = width;
             action.params[QStringLiteral("angle")] = angle;
@@ -930,7 +1147,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             const QString scenario = obj.value(QStringLiteral("scenario")).toString();
             if (!kScenarios.contains(scenario)) {
                 warnings.append(tr("未知战术场景「%1」，已忽略").arg(scenario));
-                continue;
+                return {};
             }
             action.params[QStringLiteral("scenario")] = scenario;
             if (scenario == QStringLiteral("patrol")) {
@@ -943,7 +1160,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
                 }
                 if (poly.count() < 3) {
                     warnings.append(tr("巡逻多边形至少需 3 个顶点，已忽略"));
-                    continue;
+                    return {};
                 }
                 action.params[QStringLiteral("polygon")] = poly;
                 action.description = tr("巡逻规划：%1 顶点周界均分").arg(poly.count());
@@ -952,7 +1169,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
                 const double tLon = obj.value(QStringLiteral("target_lon")).toDouble();
                 if (!SwarmTypes::isValidLatLon(tLat, tLon)) {  // 拦截 LLM 幻觉/缺失坐标
                     warnings.append(tr("战术场景「%1」目标坐标非法或缺失，已忽略").arg(scenario));
-                    continue;
+                    return {};
                 }
                 action.params[QStringLiteral("target_lat")] = tLat;
                 action.params[QStringLiteral("target_lon")] = tLon;
@@ -973,6 +1190,22 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
             }
         }
 
+        action.targetIds = targets;
+        if (type != QStringLiteral("stop_formation") && targets.isEmpty()) {
+            warnings.append(tr("没有目标机，整个计划已拒绝"));
+            return {};
+        }
+        if (type == QStringLiteral("start_formation") &&
+            !targets.contains(action.params.value(QStringLiteral("leader_id")).toInt())) {
+            warnings.append(tr("长机不在目标集合内"));
+            return {};
+        }
+        if (type != QStringLiteral("set_selection") && !targets.isEmpty()) {
+            QStringList names;
+            for (int id : targets)
+                names.append(QString::number(id));
+            action.description += tr(" [目标机：%1]").arg(names.join(QStringLiteral(", ")));
+        }
         plan.append(action);
     }
     return plan;
@@ -981,7 +1214,7 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
 // ---------------------------------------------------------------------------
 // 统一动作管线：执行
 // ---------------------------------------------------------------------------
-void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin)
+bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval)
 {
     // 纵深防御兜底闸门:任何入口(含 task 状态机自动推进)在 L1 档位一律拒绝下发,
     // 防止运行中降级自主等级或新增入口绕过前置 autonomy 闸门。
@@ -992,9 +1225,14 @@ void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
                                           {{QStringLiteral("reason"), gateReason},
                                            {QStringLiteral("origin"), origin},
                                            {QStringLiteral("actions"), actions.count()}});
-        return;
+        return false;
     }
 
+    if ((approval == ExecutionApproval::Automatic && needsConfirmation(actions, &gateReason)) ||
+        planHasConstraintError(actions)) {
+        emit swarmCommandFeedback(tr("计划未下发：缺少确认或实时约束未通过。%1").arg(gateReason));
+        return false;
+    }
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
 
     SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("action_sequence"),
@@ -1002,6 +1240,7 @@ void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
 
     QScopedValueRollback<bool> dispatchScope(_automationDispatchInProgress, true);
     for (const SwarmAction& action : actions) {
+        QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, action.targetIds);
         const QString& type = action.type;
         const QVariantMap& p = action.params;
 
@@ -1015,8 +1254,10 @@ void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
             continue;
         }
 
-        // set_selection 可能在序列中改变目标集合，因此每项动作都按当前集合申请/刷新租约。
-        _requestAutomationLeases(origin);
+        // 每项动作按解析时绑定的集合申请/刷新租约。
+        const bool authorizeLease = approval == ExecutionApproval::OperatorConfirmed &&
+                                    (origin != QStringLiteral("task") || _taskController->currentStageIndex() == 0);
+        _requestAutomationLeases(authorizeLease ? QStringLiteral("ai_confirmed") : QStringLiteral("ai"));
         if (type == QStringLiteral("arm")) {
             armAll(p.value(QStringLiteral("arm")).toBool());
         } else if (type == QStringLiteral("takeoff")) {
@@ -1045,24 +1286,30 @@ void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
             _formation->setFormationType(formationType);
             _formation->setSpacingMeters(p.value(QStringLiteral("spacing")).toDouble());
             _formation->setVerticalStepMeters(p.value(QStringLiteral("vertical_step")).toDouble());
-            _formation->start(p.value(QStringLiteral("leader_id")).toInt());
+            _formationAutomated = true;
+            _formationTargetIds = QSet<int>(action.targetIds.cbegin(), action.targetIds.cend());
+            if (!_formation->start(p.value(QStringLiteral("leader_id")).toInt()))
+                return false;
         } else if (type == QStringLiteral("stop_formation")) {
             _formation->stop();
         } else if (type == QStringLiteral("plan_coverage")) {
             _missionPlanner->setSurveyAltitude(p.value(QStringLiteral("altitude")).toDouble());
             _missionPlanner->setSurveySpacing(p.value(QStringLiteral("spacing")).toDouble());
-            _missionPlanner->planAndUploadCoverage(
-                QGeoCoordinate(p.value(QStringLiteral("lat")).toDouble(), p.value(QStringLiteral("lon")).toDouble()),
-                p.value(QStringLiteral("length")).toDouble(), p.value(QStringLiteral("width")).toDouble(),
-                p.value(QStringLiteral("angle")).toDouble(),
-                p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString());
+            if (!_missionPlanner->planAndUploadCoverage(
+                    QGeoCoordinate(p.value(QStringLiteral("center_lat")).toDouble(),
+                                   p.value(QStringLiteral("center_lon")).toDouble()),
+                    p.value(QStringLiteral("length")).toDouble(), p.value(QStringLiteral("width")).toDouble(),
+                    p.value(QStringLiteral("angle")).toDouble(),
+                    p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString()))
+                return false;
         } else if (type == QStringLiteral("clear_missions")) {
             _missionPlanner->clearAllMissions();
         } else if (type == QStringLiteral("plan_tactic")) {
             _executeTactic(p);
         }
     }
-    emit swarmCommandFeedback(tr("动作序列已执行（%1 项）").arg(actions.count()));
+    emit swarmCommandFeedback(tr("动作序列已受理（%1 项）").arg(actions.count()));
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,7 +1318,7 @@ void SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
 void SwarmManager::_executeTactic(const QVariantMap& p)
 {
     const QString scenario = p.value(QStringLiteral("scenario")).toString();
-    const QList<SwarmTypes::VehicleState> states = _vehicleStates();
+    const QList<SwarmTypes::VehicleState> states = _vehicleStates(_dispatchTargetIds);
     if (states.isEmpty()) {
         emit swarmCommandFeedback(tr("战术规划：当前没有可用无人机"));
         return;

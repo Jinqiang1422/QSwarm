@@ -19,6 +19,9 @@ class TestP2Modules : public QObject
 
 private slots:
     void constraint_takeoffAltitude();
+    void constraint_completeGeometry_data();
+    void constraint_completeGeometry();
+    void constraint_badConfig();
     void constraint_fenceExclude();
     void constraint_batteryError();
     void constraint_spacing();
@@ -147,12 +150,10 @@ void TestP2Modules::constraint_fenceExclude()
     }
     QVERIFY(hasFenceError);
 
-    // 作业区中心远离禁飞区 → 无 fence error
+    // 作业区已在区外，但机队仍位于禁飞区内，转场必须被拒绝
     cfg.commRangeM = 1e9;  // 屏蔽链路告警干扰
     violations = checker.check({coverage(300, 200, 25)}, fleet(4, 90.0), cfg, 40.1, 117.1);
-    for (const auto& v : violations) {
-        QVERIFY(v.rule != QStringLiteral("fence"));
-    }
+    QVERIFY(hasRule(violations, QStringLiteral("fence"), QStringLiteral("error")));
 }
 
 void TestP2Modules::constraint_batteryError()
@@ -656,6 +657,53 @@ void TestP2Modules::constraint_smallAreasNoFalsePositive()
     const auto v = checker.check({coverageAt(20, 20, 5, 39.9, 116.4), coverageAt(20, 20, 5, 39.9, 116.4005)},
                                  fleet(4, 90.0), cfg, 39.9, 116.4);
     QVERIFY2(!hasAnyRule(v, QStringLiteral("deconflict")), "两个 20m 小区相距 43m 不重叠,不应误报(修复误报)");
+}
+
+void TestP2Modules::constraint_completeGeometry_data()
+{
+    QTest::addColumn<QString>("geometry");
+    QTest::newRow("allowed-center-only") << QStringLiteral("include");
+    QTest::newRow("exclusion-inside-area") << QStringLiteral("exclude");
+    QTest::newRow("coverage-altitude") << QStringLiteral("altitude");
+    QTest::newRow("transit-crossing") << QStringLiteral("transit");
+}
+
+void TestP2Modules::constraint_completeGeometry()
+{
+    QFETCH(QString, geometry);
+    auto action = coverageAt(1000, 1000, 20, 39.9, 116.4);
+    SwarmConstraintChecker::Config config;
+    config.commRangeM = 1e9;
+    config.enduranceMin = 1e6;
+    auto vehicles = fleet(1, 100);
+    if (geometry == QStringLiteral("include")) {
+        config.includePolygons = {{{39.899, 116.399}, {39.899, 116.401}, {39.901, 116.401}, {39.901, 116.399}}};
+    } else if (geometry == QStringLiteral("exclude")) {
+        config.excludePolygons = {{{39.9019, 116.3999}, {39.9019, 116.4001}, {39.9021, 116.4001}, {39.9021, 116.3999}}};
+    } else if (geometry == QStringLiteral("transit")) {
+        action = coverageAt(20, 20, 20, 39.91, 116.4);
+        config.excludePolygons = {{{39.9049, 116.3999}, {39.9049, 116.4001}, {39.9051, 116.4001}, {39.9051, 116.3999}}};
+    } else {
+        config.maxAltitudeM = 50;
+        action.params[QStringLiteral("altitude")] = 120;
+    }
+    SwarmConstraintChecker checker;
+    QVERIFY(hasRule(checker.check({action}, vehicles, config, 39.9, 116.4), QStringLiteral("fence"),
+                    QStringLiteral("error")));
+}
+
+void TestP2Modules::constraint_badConfig()
+{
+    SwarmConstraintChecker checker;
+    const auto action = coverageAt(20, 20, 20, 39.9, 116.4);
+    for (const auto& json :
+         QList<QJsonObject>{{{"include", "not a polygon list"}},
+                            {{"cruise_speed_ms", 0}},
+                            {{"exclude", QJsonArray{QJsonObject{{"polygon", QJsonArray{QJsonArray{1, 2}}}}}}}}) {
+        const auto config = SwarmConstraintChecker::configFromJson(json);
+        QVERIFY(!config.error.isEmpty());
+        QVERIFY(SwarmConstraintChecker::hasError(checker.check({action}, fleet(1, 100), config, 39.9, 116.4)));
+    }
 }
 
 QTEST_GUILESS_MAIN(TestP2Modules)

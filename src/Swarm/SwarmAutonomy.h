@@ -101,7 +101,7 @@ inline bool needsConfirmation(Level level, const QStringList& l3AllowedTypes, co
 
     QStringList dangerousTypes;
     for (const SwarmAction& action : actions) {
-        if (action.dangerous && !dangerousTypes.contains(action.type)) {
+        if ((action.dangerous || SwarmAction::isDangerousType(action.type)) && !dangerousTypes.contains(action.type)) {
             dangerousTypes.append(action.type);
         }
     }

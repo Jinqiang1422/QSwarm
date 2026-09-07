@@ -39,6 +39,7 @@ public:
 
     struct Config
     {
+        QString error;                                        ///< 配置无效时阻断执行，不回退为空围栏。
         QList<QList<QPair<double, double>>> includePolygons;  ///< 允许空域（空=不限制）
         QList<QList<QPair<double, double>>> excludePolygons;  ///< 禁飞区
         double maxAltitudeM = 0.0;                            ///< 围栏高度上限（0=不限制）
@@ -63,6 +64,10 @@ public:
     /// 对动作序列做完整约束检查（mapCenter 用于无绝对坐标动作的参照）
     QList<Violation> check(const QList<SwarmAction>& plan, const QList<SwarmTypes::VehicleState>& vehicles,
                            const Config& cfg, double mapCenterLat, double mapCenterLon) const;
+
+    /// 多作业区之间的冲突提示，与各动作的目标机集合无关。
+    QList<Violation> checkDeconfliction(const QList<SwarmAction>& plan, const Config& cfg, double mapCenterLat,
+                                        double mapCenterLon) const;
 
     /// 模板级检查：规模与载荷（requiredPayload 空串=无要求；fleetPayloadKnown=false=载荷能力未知）
     QList<Violation> checkTemplate(int minFleet, const QString& requiredPayload, int onlineCount,

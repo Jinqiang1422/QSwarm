@@ -260,7 +260,7 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
         SwarmTaskController* taskController = _manager->taskController();
         const QList<SwarmTaskController::Stage> stages = taskController->parseStages(
             request.value(QStringLiteral("stages")).toArray(), requestCoordinate(request), warnings);
-        const bool accepted = taskController->startTask(request.value(QStringLiteral("name")).toString(), stages);
+        const bool accepted = taskController->startTask(request.value(QStringLiteral("name")).toString(), stages, true);
         return {{QStringLiteral("ok"), accepted},
                 {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)},
                 {QStringLiteral("status"), _status()}};
@@ -354,8 +354,12 @@ QJsonObject SwarmAcceptanceServer::_executeActions(const QJsonObject& request) c
                 {QStringLiteral("error"), QStringLiteral("no_valid_actions")},
                 {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)}};
     }
-    _manager->executeActions(actions, origin);
-    return {{QStringLiteral("ok"), true},
+    const bool confirmed = origin == QStringLiteral("operator") || origin == QStringLiteral("ai_confirmed") ||
+                           origin == QStringLiteral("template");
+    const bool accepted = _manager->executeActions(
+        actions, origin,
+        confirmed ? SwarmManager::ExecutionApproval::OperatorConfirmed : SwarmManager::ExecutionApproval::Automatic);
+    return {{QStringLiteral("ok"), accepted},
             {QStringLiteral("action_count"), actions.count()},
             {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)}};
 }

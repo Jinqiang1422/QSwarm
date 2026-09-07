@@ -5,7 +5,7 @@
  * 基于 MultiVehicleManager 的集群批量指令管理器，同时也是集群能力的统一枢纽：
  *   - 多机实时监控数据出口（vehicles / selectedVehicles 直接复用 MultiVehicleManager 模型）
  *   - 集群一键指令：解锁/上锁、起飞、降落、返航、暂停、开始任务、紧急上锁
- *   - 统一动作管线：parseAndValidate()（白名单校验+参数限幅）与 executeActions()，
+ *   - 统一动作管线：parseAndValidate()（白名单、参数、目标严格校验）与 executeActions()，
  *     供大模型（SwarmAIAgent）、任务状态机（SwarmTaskController）与人工界面共用
  *   - 子控制器：编队（FormationController）、任务规划（SwarmMissionPlanner）、
  *     大模型接口（SwarmAIAgent）、任务状态机（SwarmTaskController）
@@ -25,6 +25,7 @@
 #include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 #include <functional>
+#include <optional>
 
 #include "SwarmAction.h"
 #include "SwarmAutonomy.h"
@@ -82,6 +83,12 @@ class SwarmManager : public QObject
     Q_MOC_INCLUDE("SwarmPerceptionBridge.h")
 
 public:
+    enum class ExecutionApproval
+    {
+        Automatic,
+        OperatorConfirmed
+    };
+
     explicit SwarmManager(QObject* parent = nullptr);
     ~SwarmManager();
 
@@ -199,6 +206,9 @@ public:
     /// 批量暂停（悬停/刹车，等效 QGC 单机 Pause）
     Q_INVOKABLE void pauseAll();
 
+    /// 暂停任务已绑定的目标，不读取当前 UI 选择。
+    void pauseTargets(const QList<int>& ids);
+
     /// 批量开始已上传的航线任务
     Q_INVOKABLE void startMissionAll();
 
@@ -219,13 +229,14 @@ public:
     // ------------------------------------------------------------------
 
     /// 把动作 JSON 数组解析并校验为可执行动作序列：
-    /// 白名单过滤、机号在线性检查、参数限幅，非法项剔除并写入 warnings。
+    /// 白名单、目标与参数严格检查；任一非法项拒绝整计划并写入 warnings。
     QList<SwarmAction> parseAndValidate(const QJsonArray& actionsJson, const QGeoCoordinate& mapCenter,
-                                        QStringList& warnings) const;
+                                        QStringList& warnings, const QList<int>& initialTargets = {}) const;
 
     /// 按序执行动作序列（映射到本类批量指令与各子控制器）。
     /// origin 标记来源（ai / ai_confirmed / task / template / operator），写入审计日志便于回放归因。
-    void executeActions(const QList<SwarmAction>& actions, const QString& origin = QStringLiteral("ai"));
+    bool executeActions(const QList<SwarmAction>& actions, const QString& origin = QStringLiteral("ai"),
+                        ExecutionApproval approval = ExecutionApproval::Automatic);
 
 signals:
     void vehicleCountChanged();
@@ -262,7 +273,9 @@ private:
     void _loadSettings();
 
     /// 目标机状态快照（选中集合优先，否则全体在线），供约束引擎/估算器
-    QList<SwarmTypes::VehicleState> _vehicleStates() const;
+    QList<SwarmTypes::VehicleState> _vehicleStates(const std::optional<QList<int>>& ids = std::nullopt) const;
+    QList<SwarmConstraintChecker::Violation> _planViolations(const QList<SwarmAction>& actions, double mapLat,
+                                                             double mapLon) const;
     /// plan_tactic 协同战术规划执行（跟踪/围捕/拦截/巡逻，输出方案经 swarmCommandFeedback）
     void _executeTactic(const QVariantMap& params);
     /// 加载围栏/空域配置（AppDataLocation/SwarmConfig/fences.json；缺失时写默认）
@@ -275,6 +288,9 @@ private:
     QStringList _l3AllowedTypes;            ///< L3 限定域自主白名单（动作类型）
     SwarmControlLease _lease;               ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     bool _automationDispatchInProgress = false;
+    std::optional<QList<int>> _dispatchTargetIds;
+    QSet<int> _formationTargetIds;
+    bool _formationAutomated = false;
     bool _shutdownComplete = false;
     FormationController* _formation = nullptr;
     SwarmMissionPlanner* _missionPlanner = nullptr;

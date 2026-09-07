@@ -77,7 +77,7 @@ public:
     QString statusText() const { return _statusText; }
 
     /// 以 leaderVehicleId 为长机开始编队。长机由人工/任务驾驶，僚机自动跟随队形。
-    Q_INVOKABLE bool start(int leaderVehicleId);
+    bool start(int leaderVehicleId);
 
     /// 停止编队，僚机原地悬停
     Q_INVOKABLE void stop();

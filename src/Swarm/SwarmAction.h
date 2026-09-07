@@ -9,17 +9,20 @@
 
 #pragma once
 
+#include <QtCore/QList>
+#include <QtCore/QSet>
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 
 struct SwarmAction
 {
-    QString type;         ///< set_selection / arm / takeoff / land / rtl / pause /
-                          ///< start_mission / disarm / emergency_disarm /
-                          ///< start_formation / stop_formation / plan_coverage / clear_missions
+    QString type;          ///< set_selection / arm / takeoff / land / rtl / pause /
+                           ///< start_mission / disarm / emergency_disarm /
+                           ///< start_formation / stop_formation / plan_coverage / clear_missions
     QVariantMap params;
-    QString description;  ///< 中文描述，用于计划确认界面
+    QString description;   ///< 中文描述，用于计划确认界面
     bool dangerous = false;
+    QList<int> targetIds;  ///< 解析时固定的目标集；空集绝不表示全体。
 
     /// 危险动作集合（需人工确认后才可执行）
     static bool isDangerousType(const QString& type)

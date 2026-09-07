@@ -93,7 +93,7 @@ Rectangle {
                     placeholderText: "https://api.deepseek.com/v1"
                     onEditingFinished: _ai.apiBaseUrl = text
                 }
-                QGCLabel { text: qsTr("API Key") }
+                QGCLabel { text: qsTr("API Key（仅本次会话）") }
                 QGCTextField {
                     width: parent.width
                     text: _ai.apiKey
@@ -112,7 +112,7 @@ Rectangle {
                     spacing: _margin
                     QGCButton { text: qsTr("测试连接"); onClicked: _ai.testConnection() }
                     QGCCheckBox {
-                        text:    qsTr("危险动作需人工确认")
+                        text:    qsTr("所有 AI 动作均需确认")
                         checked: _ai.requireConfirm
                         onClicked: _ai.requireConfirm = checked
                     }
@@ -518,6 +518,11 @@ Rectangle {
                             text:       qsTr("继续（人工确认）")
                             visible:    _task.waitingForProceed
                             onClicked:  _task.proceed()
+                        }
+                        QGCButton {
+                            text:       qsTr("重试当前阶段")
+                            visible:    _task.blocked
+                            onClicked:  _task.retryBlockedStage()
                         }
                         QGCButton {
                             text:       qsTr("中止任务")

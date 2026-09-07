@@ -165,7 +165,7 @@ private:
     void _sendRequest();
     void _handleResponse(const QByteArray& body);
     void _handleActionsJson(const QJsonArray& actionsJson, const QString& replyText);
-    bool _handleTaskJson(const QJsonObject& taskObj, QString taskName, QList<SwarmTaskController::Stage>& stages,
+    bool _handleTaskJson(const QJsonObject& taskObj, QString& taskName, QList<SwarmTaskController::Stage>& stages,
                          QStringList& warnings);
     void _runTaskTemplate(const QJsonObject& args);
     void _handleCandidates(const QJsonObject& args);  ///< WP2.2 多候选方案
@@ -178,11 +178,11 @@ private:
     QNetworkAccessManager* _nam = nullptr;
     QNetworkReply* _reply = nullptr;
 
-    QString _apiBaseUrl;  // 默认 https://api.deepseek.com/v1（可在界面修改）
+    QString _apiBaseUrl;           // 默认 https://api.deepseek.com/v1（可在界面修改）
     QString _apiKey;
-    QString _modelName;   // 默认 deepseek-chat
+    QString _modelName;            // 默认 deepseek-chat
     bool _useFunctionCalling = true;
-    bool _requireConfirm = true;
+    bool _requireConfirm = false;  ///< 可选：连低风险动作也逐项确认；强制规则独立生效。
     bool _busy = false;
 
     QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断

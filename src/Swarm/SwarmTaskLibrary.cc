@@ -516,7 +516,7 @@ bool SwarmTaskLibrary::runTemplate(const QString& name, const QVariantMap& param
         emit libraryFeedback(tr("模板执行失败：没有有效阶段"));
         return false;
     }
-    return _swarmManager->taskController()->startTask(name, stages);
+    return _swarmManager->taskController()->startTask(name, stages, true);
 }
 
 bool SwarmTaskLibrary::saveTemplate(const QString& name, const QString& description, const QJsonArray& stages,

@@ -41,6 +41,7 @@ class SwarmTaskController : public QObject
     QML_UNCREATABLE("")
 
     Q_PROPERTY(bool running READ running NOTIFY taskChanged)
+    Q_PROPERTY(bool blocked READ blocked NOTIFY taskChanged)
     Q_PROPERTY(QString taskName READ taskName NOTIFY taskChanged)
     Q_PROPERTY(int stageCount READ stageCount NOTIFY taskChanged)
     Q_PROPERTY(int currentStageIndex READ currentStageIndex NOTIFY taskChanged)
@@ -67,6 +68,8 @@ public:
 
     bool running() const { return _running; }
 
+    bool blocked() const { return _blocked; }
+
     QString taskName() const { return _taskName; }
 
     int stageCount() const { return _stages.count(); }
@@ -86,13 +89,14 @@ public:
                              QStringList& warnings) const;
 
     /// 启动多阶段任务（阶段与动作须先经 parseStages / SwarmManager::parseAndValidate 校验）
-    bool startTask(const QString& taskName, const QList<Stage>& stages);
+    bool startTask(const QString& taskName, const QList<Stage>& stages, bool operatorConfirmed = false);
 
     /// 中止任务：停止状态机并使全体无人机暂停悬停
     Q_INVOKABLE void abort(const QString& reason = QString());
 
     /// 手动推进（conditionKind = manual 的阶段）
     Q_INVOKABLE void proceed();
+    Q_INVOKABLE void retryBlockedStage();
 
 signals:
     void taskChanged();
@@ -104,6 +108,7 @@ private slots:
 
 private:
     void _enterStage(int index);
+    void _blockStage(const QString& reason);
     void _finish(bool success, const QString& message);
     bool _conditionMet(const Stage& stage);
     void _setStateText(const QString& text);
@@ -112,12 +117,15 @@ private:
     SwarmManager* _swarmManager = nullptr;
 
     bool _running = false;
+    bool _blocked = false;
+    bool _operatorConfirmed = false;
     QString _taskName;
     QList<Stage> _stages;
     int _currentStage = -1;
     QTimer _tickTimer;
     qint64 _stageStartMs = 0;
     QList<int> _involvedIds;           ///< 进入本阶段时快照的涉及机号
+    QList<int> _taskTargetIds;         ///< 已进入阶段涉及的机号，用于中止时暂停
     QSet<int> _vehiclesSeenInMission;  ///< all_mission_finished：已观察到进入 Mission 模式的机号
     QString _stateText;
 };

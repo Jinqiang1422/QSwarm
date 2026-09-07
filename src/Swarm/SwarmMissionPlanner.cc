@@ -100,9 +100,12 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
         return false;
     }
 
-    // 目标车辆：选中集合优先，否则全体在线车辆，按 id 升序分配条带
+    // Manager 的回调绑定了计划目标；存在回调时不再读取可能已变化的 UI 选择。
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
-    QmlObjectListModel* model = (mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles();
+    QmlObjectListModel* model =
+        _vehicleAutomationAllowed
+            ? mvm->vehicles()
+            : ((mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles());
     QList<Vehicle*> targets;
     for (int i = 0; i < model->count(); i++) {
         Vehicle* vehicle = qobject_cast<Vehicle*>(model->get(i));
@@ -184,7 +187,7 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     _lastPlanVehicleCount = vehicleCount;
     _lastPlanWaypointCount = totalWaypoints;
     emit planChanged();
-    emit plannerFeedback(tr("区域覆盖任务已上传：%1 架无人机，共 %2 个航点（条带宽度 %3 米）")
+    emit plannerFeedback(tr("区域覆盖任务已提交上传请求：%1 架无人机，共 %2 个航点（条带宽度 %3 米）")
                              .arg(vehicleCount)
                              .arg(totalWaypoints)
                              .arg(bandWidth, 0, 'f', 1));

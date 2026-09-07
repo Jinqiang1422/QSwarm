@@ -4,26 +4,141 @@
 #include <QtCore/QtMath>
 #include <algorithm>
 
+namespace {
+using Point = QPair<double, double>;
+using Polygon = QList<Point>;
+
+double cross(const Point& a, const Point& b, const Point& c)
+{
+    return (b.first - a.first) * (c.second - a.second) - (b.second - a.second) * (c.first - a.first);
+}
+
+bool onSegment(const Point& a, const Point& b, const Point& p)
+{
+    constexpr double epsilon = 1e-12;
+    return std::abs(cross(a, b, p)) <= epsilon && p.first >= qMin(a.first, b.first) - epsilon &&
+           p.first <= qMax(a.first, b.first) + epsilon && p.second >= qMin(a.second, b.second) - epsilon &&
+           p.second <= qMax(a.second, b.second) + epsilon;
+}
+
+bool intersects(const Point& a, const Point& b, const Point& c, const Point& d)
+{
+    return ((cross(a, b, c) * cross(a, b, d) < 0.0 && cross(c, d, a) * cross(c, d, b) < 0.0) || onSegment(a, b, c) ||
+            onSegment(a, b, d) || onSegment(c, d, a) || onSegment(c, d, b));
+}
+
+bool crossesBoundary(const Point& a, const Point& b, const Polygon& polygon)
+{
+    for (int i = 0; i < polygon.size(); ++i) {
+        if (intersects(a, b, polygon[i], polygon[(i + 1) % polygon.size()])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool contains(const Polygon& polygon, const Point& p)
+{
+    return SwarmTypes::pointInPolygon(p.first, p.second, polygon);
+}
+
+bool containedBy(const Polygon& area, const Polygon& allowed)
+{
+    for (int i = 0; i < area.size(); ++i) {
+        if (!contains(allowed, area[i]) || crossesBoundary(area[i], area[(i + 1) % area.size()], allowed)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool overlaps(const Polygon& a, const Polygon& b)
+{
+    if (a.isEmpty() || b.isEmpty()) {
+        return false;
+    }
+    if (contains(a, b.first()) || contains(b, a.first())) {
+        return true;
+    }
+    for (int i = 0; i < a.size(); ++i) {
+        if (crossesBoundary(a[i], a[(i + 1) % a.size()], b)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Polygon coveragePolygon(const SwarmAction& action, double mapLat, double mapLon)
+{
+    const auto& p = action.params;
+    const double centerLat = p.value(QStringLiteral("center_lat"), mapLat).toDouble();
+    const double centerLon = p.value(QStringLiteral("center_lon"), mapLon).toDouble();
+    const double length = p.value(QStringLiteral("length")).toDouble();
+    const double width = p.value(QStringLiteral("width")).toDouble();
+    const double angleDeg = p.value(QStringLiteral("angle"), 0.0).toDouble();
+    // Ordered rectangle boundary: tests include edge crossings and an exclusion wholly inside the area.
+    Polygon area;
+    const double a = SwarmTypes::degToRad(angleDeg);
+    for (const Point& corner : Polygon{{-1, -1}, {-1, 1}, {1, 1}, {1, -1}}) {
+        const double x = corner.first * length / 2.0, y = corner.second * width / 2.0;
+        const double east = x * qSin(a) + y * qCos(a);
+        const double north = x * qCos(a) - y * qSin(a);
+        double lat, lon;
+        SwarmTypes::destinationPoint(centerLat, centerLon, qRadiansToDegrees(qAtan2(east, north)),
+                                     std::hypot(east, north), lat, lon);
+        area.append({lat, lon});
+    }
+    return area;
+}
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // 配置
 // ---------------------------------------------------------------------------
 SwarmConstraintChecker::Config SwarmConstraintChecker::configFromJson(const QJsonObject& obj)
 {
     Config cfg;
-    const auto readPolys = [&obj](const QString& key) {
+    const auto readPolys = [&obj, &cfg](const QString& key) {
         QList<QList<QPair<double, double>>> out;
+        if (obj.contains(key) && !obj.value(key).isArray()) {
+            cfg.error = QStringLiteral("围栏多边形列表格式无效");
+        }
         const QJsonArray groups = obj.value(key).toArray();
         for (const QJsonValue& gv : groups) {
             const QJsonArray ring = gv.toObject().value(QStringLiteral("polygon")).toArray();
             QList<QPair<double, double>> poly;
             for (const QJsonValue& pv : ring) {
                 const QJsonArray pt = pv.toArray();
-                if (pt.count() >= 2) {
+                if (pt.count() == 2 && pt[0].isDouble() && pt[1].isDouble() && std::isfinite(pt[0].toDouble()) &&
+                    std::isfinite(pt[1].toDouble()) && std::abs(pt[0].toDouble()) <= 90.0 &&
+                    std::abs(pt[1].toDouble()) <= 180.0) {
                     poly.append({pt.at(0).toDouble(), pt.at(1).toDouble()});
+                } else {
+                    cfg.error = QStringLiteral("围栏顶点坐标无效");
                 }
             }
             if (poly.count() >= 3) {
+                if (poly.size() > 3 && poly.first() == poly.last())
+                    poly.removeLast();
+                double area = 0.0;
+                for (int i = 0; i < poly.size(); ++i) {
+                    const auto& a = poly[i];
+                    const auto& b = poly[(i + 1) % poly.size()];
+                    area += (b.first - a.first) * (b.second + a.second);
+                    if (std::abs(b.second - a.second) > 180.0)
+                        cfg.error = QStringLiteral("围栏不支持跨日期变更线");
+                    for (int j = i + 2; j < poly.size(); ++j) {
+                        if (i == 0 && j == poly.size() - 1)
+                            continue;
+                        if (intersects(a, b, poly[j], poly[(j + 1) % poly.size()]))
+                            cfg.error = QStringLiteral("围栏多边形自交");
+                    }
+                }
+                if (std::abs(area) < 1e-12)
+                    cfg.error = QStringLiteral("围栏多边形面积为零");
                 out.append(poly);
+            } else {
+                cfg.error = QStringLiteral("围栏至少需要三个有效顶点");
             }
         }
         return out;
@@ -43,6 +158,18 @@ SwarmConstraintChecker::Config SwarmConstraintChecker::configFromJson(const QJso
     cfg.commErrorFactor = obj.value(QStringLiteral("comm_error_factor")).toDouble(cfg.commErrorFactor);
     cfg.spacingWarnFactor = obj.value(QStringLiteral("spacing_warn_factor")).toDouble(cfg.spacingWarnFactor);
     cfg.deconflictFactor = obj.value(QStringLiteral("deconflict_factor")).toDouble(cfg.deconflictFactor);
+    for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+        if (it.key() != QStringLiteral("include") && it.key() != QStringLiteral("exclude") &&
+            (!it.value().isDouble() || !std::isfinite(it.value().toDouble()))) {
+            cfg.error = QStringLiteral("围栏配置数值类型无效");
+        }
+    }
+    if (cfg.maxAltitudeM < 0 || cfg.commRangeM <= 0 || cfg.cruiseSpeedMs <= 0 || cfg.climbRateMs <= 0 ||
+        cfg.enduranceMin <= 0 || cfg.reserveFactor <= 0 || cfg.reserveFactor > 1 || cfg.minSeparationM <= 0 ||
+        cfg.commWarnFactor <= 0 || cfg.commErrorFactor < cfg.commWarnFactor || cfg.spacingWarnFactor < 1 ||
+        cfg.deconflictFactor <= 0 || std::abs(cfg.homeLat) > 90 || std::abs(cfg.homeLon) > 180) {
+        cfg.error = QStringLiteral("围栏配置数值超出范围");
+    }
     return cfg;
 }
 
@@ -85,49 +212,21 @@ void SwarmConstraintChecker::_checkFence(const SwarmAction& action, const Config
     if (cfg.includePolygons.isEmpty() && cfg.excludePolygons.isEmpty()) {
         return;
     }
-    const QVariantMap& p = action.params;
-    const double centerLat = p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble();
-    const double centerLon = p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble();
-    const double length = p.value(QStringLiteral("length"), 0.0).toDouble();
-    const double width = p.value(QStringLiteral("width"), 0.0).toDouble();
-    const double angleDeg = p.value(QStringLiteral("angle"), 0.0).toDouble();
-
-    // 区域中心 + 四角
-    QList<QPair<double, double>> probePoints = {{centerLat, centerLon}};
-    const double a = SwarmTypes::degToRad(angleDeg);
-    for (int sx : {-1, 1}) {
-        for (int sy : {-1, 1}) {
-            const double x = sx * length / 2.0, y = sy * width / 2.0;
-            const double east = x * qSin(a) + y * qCos(a);
-            const double north = x * qCos(a) - y * qSin(a);
-            const double dist = qSqrt(east * east + north * north);
-            const double brg = qRadiansToDegrees(qAtan2(east, north));
-            double lat2, lon2;
-            SwarmTypes::destinationPoint(centerLat, centerLon, brg, dist, lat2, lon2);
-            probePoints.append({lat2, lon2});
-        }
-    }
-
+    const Polygon area = coveragePolygon(action, mapCenterLat, mapCenterLon);
     if (!cfg.includePolygons.isEmpty()) {
-        bool insideAny = false;
-        for (const auto& poly : cfg.includePolygons) {
-            if (SwarmTypes::pointInPolygon(centerLat, centerLon, poly)) {
-                insideAny = true;
-                break;
-            }
-        }
-        if (!insideAny) {
-            out.append({QStringLiteral("error"), QStringLiteral("fence"), QStringLiteral("作业区中心位于允许空域之外"),
-                        QStringLiteral("调整区域中心至允许空域内，或更新围栏配置")});
+        const bool inside = std::any_of(cfg.includePolygons.cbegin(), cfg.includePolygons.cend(),
+                                        [&area](const Polygon& polygon) { return containedBy(area, polygon); });
+        if (!inside) {
+            out.append({QStringLiteral("error"), QStringLiteral("fence"),
+                        QStringLiteral("完整作业区未处于同一允许空域内"),
+                        QStringLiteral("缩小或移动作业区，避开允许区边界")});
         }
     }
-    for (const auto& poly : cfg.excludePolygons) {
-        for (const auto& pt : probePoints) {
-            if (SwarmTypes::pointInPolygon(pt.first, pt.second, poly)) {
-                out.append({QStringLiteral("error"), QStringLiteral("fence"), QStringLiteral("作业区与禁飞区相交"),
-                            QStringLiteral("缩小区域/平移避开禁飞区，或更新围栏配置")});
-                return;
-            }
+    for (const auto& polygon : cfg.excludePolygons) {
+        if (overlaps(area, polygon)) {
+            out.append({QStringLiteral("error"), QStringLiteral("fence"), QStringLiteral("作业区与禁飞区相交"),
+                        QStringLiteral("缩小或平移作业区以避开禁飞区")});
+            return;
         }
     }
 }
@@ -154,7 +253,10 @@ void SwarmConstraintChecker::_checkBattery(const SwarmAction& action, const QLis
     const int nV = qMax(1, vehicles.count());
     double transitM = 0.0;
     for (const SwarmTypes::VehicleState& v : vehicles) {
-        transitM = qMax(transitM, SwarmTypes::haversineM(v.lat, v.lon, cLat, cLon));
+        const double returnLat = std::isfinite(v.homeLat) ? v.homeLat : v.lat;
+        const double returnLon = std::isfinite(v.homeLon) ? v.homeLon : v.lon;
+        transitM = qMax(transitM, SwarmTypes::haversineM(v.lat, v.lon, cLat, cLon) +
+                                      SwarmTypes::haversineM(cLat, cLon, returnLat, returnLon));
     }
     const double perVehicleM = sweepM / nV + transitM;
     const double missionMin = perVehicleM / cfg.cruiseSpeedMs / 60.0 + 2.0 * alt / cfg.climbRateMs / 60.0;  // 爬升+下降
@@ -196,7 +298,7 @@ void SwarmConstraintChecker::_checkTakeoffAlt(const SwarmAction& action, const C
     const double alt = action.params.value(QStringLiteral("altitude"), 30.0).toDouble();
     if (cfg.maxAltitudeM > 0.0 && alt > cfg.maxAltitudeM) {
         out.append({QStringLiteral("error"), QStringLiteral("fence"),
-                    QStringLiteral("起飞高度 %1 米超过围栏上限 %2 米").arg(alt).arg(cfg.maxAltitudeM),
+                    QStringLiteral("任务高度 %1 米超过围栏上限 %2 米").arg(alt).arg(cfg.maxAltitudeM),
                     QStringLiteral("降低高度至 %1 米以下").arg(cfg.maxAltitudeM)});
     }
 }
@@ -210,8 +312,9 @@ void SwarmConstraintChecker::_checkComm(const SwarmAction& action, const Config&
     // 链路覆盖：区域中心 + 半对角 距集结点
     const double halfDiag = qSqrt(qPow(p.value(QStringLiteral("length"), 0.0).toDouble() / 2.0, 2) +
                                   qPow(p.value(QStringLiteral("width"), 0.0).toDouble() / 2.0, 2));
-    const double homeLat = (cfg.homeLat != 0.0) ? cfg.homeLat : mapCenterLat;
-    const double homeLon = (cfg.homeLon != 0.0) ? cfg.homeLon : mapCenterLon;
+    const bool homeConfigured = cfg.homeLat != 0.0 || cfg.homeLon != 0.0;
+    const double homeLat = homeConfigured ? cfg.homeLat : mapCenterLat;
+    const double homeLon = homeConfigured ? cfg.homeLon : mapCenterLon;
     const double range = SwarmTypes::haversineM(homeLat, homeLon, cLat, cLon) + halfDiag;
     if (range > cfg.commRangeM * cfg.commErrorFactor) {
         out.append({QStringLiteral("error"), QStringLiteral("comm"),
@@ -264,31 +367,80 @@ void SwarmConstraintChecker::_checkDeconflict(const QList<CoverageArea>& areas, 
     }
 }
 
+QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::checkDeconfliction(const QList<SwarmAction>& plan,
+                                                                                    const Config& cfg,
+                                                                                    double mapCenterLat,
+                                                                                    double mapCenterLon) const
+{
+    QList<CoverageArea> areas;
+    for (const auto& action : plan) {
+        if (action.type != QStringLiteral("plan_coverage"))
+            continue;
+        const auto& p = action.params;
+        areas.append({p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble(),
+                      p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble(),
+                      p.value(QStringLiteral("length"), 0.0).toDouble(),
+                      p.value(QStringLiteral("width"), 0.0).toDouble()});
+    }
+    QList<Violation> out;
+    _checkDeconflict(areas, cfg, out);
+    return out;
+}
+
 QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(const QList<SwarmAction>& plan,
                                                                        const QList<SwarmTypes::VehicleState>& vehicles,
                                                                        const Config& cfg, double mapCenterLat,
                                                                        double mapCenterLon) const
 {
     QList<Violation> out;
-    QList<CoverageArea> coverageAreas;  // 收集作业区用于多区重叠检查
+    const bool usesConstraints = std::any_of(plan.cbegin(), plan.cend(), [](const auto& action) {
+        return action.type == QStringLiteral("takeoff") || action.type == QStringLiteral("plan_coverage") ||
+               action.type == QStringLiteral("start_formation");
+    });
+    if (usesConstraints && !cfg.error.isEmpty()) {
+        out.append(
+            {QStringLiteral("error"), QStringLiteral("config"), cfg.error, QStringLiteral("修正围栏配置后重试")});
+        return out;
+    }
     for (const SwarmAction& action : plan) {
         const QString& type = action.type;
         if (type == QStringLiteral("takeoff")) {
             _checkTakeoffAlt(action, cfg, out);
         } else if (type == QStringLiteral("plan_coverage")) {
             _checkFence(action, cfg, mapCenterLat, mapCenterLon, out);
+            _checkTakeoffAlt(action, cfg, out);
+            const Polygon area = coveragePolygon(action, mapCenterLat, mapCenterLon);
+            QList<Point> endpoints;
+            for (const auto& vehicle : vehicles) {
+                endpoints.append({vehicle.lat, vehicle.lon});
+                if (std::isfinite(vehicle.homeLat) && std::isfinite(vehicle.homeLon))
+                    endpoints.append({vehicle.homeLat, vehicle.homeLon});
+            }
+            for (const Point& start : endpoints) {
+                bool safe = std::isfinite(start.first) && std::isfinite(start.second);
+                // The fan covers all straight transfers from this vehicle to the survey rectangle.
+                for (int edge = 0; edge < area.size() && safe; ++edge) {
+                    const Polygon corridor{start, area[edge], area[(edge + 1) % area.size()]};
+                    if (!cfg.includePolygons.isEmpty()) {
+                        safe = std::any_of(cfg.includePolygons.cbegin(), cfg.includePolygons.cend(),
+                                           [&](const Polygon& polygon) { return containedBy(corridor, polygon); });
+                    }
+                    for (const auto& polygon : cfg.excludePolygons)
+                        safe = safe && !overlaps(corridor, polygon);
+                }
+                if (!safe) {
+                    out.append({QStringLiteral("error"), QStringLiteral("fence"),
+                                QStringLiteral("转场路径无效或穿越围栏/禁飞区"), QStringLiteral("调整作业区或起点")});
+                    break;
+                }
+            }
             _checkBattery(action, vehicles, cfg, mapCenterLat, mapCenterLon, out);
             _checkComm(action, cfg, mapCenterLat, mapCenterLon, out);
-            const QVariantMap& p = action.params;
-            coverageAreas.append({p.value(QStringLiteral("center_lat"), mapCenterLat).toDouble(),
-                                  p.value(QStringLiteral("center_lon"), mapCenterLon).toDouble(),
-                                  p.value(QStringLiteral("length"), 0.0).toDouble(),
-                                  p.value(QStringLiteral("width"), 0.0).toDouble()});
         } else if (type == QStringLiteral("start_formation")) {
             _checkSpacing(action, cfg, out);
         }
     }
-    _checkDeconflict(coverageAreas, cfg, out);
+    out.append(checkDeconfliction(plan, cfg, mapCenterLat, mapCenterLon));
     return out;
 }
 

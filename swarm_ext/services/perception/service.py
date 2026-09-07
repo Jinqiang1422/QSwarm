@@ -23,7 +23,9 @@ TUNNEL 通道承载；UDP JSON 帧 = TUNNEL 载荷字节，QGC 侧按同一契�
 """
 
 import argparse
+import contextlib
 import json
+import math
 import socket
 import sys
 import time
@@ -68,14 +70,68 @@ class FileSink:
         self._fp.close()
 
 
+class VideoFrameSource:
+    """Own one capture; each read either returns a real BGR frame or fails explicitly."""
+
+    def __init__(self, source, sensor_id, reconnect_attempts=2):
+        if type(source) not in (str, int) or source == "":
+            raise ValueError(f"相机 {sensor_id} 缺少有效 video_source")
+        import cv2
+
+        self._cv2 = cv2
+        self._source = source
+        self._sensor_id = sensor_id
+        self._reconnect_attempts = max(0, min(int(reconnect_attempts), 5))
+        self._live = isinstance(source, int) or source.startswith(
+            ("rtsp://", "http://", "https://")
+        )
+        self._capture = None
+        self._open()
+
+    def _open(self):
+        self.close()
+        cv2 = self._cv2
+        if isinstance(self._source, str) and self._live:
+            self._capture = cv2.VideoCapture(
+                self._source,
+                cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000],
+            )
+        else:
+            self._capture = cv2.VideoCapture(self._source)
+        if not self._capture.isOpened():
+            self.close()
+            raise RuntimeError(f"相机 {self._sensor_id} 视频源无法打开")
+        # Best effort: supported live backends retain at most one pending frame.
+        self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    def read(self):
+        attempts = self._reconnect_attempts if self._live else 0
+        for attempt in range(attempts + 1):
+            ok, frame = self._capture.read()
+            if ok and frame is not None and len(frame.shape) == 3 and frame.shape[2] == 3:
+                return frame
+            if attempt < attempts:
+                self._open()
+        raise RuntimeError(f"相机 {self._sensor_id} 视频中断或已到文件末尾")
+
+    def close(self):
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+
+
 def run_scenario(scn: dict, sink, realtime: bool = False, verbose: bool = True) -> dict:
     duration = float(scn.get("duration_s", 30))
     fps = float(scn.get("fps", 5))
+    if not math.isfinite(duration) or not math.isfinite(fps) or duration <= 0 or fps < 1:
+        raise ValueError("duration_s 必须为正数，fps 必须至少为 1")
     frames = int(duration * fps)
     dt = 1.0 / fps
 
     det_cfg = scn.get("detector", {"type": "simulated"})
-    if det_cfg.get("type", "simulated") == "simulated":
+    simulated = det_cfg.get("type", "simulated") == "simulated"
+    if simulated:
         detector = SimulatedDetector(
             scn.get("truths", []),
             pos_noise_px=float(det_cfg.get("pos_noise_px", 3.0)),
@@ -99,65 +155,82 @@ def run_scenario(scn: dict, sink, realtime: bool = False, verbose: bool = True) 
     ]
     if not cams:
         raise ValueError("场景缺少 cameras")
+    if len({cam.sensor_id for cam in cams}) != len(cams):
+        raise ValueError("camera sensor_id 必须唯一")
     ref_lat, ref_lon = cams[0].lat, cams[0].lon  # ENU 参考点协议
 
-    trackers = {cam.sensor_id: MultiObjectTracker() for cam in cams}
-    seq = 0
-    t0 = time.time()
-    stats = {"frames": 0, "detections": 0, "track_msgs": 0, "heartbeats": 0, "bytes": 0}
-
-    for f in range(frames):
-        scenario_usec = int(f * dt * 1e6)  # 场景时间（真值插值用）
-        wire_usec = int(time.time() * 1e6)  # 墙钟时间（报文时间戳/时延测量用）
-        all_tracks = []
-        for cam in cams:
-            cam.time_usec = scenario_usec
-            dets = detector.detect(f, cam)
-            stats["detections"] += len(dets)
-            meas = []
-            for d in dets:
-                geo = pixel_to_geo(d.x_px, d.y_px, cam)
-                if geo is None:
-                    continue
-                e, n = latlon_to_local(ref_lat, ref_lon, geo[0], geo[1])
-                meas.append((e, n, d.category, d.confidence, d.sensor_id))
-            active = trackers[cam.sensor_id].update(meas, scenario_usec, dt=dt)
-            for tr in active:
-                lat, lon = local_to_geo(ref_lat, ref_lon, tr.east, tr.north)
-                all_tracks.append(
-                    swarm_msgs.make_track(
-                        tr.id,
-                        tr.category,
-                        lat,
-                        lon,
-                        ve=tr.ve,
-                        vn=tr.vn,
-                        confidence=tr.confidence,
-                        sensor_id=cam.sensor_id,
-                        source=0,
-                        time_usec=wire_usec,
-                    )
+    with contextlib.ExitStack() as stack:
+        captures = {}
+        if not simulated:
+            for index, cam in enumerate(cams):
+                config = scn["cameras"][index]
+                capture = VideoFrameSource(
+                    config.get("video_source"), cam.sensor_id, config.get("reconnect_attempts", 2)
                 )
-        if all_tracks:
-            for pt, payload in swarm_msgs.encode(
-                "track_batch", swarm_msgs.make_track_batch(all_tracks, wire_usec), seq
-            ):
-                sink.send(pt, payload)
-                stats["bytes"] += len(payload)
-            stats["track_msgs"] += 1
-            seq = (seq + 1) & 0xFF
-        if f % int(fps) == 0:  # 1Hz 心跳
-            hb = swarm_msgs.make_heartbeat(len(all_tracks), fps, len(cams), 0, wire_usec)
-            for pt, payload in swarm_msgs.encode("heartbeat", hb, seq):
-                sink.send(pt, payload)
-                stats["bytes"] += len(payload)
-            stats["heartbeats"] += 1
-        stats["frames"] += 1
-        if realtime:
-            time.sleep(max(0.0, t0 + (f + 1) * dt - time.time()))
-        if verbose and f % int(fps * 5) == 0:
-            print(f"[service] t={f * dt:5.1f}s 活动航迹 {len(all_tracks)}", flush=True)
-    return stats
+                stack.callback(capture.close)
+                captures[cam.sensor_id] = capture
+        trackers = {cam.sensor_id: MultiObjectTracker() for cam in cams}
+        seq = 0
+        t0 = time.time()
+        stats = {"frames": 0, "detections": 0, "track_msgs": 0, "heartbeats": 0, "bytes": 0}
+
+        for f in range(frames):
+            scenario_usec = int(f * dt * 1e6)  # 场景时间（真值插值用）
+            wire_usec = int(time.time() * 1e6)  # 墙钟时间（报文时间戳/时延测量用）
+            all_tracks = []
+            for cam in cams:
+                cam.time_usec = scenario_usec
+                if simulated:
+                    dets = detector.detect(f, cam)
+                else:
+                    frame = captures[cam.sensor_id].read()
+                    cam.height_px, cam.width_px = frame.shape[:2]
+                    dets = detector.detect(f, cam, frame_bgr=frame)
+                stats["detections"] += len(dets)
+                meas = []
+                for d in dets:
+                    geo = pixel_to_geo(d.x_px, d.y_px, cam)
+                    if geo is None:
+                        continue
+                    e, n = latlon_to_local(ref_lat, ref_lon, geo[0], geo[1])
+                    meas.append((e, n, d.category, d.confidence, d.sensor_id))
+                active = trackers[cam.sensor_id].update(meas, scenario_usec, dt=dt)
+                for tr in active:
+                    lat, lon = local_to_geo(ref_lat, ref_lon, tr.east, tr.north)
+                    all_tracks.append(
+                        swarm_msgs.make_track(
+                            tr.id,
+                            tr.category,
+                            lat,
+                            lon,
+                            ve=tr.ve,
+                            vn=tr.vn,
+                            confidence=tr.confidence,
+                            sensor_id=cam.sensor_id,
+                            source=0,
+                            time_usec=wire_usec,
+                        )
+                    )
+            if all_tracks:
+                for pt, payload in swarm_msgs.encode(
+                    "track_batch", swarm_msgs.make_track_batch(all_tracks, wire_usec), seq
+                ):
+                    sink.send(pt, payload)
+                    stats["bytes"] += len(payload)
+                stats["track_msgs"] += 1
+                seq = (seq + 1) & 0xFF
+            if f % int(fps) == 0:  # 1Hz 心跳
+                hb = swarm_msgs.make_heartbeat(len(all_tracks), fps, len(cams), 0, wire_usec)
+                for pt, payload in swarm_msgs.encode("heartbeat", hb, seq):
+                    sink.send(pt, payload)
+                    stats["bytes"] += len(payload)
+                stats["heartbeats"] += 1
+            stats["frames"] += 1
+            if realtime:
+                time.sleep(max(0.0, t0 + (f + 1) * dt - time.time()))
+            if verbose and f % int(fps * 5) == 0:
+                print(f"[service] t={f * dt:5.1f}s 活动航迹 {len(all_tracks)}", flush=True)
+        return stats
 
 
 def main(argv=None):
@@ -171,20 +244,25 @@ def main(argv=None):
 
     with open(args.scenario, encoding="utf-8") as fp:
         scn = json.load(fp)
-    for key in ("cameras", "truths"):
+    required_keys = ["cameras"]
+    if scn.get("detector", {}).get("type", "simulated") == "simulated":
+        required_keys.append("truths")
+    for key in required_keys:
         if key not in scn:
             print(f"[service] 场景缺少字段: {key}", file=sys.stderr)
             return 2
     if args.dry_run:
         print(
             f"[service] dry-run 通过：{len(scn['cameras'])} 路相机，"
-            f"{len(scn['truths'])} 个真值目标，时长 {scn.get('duration_s', 30)}s"
+            f"{len(scn.get('truths', []))} 个真值目标，时长 {scn.get('duration_s', 30)}s"
         )
         return 0
 
     sink = UdpSink(args.out) if args.out.startswith("udp://") else FileSink(args.out)
-    stats = run_scenario(scn, sink, realtime=args.realtime, verbose=not args.quiet)
-    sink.close()
+    try:
+        stats = run_scenario(scn, sink, realtime=args.realtime, verbose=not args.quiet)
+    finally:
+        sink.close()
     print(
         f"[service] 完成：{stats['frames']} 帧，{stats['detections']} 次检测，"
         f"{stats['track_msgs']} 条航迹报文，{stats['heartbeats']} 次心跳，"

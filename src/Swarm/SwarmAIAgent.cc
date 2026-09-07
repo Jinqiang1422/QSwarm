@@ -48,7 +48,8 @@ SwarmAIAgent::SwarmAIAgent(SwarmManager* swarmManager)
     QSettings settings;
     _apiBaseUrl =
         settings.value(QStringLiteral("SwarmAI/apiBaseUrl"), QStringLiteral("https://api.deepseek.com/v1")).toString();
-    _apiKey = settings.value(QStringLiteral("SwarmAI/apiKey")).toString();
+    // API credentials are session-only. Remove the legacy plaintext setting.
+    settings.remove(QStringLiteral("SwarmAI/apiKey"));
     _modelName = settings.value(QStringLiteral("SwarmAI/modelName"), QStringLiteral("deepseek-chat")).toString();
     _useFunctionCalling = settings.value(QStringLiteral("SwarmAI/useFunctionCalling"), true).toBool();
 
@@ -113,7 +114,7 @@ void SwarmAIAgent::setApiKey(const QString& key)
 {
     if (_apiKey != key) {
         _apiKey = key;
-        QSettings().setValue(QStringLiteral("SwarmAI/apiKey"), key);
+        QSettings().remove(QStringLiteral("SwarmAI/apiKey"));
         emit apiKeyChanged();
     }
 }
@@ -203,12 +204,13 @@ QString SwarmAIAgent::_systemPromptTools() const
         "1. 只能使用 [当前态势] 中存在的无人机 id。\n"
         "2. 用户指定机号时：先调用 set_selection 再调用后续动作；未指定则不加（作用于当前选中集，为空即全体）。\n"
         "3. 参数限值：altitude 2~120 米，spacing 2~500 米，length/width 10~100000 米，angle 0~360 "
-        "度。超限取边界值并说明。\n"
+        "度。超限请求须解释并追问，不擅自限幅。\n"
         "4. “搜索/巡查/覆盖区域”→ plan_coverage；未给中心时省略 center_lat/center_lon（默认地图中心）。\n"
         "5. 多步任务按顺序依次调用工具，如“全体起飞后楔形编队”→ takeoff + start_formation；"
         "“2号3号返航”→ set_selection([2,3]) + rtl。\n"
         "6. 包含明显先后依赖、需要等待完成再进入下一步的任务（如“起飞→搜索→返航”整体流程）："
         "用 start_swarm_task 一次下发多阶段任务，状态机会监控完成条件自动推进。\n"
+        "任务编排、模板、候选方案和中止工具每次必须单独调用，不与其他动作混发。\n"
         "7. 用户意图与 templates 列表中某个任务模板匹配时：优先调用 run_task_template 按名引用并给出参数，"
         "未指定的参数用模板默认值；模板不完全匹配时才用 start_swarm_task 自定义编排。\n"
         "8. 用户要求“给几个方案/候选/备选”，或任务有多种明显不同的合理实现（如不同队形、不同分区、不同模板）时："
@@ -260,10 +262,12 @@ QString SwarmAIAgent::_systemPromptJson() const
         "【规则】\n"
         "1. 只能使用 [当前态势] 中存在的无人机 id。\n"
         "2. 用户指定机号时：先 set_selection 再下后续指令；未指定则不加。\n"
-        "3. 参数限值：altitude 2~120，spacing 2~500，length/width 10~100000，angle 0~360。超限取边界值并说明。\n"
+        "3. 参数限值：altitude 2~120，spacing 2~500，length/width 10~100000，angle "
+        "0~360。超限请求须解释并追问，不擅自限幅。\n"
         "4. “搜索/巡查/覆盖区域”→ plan_coverage；未给中心时 center 用 \"map_center\"。\n"
         "5. 有先后依赖的完整流程（起飞→搜索→返航）→ 优先匹配 templates 模板用 run_task_template，不匹配才用 "
         "start_swarm_task 自定义编排。\n"
+        "任务编排、模板、候选方案和中止工具每次必须单独调用，不与其他动作混发。\n"
         "6. 意图不清或缺关键参数且无法合理默认时：actions 输出空数组，在 reply 中追问。\n"
         "7. 数值必须是数字不带单位。\n"
         "8. 态势类请求仅依据 [态势摘要] 作答，事实须标注来源角标（[遥测]/[感知]/[推测]），禁止编造。\n\n"
@@ -536,6 +540,10 @@ void SwarmAIAgent::sendText(const QString& text, double mapCenterLat, double map
     }
     const QString cleaned = verdict.sanitized;
 
+    rejectPlan();
+    if (!_candidates.isEmpty())
+        rejectCandidates();
+
     _lastMapCenterLat = mapCenterLat;
     _lastMapCenterLon = mapCenterLon;
     _appendChat(tr("你"), trimmed);
@@ -724,37 +732,16 @@ void SwarmAIAgent::_handleResponse(const QByteArray& body)
         for (const QJsonValue& callVal : toolCalls) {
             const QJsonObject fn = callVal.toObject().value(QStringLiteral("function")).toObject();
             const QString name = fn.value(QStringLiteral("name")).toString();
-            const QJsonObject args =
-                QJsonDocument::fromJson(fn.value(QStringLiteral("arguments")).toString().toUtf8()).object();
-
-            if (name == QStringLiteral("start_swarm_task")) {
-                QString taskName;
-                QList<SwarmTaskController::Stage> stages;
-                QStringList warnings;
-                if (_handleTaskJson(args, taskName, stages, warnings)) {
-                    _pendingTask = true;
-                    _pendingTaskName = taskName;
-                    _pendingStages = stages;
-                }
-                for (const QString& w : warnings) {
-                    _appendChat(tr("系统"), w);
-                }
-            } else if (name == QStringLiteral("run_task_template")) {
-                _runTaskTemplate(args);
-            } else if (name == QStringLiteral("propose_candidates")) {
-                _handleCandidates(args);
-            } else if (name == QStringLiteral("abort_swarm_task")) {
-                _swarmManager->taskController()->abort();
-            } else {
-                QJsonObject action = args;
-                action[QStringLiteral("type")] = name;
-                if (name == QStringLiteral("plan_coverage") && args.contains(QStringLiteral("center_lat")) &&
-                    args.contains(QStringLiteral("center_lon"))) {
-                    action[QStringLiteral("center")] = QJsonArray{args.value(QStringLiteral("center_lat")).toDouble(),
-                                                                  args.value(QStringLiteral("center_lon")).toDouble()};
-                }
-                actionsJson.append(action);
+            QJsonParseError error;
+            const auto arguments =
+                QJsonDocument::fromJson(fn.value(QStringLiteral("arguments")).toString().toUtf8(), &error);
+            if (error.error != QJsonParseError::NoError || !arguments.isObject()) {
+                emit agentFeedback(tr("工具参数不是有效 JSON 对象，整个计划已拒绝"));
+                return;
             }
+            QJsonObject action = arguments.object();
+            action[QStringLiteral("type")] = name;
+            actionsJson.append(action);
             immediateTexts.append(name);
         }
 
@@ -769,21 +756,7 @@ void SwarmAIAgent::_handleResponse(const QByteArray& body)
         }
         SwarmAuditLogger::instance()->logLlmOutput(replyText, immediateTexts);
 
-        if (!actionsJson.isEmpty()) {
-            QStringList warnings;
-            const QList<SwarmAction> plan = _swarmManager->parseAndValidate(
-                actionsJson, QGeoCoordinate(_lastMapCenterLat, _lastMapCenterLon), warnings);
-            SwarmAuditLogger::instance()->logValidation(actionsJson.count(), plan.count(), warnings);
-            for (const QString& w : warnings) {
-                _appendChat(tr("系统"), w);
-            }
-            _queueOrExecute(plan);
-        }
-        if (_pendingTask) {
-            emit planPendingChanged();
-            emit planChanged();
-            emit agentFeedback(tr("AI 已生成多阶段任务计划，请在面板确认执行"));
-        }
+        _handleActionsJson(actionsJson, replyText);
         return;
     }
 
@@ -834,6 +807,19 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
         return;
     }
 
+    const QSet<QString> orchestration = {QStringLiteral("start_swarm_task"), QStringLiteral("run_task_template"),
+                                         QStringLiteral("abort_swarm_task"), QStringLiteral("propose_candidates")};
+    if (actionsJson.size() > 10) {
+        emit agentFeedback(tr("动作数超过上限，整个计划已拒绝"));
+        return;
+    }
+    for (const auto& value : actionsJson) {
+        if (!value.isObject() || (orchestration.contains(value.toObject().value(QStringLiteral("type")).toString()) &&
+                                  actionsJson.size() != 1)) {
+            emit agentFeedback(tr("任务编排工具必须单独调用，整个计划已拒绝"));
+            return;
+        }
+    }
     QJsonArray basicActions;
     for (const QJsonValue& val : actionsJson) {
         const QJsonObject obj = val.toObject();
@@ -852,6 +838,8 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
             }
         } else if (type == QStringLiteral("run_task_template")) {
             _runTaskTemplate(obj);
+        } else if (type == QStringLiteral("propose_candidates")) {
+            _handleCandidates(obj);
         } else if (type == QStringLiteral("abort_swarm_task")) {
             _swarmManager->taskController()->abort();
         } else {
@@ -879,7 +867,7 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
 // ---------------------------------------------------------------------------
 // 多阶段任务 JSON → Stage 列表（动作经统一管线校验）
 // ---------------------------------------------------------------------------
-bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString taskName,
+bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString& taskName,
                                    QList<SwarmTaskController::Stage>& stages, QStringList& warnings)
 {
     taskName = taskObj.value(QStringLiteral("task_name")).toString(tr("未命名任务"));
@@ -961,23 +949,15 @@ void SwarmAIAgent::_handleCandidates(const QJsonObject& args)
         QList<SwarmAction> flatActions;
         QString kindText;
         if (c.value(QStringLiteral("actions")).isArray()) {
-            // 动作型候选：plan_coverage 的 center_lat/lon 转 center 数组
-            QJsonArray actionsJson;
-            for (const QJsonValue& av : c.value(QStringLiteral("actions")).toArray()) {
-                QJsonObject a = av.toObject();
-                if (a.value(QStringLiteral("type")).toString() == QStringLiteral("plan_coverage") &&
-                    (a.contains(QStringLiteral("center_lat")) || a.contains(QStringLiteral("center_lon")))) {
-                    a[QStringLiteral("center")] =
-                        QJsonArray{a.value(QStringLiteral("center_lat")), a.value(QStringLiteral("center_lon"))};
-                }
-                actionsJson.append(a);
-            }
+            const QJsonArray actionsJson = c.value(QStringLiteral("actions")).toArray();
             QStringList warnings;
             cand.plan = _swarmManager->parseAndValidate(actionsJson,
                                                         QGeoCoordinate(_lastMapCenterLat, _lastMapCenterLon), warnings);
             for (const QString& w : warnings) {
                 _appendChat(tr("系统"), w);
             }
+            if (cand.plan.isEmpty())
+                continue;
             flatActions = cand.plan;
             kindText = tr("直接计划");
         } else if (c.contains(QStringLiteral("template_name"))) {
@@ -991,6 +971,8 @@ void SwarmAIAgent::_handleCandidates(const QJsonObject& args)
             for (const QString& w : warnings) {
                 _appendChat(tr("系统"), w);
             }
+            if (cand.stages.isEmpty())
+                continue;
             cand.isTask = true;
             cand.taskName = tplName;
             for (const SwarmTaskController::Stage& s : std::as_const(cand.stages)) {
@@ -1014,7 +996,7 @@ void SwarmAIAgent::_handleCandidates(const QJsonObject& args)
 
         _candidates.append(cand);
         _candidatesVariant.append(QVariantMap{
-            {QStringLiteral("index"), i},
+            {QStringLiteral("index"), _candidates.count() - 1},
             {QStringLiteral("title"), title},
             {QStringLiteral("summary"), summary},
             {QStringLiteral("pros"), pros},
@@ -1097,6 +1079,10 @@ void SwarmAIAgent::updatePendingAction(int index, const QString& paramsJson)
         emit agentFeedback(tr("参数 JSON 解析失败，请检查格式"));
         return;
     }
+    if (_pendingPlan.at(index).type == QStringLiteral("set_selection")) {
+        emit agentFeedback(tr("修改目标机请重新生成计划，以保持后续动作的目标一致"));
+        return;
+    }
     // 合并编辑参数后重新过统一校验（与 LLM 计划同一管线）
     const SwarmAction& old = _pendingPlan.at(index);
     QJsonObject actionJson;
@@ -1107,19 +1093,20 @@ void SwarmAIAgent::updatePendingAction(int index, const QString& paramsJson)
     for (auto it = edited.constBegin(); it != edited.constEnd(); ++it) {
         actionJson.insert(it.key(), it.value());
     }
-    // plan_coverage 内部存储为 lat/lon，重新校验需转回 center 数组
-    if (old.type == QStringLiteral("plan_coverage") && actionJson.contains(QStringLiteral("lat"))) {
-        actionJson[QStringLiteral("center")] =
-            QJsonArray{actionJson.value(QStringLiteral("lat")), actionJson.value(QStringLiteral("lon"))};
-    }
     QStringList warnings;
     const QList<SwarmAction> revalidated = _swarmManager->parseAndValidate(
-        QJsonArray{actionJson}, QGeoCoordinate(_lastMapCenterLat, _lastMapCenterLon), warnings);
+        QJsonArray{actionJson}, QGeoCoordinate(_lastMapCenterLat, _lastMapCenterLon), warnings, old.targetIds);
     if (revalidated.isEmpty()) {
         emit agentFeedback(tr("编辑未生效，参数未通过校验：%1").arg(warnings.join(QStringLiteral("；"))));
         return;
     }
-    _pendingPlan[index] = revalidated.first();
+    QList<SwarmAction> editedPlan = _pendingPlan;
+    editedPlan[index] = revalidated.first();
+    if (_swarmManager->planHasConstraintError(editedPlan)) {
+        emit agentFeedback(tr("编辑未生效：完整计划的实时约束未通过"));
+        return;
+    }
+    _pendingPlan = editedPlan;
     emit planChanged();
     SwarmAuditLogger::instance()->log(
         QStringLiteral("dialog"), QStringLiteral("plan_edited"),
@@ -1133,7 +1120,7 @@ void SwarmAIAgent::_queueOrExecute(const QList<SwarmAction>& plan)
         return;
     }
 
-    // 约束校验闸门（WP2.1）：error 级违例强制挂起人工确认（即使 L3 白名单放行）
+    // error 级违例挂起待修正，人工确认仍须重新通过实时约束。
     const QVariantList violations = _swarmManager->checkConstraints(plan, _lastMapCenterLat, _lastMapCenterLon);
     int errorCount = 0;
     QStringList violationTexts;
@@ -1161,7 +1148,7 @@ void SwarmAIAgent::_queueOrExecute(const QList<SwarmAction>& plan)
         _pendingPlan = plan;
         emit planPendingChanged();
         emit planChanged();
-        const QString reason = tr("约束校验未通过（%1 项违例），需人工确认").arg(errorCount);
+        const QString reason = tr("约束校验未通过（%1 项违例），请修改计划后重试").arg(errorCount);
         SwarmAuditLogger::instance()->logPlanPending(planSummary(), reason);
         emit agentFeedback(reason);
         return;
@@ -1178,7 +1165,7 @@ void SwarmAIAgent::_queueOrExecute(const QList<SwarmAction>& plan)
         emit agentFeedback(reason);
         return;
     }
-    if (_requireConfirm && _swarmManager->needsConfirmation(plan, &reason)) {
+    if (_swarmManager->needsConfirmation(plan, &reason) || _requireConfirm) {
         _pendingPlan = plan;
         emit planPendingChanged();
         emit planChanged();
@@ -1202,6 +1189,15 @@ void SwarmAIAgent::confirmPlan()
     if (_pendingTask) {
         const QString taskName = _pendingTaskName;
         const QList<SwarmTaskController::Stage> stages = _pendingStages;
+        QList<SwarmAction> actions;
+        for (const auto& stage : stages)
+            actions.append(stage.actions);
+        if (_swarmManager->planHasConstraintError(actions)) {
+            emit agentFeedback(tr("实时约束未通过，请修改或重新生成任务"));
+            return;
+        }
+        if (!_swarmManager->taskController()->startTask(taskName, stages, true))
+            return;
         const QStringList summary = planSummary();
         _pendingTask = false;
         _pendingStages.clear();
@@ -1209,20 +1205,24 @@ void SwarmAIAgent::confirmPlan()
         emit planChanged();
         _appendChat(tr("系统"), tr("操作员已确认，多阶段任务启动。"));
         SwarmAuditLogger::instance()->logPlanConfirmed(summary);
-        _swarmManager->taskController()->startTask(taskName, stages);
+
         return;
     }
     if (_pendingPlan.isEmpty()) {
         return;
     }
     const QList<SwarmAction> plan = _pendingPlan;
+    if (!_swarmManager->executeActions(plan, QStringLiteral("ai_confirmed"),
+                                       SwarmManager::ExecutionApproval::OperatorConfirmed)) {
+        emit agentFeedback(tr("计划未下发，请检查实时约束或目标机状态"));
+        return;
+    }
     const QStringList summary = planSummary();
     _pendingPlan.clear();
     emit planPendingChanged();
     emit planChanged();
     _appendChat(tr("系统"), tr("操作员已确认，计划开始执行。"));
     SwarmAuditLogger::instance()->logPlanConfirmed(summary);
-    _swarmManager->executeActions(plan, QStringLiteral("ai_confirmed"));
 }
 
 void SwarmAIAgent::rejectPlan()

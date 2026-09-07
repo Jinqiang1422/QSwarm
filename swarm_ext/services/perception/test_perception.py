@@ -9,11 +9,17 @@ WP3.2/3.7 感知服务测试（无 GPU/无 Qt 环境可跑）：
 退出码 0 = 全部通过。
 """
 
+import contextlib
 import json
 import math
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
+import service
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -168,6 +174,68 @@ if batches:
     )
     vids = {t["track_id"] for b in batches[-10:] for t in b["tracks"]}
     check("ID 持续不爆炸", len(vids) <= 6, f"(近10帧出现 {len(vids)} 个 ID)")
+
+# Real-input wiring: exercise the production source and detector adapters without a model download.
+
+video_frames = []
+captures = []
+
+
+class CaptureFixture:
+    def __init__(self, *args):
+        self.released = False
+        self.reads = 0
+        captures.append(self)
+
+    def isOpened(self):
+        return True
+
+    def set(self, *args):
+        return True
+
+    def read(self):
+        self.reads += 1
+        return True, np.full((72, 128, 3), self.reads, dtype=np.uint8)
+
+    def release(self):
+        self.released = True
+
+
+class ModelFixture:
+    def predict(self, frame, **kwargs):
+        video_frames.append(frame.copy())
+        return [SimpleNamespace(boxes=[])]
+
+
+cv_fixture = SimpleNamespace(VideoCapture=CaptureFixture, CAP_PROP_BUFFERSIZE=38)
+model_fixture = SimpleNamespace(YOLO=lambda _: ModelFixture())
+video_config = {
+    "duration_s": 1,
+    "fps": 3,
+    "detector": {"type": "onnx", "model_path": "fixture"},
+    "cameras": [
+        {"sensor_id": 1, "lat": 39.9, "lon": 116.4, "alt_m": 80, "video_source": "fixture.avi"}
+    ],
+}
+with patch.dict(sys.modules, {"cv2": cv_fixture, "ultralytics": model_fixture}):
+    video_stats = service.run_scenario(
+        video_config, SimpleNamespace(send=lambda *args: None), verbose=False
+    )
+check("真实输入分支逐帧传给模型", len(video_frames) == 3 and video_stats["frames"] == 3)
+check(
+    "图像尺寸与 BGR 数据保持",
+    all(f.shape == (72, 128, 3) for f in video_frames) and int(video_frames[2][0, 0, 0]) == 3,
+)
+check("正常结束释放视频源", all(c.released for c in captures))
+with contextlib.ExitStack() as stack:
+    stack.enter_context(patch.dict(sys.modules, {"cv2": cv_fixture, "ultralytics": model_fixture}))
+    stack.enter_context(patch.object(CaptureFixture, "read", return_value=(False, None)))
+    try:
+        service.run_scenario(video_config, SimpleNamespace(send=lambda *args: None), verbose=False)
+        check("视频中断明确失败", False)
+    except RuntimeError:
+        check("视频中断明确失败", True)
+check("异常路径释放视频源", all(c.released for c in captures))
 
 print(f"\n感知服务测试: {PASS} PASS / {FAIL} FAIL")
 sys.exit(1 if FAIL else 0)
