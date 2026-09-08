@@ -1,0 +1,187 @@
+{
+  "date": "2026-09-08",
+  "code_commit": "40f3e0d901db19c4271aaa8d7fa5323e3370236a",
+  "baseline_commit": "e3226eccb1ae52bc0ce9cec0931c564464376307",
+  "binary_built_before_commits": true,
+  "manifest_verified_against_code_commit": true,
+  "binary_sha256": "571fb951445c9f80cbe528db3123c749c669d8bb5fbb6148f926810c91685f61",
+  "environment": {
+    "platform": "Linux",
+    "qt": "6.11.1",
+    "configuration": "Debug, QGC_BUILD_TESTING=ON",
+    "container": "qgc-ubuntu-docker:latest"
+  },
+  "results": {
+    "build": {
+      "status": "PASS",
+      "report": "build-release-candidate/SUMMARY.md"
+    },
+    "standard": {
+      "status": "PASS",
+      "checks": 16,
+      "standalone_cpp_programs": 10,
+      "perception_tests": 22,
+      "protocol_tests": 5,
+      "report": "standard-verified/SUMMARY.md",
+      "note": "Includes host Ruff 0.9.0; changed files also pass CI-pinned Ruff 0.15.20."
+    },
+    "scenario_contracts": {
+      "status": "PASS",
+      "checks": 2,
+      "report": "scenario-closure/SUMMARY.md"
+    },
+    "unit": {
+      "status": "PASS",
+      "ctest_programs": 183,
+      "report": "final-acceptance/SUMMARY.md"
+    },
+    "integration": {
+      "status": "PASS",
+      "ctest_programs": 60,
+      "internal_qttest_skips": 20,
+      "report": "final-acceptance/SUMMARY.md"
+    },
+    "swarm_regression": {
+      "status": "PASS",
+      "qt_pass_count_including_setup_cleanup": 19,
+      "cases": [
+        "SwarmRegressionTest::initTestCase()",
+        "SwarmRegressionTest::queuedArmingMustBeCancelledByPause(direct)",
+        "SwarmRegressionTest::queuedArmingMustBeCancelledByPause(confirmed action)",
+        "SwarmRegressionTest::taskAbortMustStopFormation()",
+        "SwarmRegressionTest::neverStartedMissionMustNotComplete()",
+        "SwarmRegressionTest::invalidTemplateNumberMustBeRejected()",
+        "SwarmRegressionTest::coverageRoundTripMustRetainTakeoff(PX4)",
+        "SwarmRegressionTest::coverageRoundTripMustRetainTakeoff(ArduPilot)",
+        "SwarmRegressionTest::missionMustWaitForUploadAcknowledgement()",
+        "SwarmRegressionTest::remainingMembersContinueLaterStages()",
+        "SwarmRegressionTest::withdrawnGroupDoesNotBlockFutureGroups()",
+        "SwarmRegressionTest::allTemplatesUseRuntimeContracts()",
+        "SwarmRegressionTest::legacyTemplateMigrationPreservesCustomEdits()",
+        "SwarmRegressionTest::missionCompletionRequiresCurrentExecutionEvidence()",
+        "SwarmRegressionTest::lateTakeoffAcknowledgementCannotArmWithdrawnTarget()",
+        "SwarmRegressionTest::missionReplacementBlocksLaterStart()",
+        "SwarmRegressionTest::formationLeaderWithdrawalKeepsRemainingMembers()",
+        "SwarmRegressionTest::durationUsesMonotonicDeadline()",
+        "SwarmRegressionTest::cleanupTestCase()"
+      ]
+    },
+    "sitl": {
+      "status": "PASS",
+      "scenarios": [
+        {
+          "id": "01_area_search",
+          "status": "PASS",
+          "duration_seconds": 157.5
+        },
+        {
+          "id": "02_formation_cruise",
+          "status": "PASS",
+          "duration_seconds": 243.0
+        },
+        {
+          "id": "05_emergency_stop",
+          "status": "PASS",
+          "duration_seconds": 98.0
+        },
+        {
+          "id": "08_task_orchestration",
+          "status": "PASS",
+          "duration_seconds": 1.3
+        },
+        {
+          "id": "09_partial_withdrawal",
+          "status": "PASS",
+          "duration_seconds": 83.6
+        }
+      ],
+      "report": "sitl-release-candidate/SUMMARY.md"
+    },
+    "changed_static_checks": {
+      "status": "PASS",
+      "checks": 13,
+      "report": "quality-gates/changed-checks.log"
+    },
+    "full_lint": {
+      "status": "BLOCKED",
+      "reason": "The installed Go toolchain cannot parse TruffleHog v3.95.7 go.mod (Go 1.25.0/toolchain). just lint was attempted in an isolated worktree and failed before completing all hooks.",
+      "report": "quality-gates/full-lint-environment-failure.log"
+    },
+    "qmllint": {
+      "status": "WARNINGS",
+      "baseline_warnings": 153,
+      "current_warnings": 151,
+      "report": "quality-gates/qml-check.log"
+    }
+  },
+  "not_verified": [
+    "ArduPilot flight-dynamics SITL",
+    "Physical aircraft and cameras",
+    "Long-duration soak and other desktop/mobile platforms",
+    "Complete repository lint"
+  ],
+  "evidence_root": "test_results/2026-09-08-improvement",
+  "source_sha256": {
+    ".github/workflows/swarm-p1-ci.yml": "fee0c94139fbf0b8094e3bf2f2e2500e36ee0d93b5d39f1bf1e81cc17b3311e5",
+    "src/FirmwarePlugin/APM/APMFirmwarePlugin.cc": "089994ac26289e6206c9514bd22004e4973ce20f6c2a6c0b057ab3709eca6514",
+    "src/FirmwarePlugin/APM/APMFirmwarePlugin.h": "5cf678ffe69ab7f3ce2e251226bb78d40f72c87e072184d1428f2f41ed1abfd3",
+    "src/FirmwarePlugin/FirmwarePlugin.cc": "6af889219dc59047c1a124ce18bb5e4d67457441a8e04e6d8c6a65cc664e6b60",
+    "src/FirmwarePlugin/FirmwarePlugin.h": "cd1e92b52ddac794ebcd40925130ce7617e4f364e751ee94890d25a217083aeb",
+    "src/FirmwarePlugin/PX4/PX4FirmwarePlugin.cc": "f3f45b460873fa67f7b520d5ab80e7dbde3b88280808849c3a8ff5c71ef05cbc",
+    "src/FirmwarePlugin/PX4/PX4FirmwarePlugin.h": "b5dac8f9e112303bcdf35997ae674bb817fa99767daaff598905e54011790eb6",
+    "src/FlyView/SwarmAIPanel.qml": "ccd74458c76a08339a0b36e18cca23ce73bf413bf7a178f5ab98104cf177c070",
+    "src/MissionManager/MissionManager.cc": "e43d9397e941bcf817ab219b8e4642c9941b5803ae91311b788115fc9afb04e7",
+    "src/MissionManager/MissionManager.h": "3198917013c35af32dcbab6153548cd90989a7cb74c039c2818cfdf6621189c0",
+    "src/QmlControls/RCToParamDialog.qml": "6153a0a0f6192c17cebac214d46aa57b1a958dd76dcbf98e1c064df1947a11c7",
+    "src/QmlControls/RCToParamDialogController.cc": "2b9014dc84ad27f9a1b3b98a13cfe2cf9c1998b3dc70c29293ce856127f69b42",
+    "src/QmlControls/RCToParamDialogController.h": "e8eb8458ceba78186f41aecc617c68d905d3ddafda4b93cbaa1742566f4211bc",
+    "src/Swarm/CMakeLists.txt": "840593410d58554304a16b424822f2deda3eb006dfdeedc82fc3c7f23699b4eb",
+    "src/Swarm/FormationController.cc": "8fc0c5d0ccdfb1e3e0abd20d6427449bfa73017427852bba3602b080df8ed284",
+    "src/Swarm/FormationController.h": "8d12a9654d573fa8f6347539812f1417ea489df12153045f1b02877efeb77049",
+    "src/Swarm/SwarmAIAgent.cc": "3b38ea4aea4fa4e5fb72188e0371484fa7a2ce835e46e49d9fc346ccc06ac81a",
+    "src/Swarm/SwarmAIAgent.h": "9ff01946eea014a95d50bfc40fe06720c4d1fdfa94e0aaf09baebbcc33798e58",
+    "src/Swarm/SwarmManager.cc": "fbdaf237aaccb6b30ab04b162de79aa1abd8cfb865b011976330fe6167ba71e1",
+    "src/Swarm/SwarmManager.h": "e98f2e91f80782ac584fe72c4a650f4933f372608c9dd9e766b744f75543a96f",
+    "src/Swarm/SwarmMissionPlanner.cc": "4a12781fca0a5c8faae80b4826f46ae60e03d316346eb489f41d64e9ddd2dec6",
+    "src/Swarm/SwarmMissionPlanner.h": "e668f79137437593a8282994cee03017b1b86171da8704ea7aa43bf5503683e2",
+    "src/Swarm/SwarmPerceptionBridge.cc": "186e860cd4c4afe2e6a95346fb9eb8782a4061217d0fa73909eb279c629085b1",
+    "src/Swarm/SwarmPerceptionBridge.h": "24cda3acc52e63f56b9a2fc5a26f7361f06180345b11a53a0a9b67d4f06214ec",
+    "src/Swarm/SwarmTaskController.cc": "648ca6a6faa4bb11fc61fcdabff5311bbb29570e624ba1a328ed4074a0a5af74",
+    "src/Swarm/SwarmTaskController.h": "bde4b47a4b6171dcd520dfaede42be8fe6c395c1288b30e3f0084fcf34dede5c",
+    "src/Swarm/SwarmTaskLibrary.cc": "34afe5ac44407b0705115f6488ff514e849284498a795fb8ba37a0461a902269",
+    "src/Swarm/SwarmTrackFusion.cc": "c5cf3a9316a2907b7bdc023778b060520e16e614d0fceee4341b2a9b08658697",
+    "src/Swarm/SwarmTrackFusion.h": "096a829a008c7bb343d5a5347ba95722d7a3ce1e80aa441094629d10e47cfd7e",
+    "src/Swarm/SwarmTunnelProtocol.h": "1dac8fc824d9e27f0fca546825562afeb048c5a8e48e06c8cd5de65775051744",
+    "swarm_ext/services/perception/service.py": "6d0e3b7fde43268005d6ecd945a0847b9a50781d130a57234e1de9a8dcca729a",
+    "swarm_ext/services/perception/swarm_msgs.py": "bdbb13e6e0fb1e0ec7b53584b18450a71613bbb89a417f1c9a5df3c3f4a165a9",
+    "swarm_ext/services/perception/test_perception.py": "2b43a0d891c1c3eeeceefee9d0a8367acec77e4ec23795766b712adf1ef9004f",
+    "swarm_ext/tests/cpp/CMakeLists.txt": "7b9f22e90d8914e4c49cb4a8e5155a528aaee4c255a77df0bcf65e8d2e0601e6",
+    "swarm_ext/tests/cpp/tst_cop.cc": "2b7cbff7e06cc30058fe60b4c20cc4c9f0d029be9776745322927cf610b609c3",
+    "swarm_ext/tests/cpp/tst_p3modules.cc": "7ae97825030410d1e6557b69561ac940ad7dc76707ec3a4b9147987f826b8e0c",
+    "swarm_ext/tests/run_all.py": "faa31c330e094bbcb1f04dfa63003879187df4c8a876ff74b7748bf578578b2e",
+    "swarm_ext/tests/validate_assets.py": "0b0968ef061a47f0e67037ce15a44eff13cee600abde4fe80d07228aead893c6",
+    "test/QmlControls/CMakeLists.txt": "c4de91143f056bdbe3553e4a2ada700d2b0205fa7d59e729d604d67ca7edb500",
+    "test/Swarm/CMakeLists.txt": "2d2d756cd586feb999bacb2102b9a5dd5928e240fd880f62dd9f862cdd41ca4f",
+    "src/Swarm/SwarmClock.h": "a1ddde71cae37b9ee8e2f4edc02e4e17135425cd72da2264668edb51c9532885",
+    "swarm_ext/services/perception/test_protocol.py": "c14cb948574faa551c7c09c2647f14d17d3a8aa3a1dc19d0bd520d4081912ccd",
+    "swarm_ext/tests/cpp/protocol_v2_vectors.json": "8eccf3be0680d623e5a00f07e1101d1a6024de624993c4fb723cce4412470440",
+    "swarm_ext/tests/cpp/tst_protocol.cc": "0f45f4837c20a04dba3704fd805222a7ce48489c3545fd879244fbb4463c1bd0",
+    "test/QmlControls/RCToParamDialogControllerTest.cc": "5c87588d70b0d62285d5608ca10465bf10db7a0922e63c1eaf042b283c8d1c38",
+    "test/QmlControls/RCToParamDialogControllerTest.h": "85eba2198c29c9f78230dd22089689c8304a34eb43e2e2f8d1a3183248f208cf",
+    "test/Swarm/SwarmRegressionTest.cc": "dd8c4d9c4a0e0e407daaff22a2f61ca4c2ec38f1b5efaa3108df457fe17a94dd",
+    "test/Swarm/SwarmRegressionTest.h": "6cf0dae65ac69eca3adea2c2596ea54e792b64961578d237b411be78c17938ed",
+    "swarm_ext/mavlink/swarm_perception.xml": "b39c35ff432b1ebdd7f305d91739fdcd65ec102d0e92438e6f81a14938ea1f30",
+    "swarm_ext/templates/会合集结.json": "f097f8c3a5a70006c1a05007c4536d29969fda8de3ca533b3a04ca20ce7b4d07",
+    "swarm_ext/templates/全员返航降落.json": "37d65d8e4d9501b06113db868a40053c496efdf84370943221d8c01be33d430b",
+    "swarm_ext/templates/区域搜索后返航.json": "a1fcbc72b9cf16fccfa64950b3e23b8f10e0f616ec0137e705e510c5e8c0eb8d",
+    "swarm_ext/templates/多机接力值守.json": "755464795b729c6f3603a525015e6766703cde5df74319778bf0da1d93d0ae79",
+    "swarm_ext/templates/平行网格扫掠.json": "055f8bb66be2ffa1f13ffab0bfb6281dae425a001c4abfad555ba02ed10dc837",
+    "swarm_ext/templates/快速出动待命.json": "6b8b8f15dc153bc09616fa863e4b25c431fc4e0bab89fc0da04f48527555735a",
+    "swarm_ext/templates/扇形扫掠搜索.json": "a63303e7fd52ca14063cec096bd05128533d7e1160d9ac7831afd80d59fd506e",
+    "swarm_ext/templates/编队巡航后返航.json": "4b1523f198c8888e6f96f7a591477a87e4854d55fdbadc21c20a584fb38ae69c",
+    "swarm_ext/templates/编队巡逻.json": "eb00478d9babb11e6527d334e5b0b621573af4a5cd7f1067e6d425ec11442196",
+    "test/QmlUITests/SwarmSituationLayerUITest.cc": "f82698f0748ef4e8e12c6760c5301aa90357d452644283f14f736944d998f702",
+    "test/Swarm/fixtures/legacy_relay_template.json": "a613b7185febc06b36854505e0954dffdd794512cd832bf5ad7ded267a9c269a",
+    "swarm_ext/sim/scenarios/09_partial_withdrawal.json": "dff93d88d9fdcced9a54156620a10be4f1416a138baf39a9d75dffc21e698de0"
+  }
+}
