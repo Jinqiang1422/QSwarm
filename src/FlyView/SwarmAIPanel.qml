@@ -13,6 +13,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 import QGroundControl
 import QGroundControl.Controls
@@ -475,6 +476,42 @@ Rectangle {
                 }
             }
 
+            QGCLabel {
+                width: parent.width
+                wrapMode: Text.Wrap
+                visible: _root._swarm.executionMessage.length > 0
+                text: _root._swarm.executionMessage
+            }
+            Repeater {
+                model: Object.keys(_root._swarm.executionStates)
+                delegate: QGCLabel {
+                    required property string modelData
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: {
+                        const labels = { pending: qsTr("等待下发"), dispatching: qsTr("等待响应"),
+                            accepted: qsTr("动作已确认"), failed: qsTr("动作失败"),
+                            withdrawn: qsTr("已退出"), cancelled: qsTr("已取消") }
+                        const state = _root._swarm.executionStates[modelData]
+                        return qsTr("%1 号机：%2").arg(modelData).arg(labels[state] || state)
+                    }
+                }
+            }
+            Repeater {
+                model: Object.keys(_root._swarm.missionPlanner.uploadStates)
+                delegate: QGCLabel {
+                    required property string modelData
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: {
+                        const labels = { uploading: qsTr("上传中"), reading_back: qsTr("回读核验中"),
+                            verified: qsTr("航线核验通过"), failed: qsTr("航线上传失败"), cancelled: qsTr("上传已取消") }
+                        const state = _root._swarm.missionPlanner.uploadStates[modelData]
+                        return qsTr("%1 号机：%2").arg(modelData).arg(labels[state] || state)
+                    }
+                }
+            }
+
             // ==================== 多阶段任务状态区 ====================
             Rectangle {
                 visible:                _task.running || _task.stateText !== qsTr("空闲")
@@ -515,13 +552,21 @@ Rectangle {
                     RowLayout {
                         spacing: _margin
                         QGCButton {
+                            text: qsTr("确认机载任务已完成")
+                            visible: _root._task.awaitingMissionConfirmation
+                            onClicked: {
+                                completionConfirm.token = _root._task.executionToken
+                                completionConfirm.open()
+                            }
+                        }
+                        QGCButton {
                             text:       qsTr("继续（人工确认）")
                             visible:    _task.waitingForProceed
                             onClicked:  _task.proceed()
                         }
                         QGCButton {
                             text:       qsTr("重试当前阶段")
-                            visible:    _task.blocked
+                            visible:    _task.canRetry
                             onClicked:  _task.retryBlockedStage()
                         }
                         QGCButton {
@@ -598,19 +643,24 @@ Rectangle {
                         Repeater {
                             model: tplDelegate._tpl.parameters
                             delegate: RowLayout {
+                                id: parameterRow
+                                required property var modelData
                                 spacing: _margin
                                 QGCLabel {
-                                    text: modelData.label
+                                    text: parameterRow.modelData.label
                                     Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 9
                                     elide: Text.ElideRight
                                 }
                                 QGCTextField {
                                     Layout.fillWidth: true
-                                    text: modelData.default
+                                    readonly property bool automaticDefault: ["climb_gate", "leader_id", "group_a_ids", "group_b_ids"].indexOf(parameterRow.modelData.key) >= 0
+                                    text: automaticDefault ? "" : (parameterRow.modelData.type === "array" ? JSON.stringify(parameterRow.modelData.default) : parameterRow.modelData.default)
+                                    placeholderText: automaticDefault ? qsTr("自动匹配任务参数与成员") : ""
                                     onEditingFinished: {
-                                        var t = modelData.type
-                                        tplDelegate._paramValues[modelData.key] =
-                                            (t === "number" || t === "integer") ? parseFloat(text) : text
+                                        if (text.trim().length === 0)
+                                            delete tplDelegate._paramValues[parameterRow.modelData.key]
+                                        else
+                                            tplDelegate._paramValues[parameterRow.modelData.key] = text
                                     }
                                 }
                             }
@@ -619,5 +669,13 @@ Rectangle {
                 }
             }
         }
+    }
+    MessageDialog {
+        id: completionConfirm
+        property string token: ""
+        title: qsTr("确认任务完成")
+        text: qsTr("请核对所有剩余飞机的机载任务已完成。确认后将执行下一阶段。")
+        buttons: MessageDialog.Yes | MessageDialog.No
+        onAccepted: _root._task.confirmMissionCompletion(completionConfirm.token)
     }
 }

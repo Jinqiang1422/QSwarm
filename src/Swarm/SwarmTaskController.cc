@@ -6,11 +6,14 @@
 
 #include "Fact.h"
 #include "FormationController.h"
+#include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "QGCApplication.h"
 #include "QmlObjectListModel.h"
 #include "SwarmAuditLogger.h"
+#include "SwarmClock.h"
 #include "SwarmManager.h"
+#include "SwarmMissionPlanner.h"
 #include "SwarmPersistence.h"
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
@@ -29,6 +32,7 @@ QString taskPersistPath()
 SwarmTaskController::SwarmTaskController(SwarmManager* swarmManager)
     : QObject(swarmManager), _swarmManager(swarmManager)
 {
+    connect(swarmManager, &SwarmManager::executionFinished, this, &SwarmTaskController::_actionsFinished);
     _tickTimer.setInterval(1000);
     (void) connect(&_tickTimer, &QTimer::timeout, this, &SwarmTaskController::_tick);
     (void) connect(this, &SwarmTaskController::taskFeedback, qgcApp(),
@@ -81,7 +85,7 @@ QStringList SwarmTaskController::stageNames() const
 
 bool SwarmTaskController::waitingForProceed() const
 {
-    return _running && !_blocked && _currentStage >= 0 && _currentStage < _stages.count() &&
+    return _running && !_blocked && !_actionsPending && _currentStage >= 0 && _currentStage < _stages.count() &&
            _stages.at(_currentStage).conditionKind == QStringLiteral("manual");
 }
 
@@ -138,6 +142,16 @@ QList<SwarmTaskController::Stage> SwarmTaskController::parseStages(const QJsonAr
         if (when.contains(QStringLiteral("timeout_sec"))) {
             stage.conditionParams[QStringLiteral("timeout_sec")] = when.value(QStringLiteral("timeout_sec")).toInt();
         }
+        if (stage.conditionKind == QStringLiteral("duration")) {
+            const int seconds = stage.conditionParams.value(QStringLiteral("seconds"), 5).toInt();
+            const int grace = stage.conditionParams.value(QStringLiteral("grace_sec"), 3).toInt();
+            if (!stage.conditionParams.contains(QStringLiteral("timeout_sec")))
+                stage.conditionParams[QStringLiteral("timeout_sec")] = qMax(600, seconds + grace + 30);
+            if (stage.conditionParams.value(QStringLiteral("timeout_sec")).toInt() <= qMax(seconds, grace)) {
+                warnings.append(tr("持续时间阶段的超时必须大于持续时间和宽限时间"));
+                return {};
+            }
+        }
 
         const int warningsBefore = warnings.size();
         if (!stageObj.value(QStringLiteral("actions")).isArray()) {
@@ -148,6 +162,16 @@ QList<SwarmTaskController::Stage> SwarmTaskController::parseStages(const QJsonAr
                                                         warnings, targets);
         if (warnings.size() != warningsBefore)
             return {};
+        if (stage.conditionKind == QStringLiteral("all_airborne")) {
+            for (const auto& action : stage.actions) {
+                if (action.type == QStringLiteral("takeoff") &&
+                    stage.conditionParams.value(QStringLiteral("min_altitude"), 3).toDouble() >
+                        action.params.value(QStringLiteral("altitude")).toDouble()) {
+                    warnings.append(tr("升空判定高度不能高于起飞高度"));
+                    return {};
+                }
+            }
+        }
         if (!stage.actions.isEmpty())
             targets = stage.actions.last().targetIds;
         // duration / manual 阶段允许无动作（纯等待）；其余阶段必须有有效动作
@@ -181,10 +205,18 @@ bool SwarmTaskController::startTask(const QString& taskName, const QList<Stage>&
         }
     }
 
+    ++_taskGeneration;
     _operatorConfirmed = operatorConfirmed;
     _blocked = false;
     _involvedIds.clear();
     _taskTargetIds.clear();
+    for (const auto& stage : stages)
+        for (const auto& action : stage.actions)
+            for (int id : action.targetIds)
+                if (!_taskTargetIds.contains(id))
+                    _taskTargetIds.append(id);
+    _withdrawnIds.clear();
+    _plannedMissionRevisions.clear();
     _taskName = taskName;
     _stages = stages;
     _running = true;
@@ -209,7 +241,12 @@ void SwarmTaskController::abort(const QString& reason)
     }
     SwarmAuditLogger::instance()->logTaskEvent(
         QStringLiteral("task_aborted"), {{QStringLiteral("name"), _taskName}, {QStringLiteral("reason"), reason}});
-    _swarmManager->pauseTargets(_taskTargetIds);
+    const auto targets = _taskTargetIds;
+    // Retire callbacks before emitting a terminal signal, whose receiver may start a new task.
+    _running = false;
+    _tickTimer.stop();
+    _swarmManager->cancelTargets(targets, reason);
+    _swarmManager->pauseTargets(targets);
     _finish(false, reason.isEmpty() ? tr("任务被操作员中止") : reason);
 }
 
@@ -221,18 +258,38 @@ void SwarmTaskController::proceed()
     }
 }
 
+void SwarmTaskController::withdrawTargets(const QList<int>& ids, const QString& reason)
+{
+    if (!_running)
+        return;
+    for (int id : ids) {
+        if (!_taskTargetIds.contains(id))
+            continue;
+        _withdrawnIds.insert(id);
+        _involvedIds.removeAll(id);
+        _taskTargetIds.removeAll(id);
+    }
+    if (_taskTargetIds.isEmpty() && !_withdrawnIds.isEmpty()) {
+        _finish(false, reason.isEmpty() ? tr("全部任务成员已退出") : reason);
+    } else {
+        emit taskChanged();
+        _persistState();
+    }
+}
+
 void SwarmTaskController::_blockStage(const QString& reason)
 {
     _blocked = true;
     _tickTimer.stop();
-    _setStateText(tr("已阻塞：%1；修正后重试当前阶段").arg(reason));
+    _setStateText(_stageDispatched ? tr("已阻塞：%1；需中止后重新启动").arg(reason)
+                                   : tr("已阻塞：%1；修正后重试当前阶段").arg(reason));
     emit taskChanged();
     _persistState();
 }
 
 void SwarmTaskController::retryBlockedStage()
 {
-    if (!_running || !_blocked)
+    if (!_running || !_blocked || _stageDispatched)
         return;
     _blocked = false;
     _enterStage(_currentStage);
@@ -249,10 +306,35 @@ void SwarmTaskController::_enterStage(int index)
     }
 
     _currentStage = index;
-    _stageStartMs = QDateTime::currentMSecsSinceEpoch();
+    _stageStartMs = SwarmClock::nowMs();
     _vehiclesSeenInMission.clear();
+    _missionRevisions.clear();
+    _awaitingMissionConfirmation = false;
+    _stageDispatched = false;
+    _actionsPending = false;
 
-    const Stage& stage = _stages.at(index);
+    Stage stage = _stages.at(index);
+    for (auto& action : stage.actions) {
+        action.targetIds.removeIf([this](int id) { return _withdrawnIds.contains(id); });
+        if (action.type == QStringLiteral("set_selection")) {
+            QVariantList ids;
+            for (int id : action.targetIds)
+                ids.append(id);
+            action.params[QStringLiteral("vehicle_ids")] = ids;
+        }
+        if (action.type == QStringLiteral("start_formation") &&
+            _withdrawnIds.contains(action.params.value(QStringLiteral("leader_id")).toInt())) {
+            const int currentLeader = _swarmManager->formation()->leaderVehicleId();
+            action.params[QStringLiteral("leader_id")] =
+                action.targetIds.contains(currentLeader) ? currentLeader
+                                                         : (action.targetIds.isEmpty() ? 0 : action.targetIds.first());
+        }
+    }
+    stage.actions.removeIf([](const SwarmAction& action) { return action.targetIds.isEmpty(); });
+    if (stage.actions.isEmpty() && !_stages.at(index).actions.isEmpty()) {
+        _enterStage(index + 1);
+        return;
+    }
     if (!stage.actions.isEmpty()) {
         _involvedIds.clear();
         for (const auto& action : stage.actions) {
@@ -288,6 +370,21 @@ void SwarmTaskController::_enterStage(int index)
     }
 
     // 执行本阶段动作（统一管线）
+    if (index == 0 && _operatorConfirmed)
+        _swarmManager->authorizeTaskTargets(_taskTargetIds);
+    for (const auto& action : stage.actions) {
+        if (action.type != QStringLiteral("start_mission"))
+            continue;
+        for (int id : action.targetIds) {
+            Vehicle* target = MultiVehicleManager::instance()->getVehicleById(id);
+            if (_plannedMissionRevisions.contains(id) &&
+                (!target || !target->missionManager() || target->missionManager()->inProgress() ||
+                 target->missionManager()->executionRevision() != _plannedMissionRevisions.value(id))) {
+                _blockStage(tr("已核验航线被修改，请重新规划上传"));
+                return;
+            }
+        }
+    }
     if (!_swarmManager->executeActions(stage.actions, QStringLiteral("task"),
                                        _operatorConfirmed ? SwarmManager::ExecutionApproval::OperatorConfirmed
                                                           : SwarmManager::ExecutionApproval::Automatic)) {
@@ -295,11 +392,10 @@ void SwarmTaskController::_enterStage(int index)
         return;
     }
 
-    if (stage.conditionKind == QStringLiteral("manual")) {
-        _setStateText(tr("等待操作员确认：阶段 %1/%2「%3」").arg(index + 1).arg(_stages.count()).arg(stage.name));
-    } else {
-        _setStateText(tr("运行中：阶段 %1/%2「%3」").arg(index + 1).arg(_stages.count()).arg(stage.name));
-    }
+    _executionId = _swarmManager->lastExecutionId();
+    _actionsPending = true;
+    _stageDispatched = true;
+    _setStateText(tr("执行阶段动作中：%1").arg(stage.name));
 
     emit taskChanged();
     _persistState();
@@ -307,22 +403,27 @@ void SwarmTaskController::_enterStage(int index)
 
 void SwarmTaskController::_tick()
 {
-    if (!_running || _blocked || _currentStage < 0 || _currentStage >= _stages.count()) {
+    if (!_running || _blocked || _actionsPending || _currentStage < 0 || _currentStage >= _stages.count()) {
         return;
     }
 
     const Stage& stage = _stages.at(_currentStage);
-    const qint64 elapsedMs = QDateTime::currentMSecsSinceEpoch() - _stageStartMs;
+    const qint64 elapsedMs = SwarmClock::nowMs() - _stageStartMs;
     const int timeoutSec = stage.conditionParams.value(QStringLiteral("timeout_sec"), kDefaultTimeoutSec).toInt();
     const int graceSec = stage.conditionParams.value(QStringLiteral("grace_sec"), kDefaultGraceSec).toInt();
 
-    if (elapsedMs > timeoutSec * 1000) {
+    if (_involvedIds.isEmpty() && !_withdrawnIds.isEmpty()) {
+        _enterStage(_currentStage + 1);
+        return;
+    }
+    if (stage.conditionKind == QStringLiteral("manual"))
+        return;
+
+    if (!_awaitingMissionConfirmation && elapsedMs > timeoutSec * 1000) {
         SwarmAuditLogger::instance()->logTaskEvent(
             QStringLiteral("stage_timeout"),
             {{QStringLiteral("name"), stage.name}, {QStringLiteral("timeout_sec"), timeoutSec}});
-        _swarmManager->pauseTargets(_taskTargetIds);
-        _finish(false,
-                tr("阶段「%1」超过 %2 秒未完成，任务失败，已请求任务目标机暂停悬停").arg(stage.name).arg(timeoutSec));
+        abort(tr("阶段「%1」超过 %2 秒未完成").arg(stage.name).arg(timeoutSec));
         return;
     }
 
@@ -347,11 +448,12 @@ bool SwarmTaskController::_conditionMet(const Stage& stage)
 
     if (kind == QStringLiteral("formation_running")) {
         FormationController* formation = _swarmManager->formation();
-        return formation->active() && formation->followerCount() >= qMax(0, _involvedIds.count() - 1);
+        return formation->active() && !formation->blocked() &&
+               formation->followerCount() >= qMax(0, _involvedIds.count() - 1);
     }
     if (kind == QStringLiteral("duration")) {
         const int seconds = stage.conditionParams.value(QStringLiteral("seconds"), 5).toInt();
-        return (QDateTime::currentMSecsSinceEpoch() - _stageStartMs) >= seconds * 1000;
+        return (SwarmClock::nowMs() - _stageStartMs) >= seconds * 1000;
     }
 
     // 基于各机状态的条件：逐机检查，任何涉及机离线视为任务异常
@@ -374,17 +476,24 @@ bool SwarmTaskController::_conditionMet(const Stage& stage)
                 finishedCount++;
             }
         } else if (kind == QStringLiteral("all_mission_finished")) {
-            if (!vehicle->armed()) {
-                finishedCount++;  // 已降落上锁（如任务以 RTL 结束）
-                continue;
+            MissionManager* mission = vehicle->missionManager();
+            if (!mission || mission->executionRevision() != _missionRevisions.value(id)) {
+                _blockStage(tr("机载任务版本变化，需要重新启动任务"));
+                return false;
             }
-            // 监控 MISSION_CURRENT 驱动的模式变化：曾进入 Mission 模式后退出即视为完成。
-            // 与任务来源无关——AI 上传与人工 Plan 视图上传的任务均由此判定。
-            const QString missionMode = vehicle->missionFlightMode();
-            if (vehicle->flightMode() == missionMode) {
+            if (mission->missionState() == MISSION_STATE_PAUSED ||
+                mission->missionState() == MISSION_STATE_NO_MISSION) {
+                _blockStage(tr("飞控报告任务暂停或不存在，需要操作员处置"));
+                return false;
+            }
+            if (vehicle->armed() && vehicle->flightMode() == vehicle->missionFlightMode())
                 _vehiclesSeenInMission.insert(id);
-            } else if (_vehiclesSeenInMission.contains(id)) {
-                finishedCount++;
+            if (mission->executionComplete() && _vehiclesSeenInMission.contains(id)) {
+                ++finishedCount;
+            } else if (_vehiclesSeenInMission.contains(id) && mission->missionState() == MISSION_STATE_UNKNOWN) {
+                _awaitingMissionConfirmation = true;
+                _setStateText(tr("固件未提供可靠完成状态；请核对各机任务后人工确认"));
+                emit taskChanged();
             }
         }
     }
@@ -396,12 +505,17 @@ void SwarmTaskController::_finish(bool success, const QString& message)
     _tickTimer.stop();
     _running = false;
     _blocked = false;
+    _actionsPending = false;
+    _awaitingMissionConfirmation = false;
     emit taskChanged();
-    _setStateText(success ? tr("已完成") : tr("已中止/失败"));
+    _setStateText(
+        success ? (_withdrawnIds.isEmpty() ? tr("已完成") : tr("剩余成员已完成，%1 架退出").arg(_withdrawnIds.size()))
+                : tr("已中止/失败"));
     emit taskFeedback(message);
-    emit taskFinished(success, message);
     // 任务已终结(完成/中止),清除持久化记录,避免重启时被误报为"未完成任务"
-    SwarmPersistence::saveTasks(taskPersistPath(), {});
+    if (!SwarmPersistence::saveTasks(taskPersistPath(), {}))
+        emit taskFeedback(tr("任务终态保存失败，请检查数据目录"));
+    emit taskFinished(success, message);
 }
 
 void SwarmTaskController::_persistState()
@@ -411,7 +525,8 @@ void SwarmTaskController::_persistState()
     r.type = QStringLiteral("MULTISTAGE");
     r.status = (running() && !_blocked) ? QStringLiteral("RUNNING") : QStringLiteral("PAUSED");
     r.version = 1;
-    SwarmPersistence::saveTasks(taskPersistPath(), {r});
+    if (!SwarmPersistence::saveTasks(taskPersistPath(), {r}))
+        emit taskFeedback(tr("任务状态保存失败，请检查数据目录"));
 }
 
 void SwarmTaskController::_setStateText(const QString& text)
@@ -420,4 +535,65 @@ void SwarmTaskController::_setStateText(const QString& text)
         _stateText = text;
         emit taskChanged();
     }
+}
+
+void SwarmTaskController::_actionsFinished(quint64 id, bool success, const QString& reason)
+{
+    if (!_running || !_actionsPending || id != _executionId)
+        return;
+    _actionsPending = false;
+    if (!success) {
+        if (_involvedIds.isEmpty() && !_withdrawnIds.isEmpty()) {
+            _enterStage(_currentStage + 1);
+            return;
+        }
+        _blockStage(tr("动作部分执行或失败：%1；需中止后重新启动").arg(reason));
+        return;
+    }
+    _stageStartMs = SwarmClock::nowMs();
+    for (const auto& action : _stages.at(_currentStage).actions) {
+        if (action.type == QStringLiteral("plan_coverage")) {
+            for (int vehicleId : action.targetIds) {
+                if (!_withdrawnIds.contains(vehicleId))
+                    _plannedMissionRevisions[vehicleId] = _swarmManager->missionPlanner()->verifiedRevision(vehicleId);
+            }
+        }
+    }
+    _setStateText(waitingForProceed() ? tr("等待操作员确认：%1").arg(currentStageName())
+                                      : tr("等待阶段完成条件：%1").arg(currentStageName()));
+    for (int vehicleId : _involvedIds) {
+        Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(vehicleId);
+        if (!vehicle || !vehicle->missionManager())
+            continue;
+        _missionRevisions[vehicleId] = vehicle->missionManager()->executionRevision();
+        if (vehicle->armed() && vehicle->flightMode() == vehicle->missionFlightMode())
+            _vehiclesSeenInMission.insert(vehicleId);
+    }
+    emit taskChanged();
+}
+
+QString SwarmTaskController::executionToken() const
+{
+    return QStringLiteral("%1:%2:%3").arg(_taskGeneration).arg(_currentStage).arg(_executionId);
+}
+
+bool SwarmTaskController::confirmMissionCompletion(const QString& token)
+{
+    if (!_running || _blocked || !_awaitingMissionConfirmation || token != executionToken())
+        return false;
+    for (int id : _involvedIds) {
+        Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(id);
+        if (!vehicle || !vehicle->missionManager() || !_vehiclesSeenInMission.contains(id) ||
+            vehicle->missionManager()->executionRevision() != _missionRevisions.value(id))
+            return false;
+        const int state = vehicle->missionManager()->missionState();
+        if (state != MISSION_STATE_UNKNOWN && state != MISSION_STATE_COMPLETE)
+            return false;
+    }
+    SwarmAuditLogger::instance()->logTaskEvent(
+        QStringLiteral("mission_completion_operator_confirmed"),
+        {{QStringLiteral("token"), token}, {QStringLiteral("stage"), currentStageName()}});
+    _awaitingMissionConfirmation = false;
+    _enterStage(_currentStage + 1);
+    return true;
 }

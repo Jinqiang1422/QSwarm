@@ -5,6 +5,7 @@
 #include <QtCore/QString>
 #include <QtCore/QVariantList>
 #include <QtPositioning/QGeoCoordinate>
+#include <functional>
 
 #include "FollowMe.h"
 #include "MAVLinkEnums.h"
@@ -219,6 +220,10 @@ public:
 
     /// Command the vehicle to start the mission
     virtual void startMission(Vehicle* vehicle) const;
+    void startMissionAsync(Vehicle* vehicle, QObject* context, std::function<bool()> allowed,
+                           std::function<void(bool)> finished) const;
+    virtual void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                              std::function<void(bool)> finished) const;
 
     /// Command vehicle to move to specified location (altitude is ignored, vehicle uses current altitude)
     /// @return true: goto command accepted, false: goto failed (vehicle not moved)
@@ -421,6 +426,10 @@ signals:
     void toolIndicatorsChanged();
 
 protected:
+    void _armInModeAsync(Vehicle* vehicle, const QString& mode, QObject* context, std::function<bool()> allowed,
+                         std::function<void(bool)> finished) const;
+    virtual QString _missionStartMode(Vehicle* vehicle) const;
+    virtual void _sendMissionStartCommand(Vehicle* vehicle) const;
     /// Arms the vehicle with validation and retries
     ///     @return: true - vehicle armed, false - vehicle failed to arm
     bool _armVehicleAndValidate(Vehicle* vehicle) const;

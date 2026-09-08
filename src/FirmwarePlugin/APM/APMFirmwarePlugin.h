@@ -30,6 +30,8 @@ public:
     bool isCapable(const Vehicle* vehicle, FirmwareCapabilities capabilities) const override;
     void setGuidedMode(Vehicle* vehicle, bool guidedMode) const override;
     void guidedModeTakeoff(Vehicle* vehicle, double altitudeRel) const override;
+    void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                      std::function<void(bool)> finished) const override;
     bool guidedModeGotoLocation(Vehicle* vehicle, const QGeoCoordinate& gotoCoord,
                                 double forwardFlightLoiterRadius) const override;
     double minimumTakeoffAltitudeMeters(Vehicle* vehicle) const override;
@@ -90,6 +92,8 @@ public:
     static qreal calcAltOffsetP(uint32_t atmospheric1, uint32_t atmospheric2);
 
 protected:
+    QString _missionStartMode(Vehicle* vehicle) const override;
+    void _sendMissionStartCommand(Vehicle* vehicle) const override;
     /// All access to singleton is through stack specific implementation
     explicit APMFirmwarePlugin(QObject* parent = nullptr);
     virtual ~APMFirmwarePlugin();

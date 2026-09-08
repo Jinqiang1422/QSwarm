@@ -37,6 +37,8 @@ public:
     void guidedModeRTL(Vehicle* vehicle, bool smartRTL) const override;
     void guidedModeLand(Vehicle* vehicle) const override;
     void guidedModeTakeoff(Vehicle* vehicle, double takeoffAltRel) const override;
+    void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                      std::function<void(bool)> finished) const override;
     double maximumHorizontalSpeedMultirotorMetersSecond(Vehicle* vehicle) const override;
     double maximumEquivalentAirspeed(Vehicle* vehicle) const override;
     double minimumEquivalentAirspeed(Vehicle* vehicle) const override;

@@ -25,6 +25,71 @@ void FormationController::setVehicleAutomationAllowedCallback(std::function<bool
     _vehicleAutomationAllowed = std::move(callback);
 }
 
+void FormationController::setTargetAllowedCallback(std::function<bool(int, const QGeoCoordinate&)> callback)
+{
+    _targetAllowed = std::move(callback);
+}
+
+void FormationController::setMembers(const QSet<int>& members)
+{
+    _members = members;
+    _membersBound = true;
+    _slots.clear();
+}
+
+void FormationController::removeMembers(const QSet<int>& members)
+{
+    _members.subtract(members);
+    for (int id : members)
+        _slots.remove(id);
+    if (!_active)
+        return;
+    if (_members.size() < 2) {
+        if (!_members.isEmpty()) {
+            _leaderVehicleId = *_members.begin();
+            emit leaderVehicleIdChanged();
+        }
+        stop();
+    } else if (members.contains(_leaderVehicleId)) {
+        if (!_handover())
+            _setStatusText(tr("编队阻塞：没有合格继任长机"));
+    }
+}
+
+bool FormationController::_handover()
+{
+    auto ids = _members.values();
+    std::sort(ids.begin(), ids.end());
+    for (int id : ids) {
+        Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(id);
+        if (!leader || !leader->armed() || !leader->coordinate().isValid() ||
+            (_vehicleAutomationAllowed && !_vehicleAutomationAllowed(id)))
+            continue;
+        auto* facts = qobject_cast<VehicleFactGroup*>(leader->vehicleFactGroup());
+        if (!facts || facts->altitudeRelative()->rawValue().toDouble() < _minAirborneAltMeters)
+            continue;
+        const double heading = facts->heading()->rawValue().toDouble();
+        const double altitude = facts->altitudeAMSL()->rawValue().toDouble();
+        _leaderVehicleId = id;
+        _slots.clear();
+        for (int member : ids) {
+            Vehicle* follower = MultiVehicleManager::instance()->getVehicleById(member);
+            if (!follower || member == id || !follower->coordinate().isValid())
+                continue;
+            auto* followerFacts = qobject_cast<VehicleFactGroup*>(follower->vehicleFactGroup());
+            if (!followerFacts)
+                continue;
+            _slots.insert(member, {leader->coordinate().distanceTo(follower->coordinate()),
+                                   leader->coordinate().azimuthTo(follower->coordinate()) - heading,
+                                   followerFacts->altitudeAMSL()->rawValue().toDouble() - altitude});
+        }
+        emit leaderVehicleIdChanged();
+        _setStatusText(tr("长机交接至 %1，保持成员当前位置关系").arg(id));
+        return true;
+    }
+    return false;
+}
+
 void FormationController::setFormationType(FormationType type)
 {
     if (_formationType != type) {
@@ -56,6 +121,8 @@ bool FormationController::start(int leaderVehicleId)
     }
 
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
+    if (_membersBound && !_members.contains(leaderVehicleId))
+        return false;
     Vehicle* leader = mvm->getVehicleById(leaderVehicleId);
     if (!leader) {
         _setStatusText(tr("启动失败：找不到长机 %1").arg(leaderVehicleId));
@@ -67,7 +134,24 @@ bool FormationController::start(int leaderVehicleId)
     }
 
     _leaderVehicleId = leaderVehicleId;
+    _blocked = false;
     _active = true;
+    if (!_membersBound) {
+        for (int i = 0; i < mvm->vehicles()->count(); ++i) {
+            auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
+            if (member && (!_vehicleAutomationAllowed || _vehicleAutomationAllowed(member->id())))
+                _members.insert(member->id());
+        }
+    }
+    auto members = _members.values();
+    members.removeAll(leaderVehicleId);
+    std::sort(members.begin(), members.end());
+    _slots.clear();
+    for (int i = 0; i < members.size(); ++i) {
+        Slot slot;
+        _formationOffset(i + 1, members.size(), slot.distance, slot.bearing, slot.altitude);
+        _slots.insert(members[i], slot);
+    }
     emit leaderVehicleIdChanged();
     emit activeChanged();
     _updateFormation();  // 立即执行一拍
@@ -81,6 +165,7 @@ void FormationController::stop()
         return;
     }
     _updateTimer.stop();
+    _blocked = false;
     _active = false;
     _followerCount = 0;
     emit activeChanged();
@@ -91,22 +176,22 @@ void FormationController::stop()
 void FormationController::_updateFormation()
 {
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
-    Vehicle* leader = mvm->getVehicleById(_leaderVehicleId);
-
-    // 安全：长机丢失 / 上锁 / 定位无效 → 停止编队，僚机原地悬停
-    if (!leader || !leader->armed() || !leader->coordinate().isValid()) {
-        QmlObjectListModel* vehicles = mvm->vehicles();
-        for (int i = 0; i < vehicles->count(); i++) {
-            Vehicle* vehicle = qobject_cast<Vehicle*>(vehicles->get(i));
-            if (vehicle && vehicle->id() != _leaderVehicleId && vehicle->armed() &&
-                (!_vehicleAutomationAllowed || _vehicleAutomationAllowed(vehicle->id()))) {
-                vehicle->pauseVehicle();
-            }
-        }
-        _setStatusText(tr("长机 %1 状态异常，编队已自动停止").arg(_leaderVehicleId));
-        stop();
+    if (!_members.contains(_leaderVehicleId) && !_handover()) {
+        _blocked = true;
+        emit activeChanged();
+        _setStatusText(tr("编队阻塞：没有合格继任长机"));
         return;
     }
+    Vehicle* leader = mvm->getVehicleById(_leaderVehicleId);
+
+    // 长机不满足引导条件时阻塞自动引导，由各机保持当前飞行模式。
+    if (!leader || !leader->armed() || !leader->coordinate().isValid()) {
+        _blocked = true;
+        emit activeChanged();
+        _setStatusText(tr("长机 %1 状态异常，编队引导已阻塞").arg(_leaderVehicleId));
+        return;
+    }
+    _blocked = false;
 
     const QGeoCoordinate leaderCoord = leader->coordinate();
     VehicleFactGroup* leaderFactGroup = qobject_cast<VehicleFactGroup*>(leader->vehicleFactGroup());
@@ -118,7 +203,7 @@ void FormationController::_updateFormation()
     QmlObjectListModel* vehicles = mvm->vehicles();
     for (int i = 0; i < vehicles->count(); i++) {
         Vehicle* vehicle = qobject_cast<Vehicle*>(vehicles->get(i));
-        if (!vehicle || vehicle->id() == _leaderVehicleId || !vehicle->armed() ||
+        if (!vehicle || !_members.contains(vehicle->id()) || vehicle->id() == _leaderVehicleId || !vehicle->armed() ||
             (_vehicleAutomationAllowed && !_vehicleAutomationAllowed(vehicle->id()))) {
             continue;
         }
@@ -133,11 +218,21 @@ void FormationController::_updateFormation()
 
     for (int k = 0; k < followers.count(); k++) {
         double distanceMeters = 0.0, azimuthOffsetDeg = 0.0, altitudeStepMeters = 0.0;
-        _formationOffset(k + 1, followers.count(), distanceMeters, azimuthOffsetDeg, altitudeStepMeters);
+        if (!_slots.contains(followers[k]->id()))
+            continue;
+        const Slot slot = _slots.value(followers[k]->id());
+        distanceMeters = slot.distance;
+        azimuthOffsetDeg = slot.bearing;
+        altitudeStepMeters = slot.altitude;
 
         // 目标点 = 长机位置沿 (长机航向 + 方位偏移) 推移 distanceMeters，高度 = 长机 AMSL + 高度分层
         QGeoCoordinate target = leaderCoord.atDistanceAndAzimuth(distanceMeters, leaderHeading + azimuthOffsetDeg);
         target.setAltitude(leaderAltAMSL + altitudeStepMeters);
+        if (!target.isValid() || (_targetAllowed && !_targetAllowed(followers[k]->id(), target))) {
+            _blocked = true;
+            _setStatusText(tr("编队引导阻塞：%1 号机目标约束未通过").arg(followers[k]->id()));
+            continue;
+        }
 
         FirmwarePlugin* firmwarePlugin = followers[k]->firmwarePlugin();
         if (firmwarePlugin) {
@@ -149,7 +244,9 @@ void FormationController::_updateFormation()
         _followerCount = followers.count();
         emit followerCountChanged();
     }
-    _setStatusText(tr("编队运行中：长机 %1，僚机 %2 架").arg(_leaderVehicleId).arg(_followerCount));
+    emit activeChanged();
+    if (!_blocked)
+        _setStatusText(tr("编队运行中：长机 %1，僚机 %2 架").arg(_leaderVehicleId).arg(_followerCount));
 }
 
 void FormationController::_formationOffset(int followerIndex, int totalFollowers, double& distanceMeters,

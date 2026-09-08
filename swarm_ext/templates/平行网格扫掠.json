@@ -2,6 +2,7 @@
   "name": "平行网格扫掠",
   "description": "双程网格扫掠：起飞后先按角度一覆盖，再旋转至角度二二次覆盖，提高目标发现率，完成后返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": [
     "搜索",

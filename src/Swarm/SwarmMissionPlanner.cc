@@ -1,10 +1,13 @@
 #include "SwarmMissionPlanner.h"
 
 #include <QtCore/QPointer>
+#include <QtCore/QTimer>
 #include <QtCore/QtMath>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
+#include "FirmwarePlugin.h"
 #include "MissionItem.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
@@ -79,9 +82,12 @@ QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCoo
     // 组装任务项：起飞 → 航点 → 返航（与 MissionController 产出相同的序列结构）
     QList<MissionItem*> items;
     int seq = 0;
+    // PlanManager consumes the Home placeholder according to FirmwarePlugin policy.
+    items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL, 0, 0, 0, 0, homeCoord.latitude(),
+                                 homeCoord.longitude(), homeCoord.altitude(), true, false));
     items.append(new MissionItem(seq++, MAV_CMD_NAV_TAKEOFF, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, 0, 0, 0, 0,
                                  homeCoord.latitude(), homeCoord.longitude(), _surveyAltitude, true /*autoContinue*/,
-                                 false /*isCurrentItem*/));
+                                 true /*isCurrentItem*/));
     for (const QGeoCoordinate& wp : waypoints) {
         items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, 0 /*hold*/,
                                      0 /*acceptRadius 默认*/, 0 /*passRadius*/, 0 /*yaw*/, wp.latitude(),
@@ -95,7 +101,10 @@ QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCoo
 bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
                                                 double angleDeg, const QString& assignMode)
 {
-    if (!center.isValid() || lengthMeters < 10.0 || widthMeters < 10.0) {
+    if (busy() || !center.isValid() || !std::isfinite(lengthMeters) || !std::isfinite(widthMeters) ||
+        !std::isfinite(angleDeg) || !std::isfinite(_surveyAltitude) || !std::isfinite(_surveySpacing) ||
+        lengthMeters < 10.0 || lengthMeters > 100000.0 || widthMeters < 10.0 || widthMeters > 100000.0 ||
+        _surveyAltitude < 3.0 || _surveyAltitude > 120.0 || _surveySpacing < 2.0) {
         emit plannerFeedback(tr("任务规划失败：区域参数无效"));
         return false;
     }
@@ -120,6 +129,23 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
         emit plannerFeedback(tr("任务规划失败：没有在线无人机"));
         return false;
     }
+    // MISSION_COUNT and sequence fields are uint16; leave room for Home, takeoff and RTL.
+    if (std::ceil(widthMeters / vehicleCount / _surveySpacing) * 2 + 3 > 65535) {
+        emit plannerFeedback(tr("任务规划失败：航点数量超过协议上限，请增大行距或缩小区域"));
+        return false;
+    }
+
+    for (Vehicle* vehicle : targets) {
+        if (!vehicle || !vehicle->missionManager() || vehicle->missionManager()->inProgress()) {
+            emit plannerFeedback(tr("任务规划失败：目标任务管理器忙碌"));
+            return false;
+        }
+    }
+    ++_batchId;
+    _batchFailed = false;
+    _verifiedCount = 0;
+    _verifiedRevisions.clear();
+    _uploadStates.clear();
 
     // 沿垂直航线方向把区域均匀切分为 vehicleCount 个条带
     const double bandWidth = widthMeters / vehicleCount;
@@ -168,6 +194,7 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     }
 
     int totalWaypoints = 0;
+    QList<QList<MissionItem*>> missions;
 
     for (int v = 0; v < vehicleCount; v++) {
         const double bandMin = -widthMeters / 2.0 + bandOfVehicle[v] * bandWidth;
@@ -176,12 +203,23 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
 
         QList<MissionItem*> items =
             buildCoverageMissionItems(homeCoord, center, lengthMeters, widthMeters, angleDeg, bandMin, bandMax);
-        totalWaypoints += items.count() - 2;  // 去掉起飞/返航项
+        totalWaypoints += items.count() - 3;  // 去掉起飞/返航项
 
         // 与人工 Plan 视图“上传”相同的通道：PlanManager::writeMissionItems
         // （QGC MissionController 上传人工任务时调用的正是此函数）
-        _trackUpload(targets[v], items.count());
-        targets[v]->missionManager()->writeMissionItems(items);
+        missions.append(items);
+    }
+    // Register every member before any synchronous rejection can complete the batch.
+    for (int v = 0; v < vehicleCount; ++v)
+        _trackUpload(targets[v], missions[v]);
+    for (int v = 0; v < vehicleCount; ++v) {
+        if (_batchFailed || !targets[v] || targets[v]->missionManager()->inProgress()) {
+            qDeleteAll(missions[v]);
+            if (targets[v])
+                _finishUpload(targets[v]->id(), false, tr("上传批次未能完整派发"));
+        } else {
+            targets[v]->missionManager()->writeMissionItems(missions[v]);
+        }
     }
 
     _lastPlanVehicleCount = vehicleCount;
@@ -194,28 +232,123 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     return true;
 }
 
-void SwarmMissionPlanner::_trackUpload(Vehicle* vehicle, int itemCount)
+namespace {
+QList<QList<double>> missionSignature(const QList<MissionItem*>& items, bool hasHome)
 {
-    // 上传完成后回读同步：地面站任务缓存与机载保持一致，
-    // QGC Plan 视图即可显示并允许人工继续编辑这份 AI 生成的任务（同一套任务）。
-    QPointer<Vehicle> vehiclePtr(vehicle);
-    QPointer<MissionManager> mmPtr(vehicle->missionManager());
+    QList<QList<double>> result;
+    for (int i = hasHome ? 1 : 0; i < items.size(); ++i) {
+        const MissionItem* item = items[i];
+        if (!item)
+            return {};
+        int frame = item->frame();
+        if (frame == MAV_FRAME_GLOBAL_INT)
+            frame = MAV_FRAME_GLOBAL;
+        if (frame == MAV_FRAME_GLOBAL_RELATIVE_ALT_INT)
+            frame = MAV_FRAME_GLOBAL_RELATIVE_ALT;
+        result.append({double(item->command()), double(frame), item->param1(), item->param2(), item->param3(),
+                       item->param4(), item->param5(), item->param6(), item->param7(), double(item->autoContinue())});
+    }
+    return result;
+}
+
+bool sameMission(const QList<QList<double>>& expected, const QList<QList<double>>& actual)
+{
+    if (expected.size() != actual.size() || expected.isEmpty())
+        return false;
+    for (int i = 0; i < expected.size(); ++i) {
+        if (expected[i].size() != actual[i].size())
+            return false;
+        for (int p = 0; p < expected[i].size(); ++p) {
+            const double a = expected[i][p], b = actual[i][p];
+            if (std::isnan(a) && std::isnan(b))
+                continue;
+            const double tolerance = (p == 6 || p == 7) ? 1.1e-7 : 1e-4;
+            if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a - b) > tolerance)
+                return false;
+        }
+    }
+    return true;
+}
+}  // namespace
+
+void SwarmMissionPlanner::_trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items)
+{
+    if (!vehicle || !vehicle->missionManager())
+        return;
+    const int id = vehicle->id();
+    auto* context = new QObject(this);
+    _uploads.insert(id, context);
+    _uploadStates[QString::number(id)] = QStringLiteral("uploading");
+    _missionStatus.remove(QString::number(id));
+    emit missionStatusChanged();
+    const auto expected = missionSignature(items, true);
+    QPointer<Vehicle> target(vehicle);
+    QPointer<MissionManager> manager(vehicle->missionManager());
+    const bool sendsHome = vehicle->firmwarePlugin()->sendHomePositionToVehicle();
+    connect(vehicle, &QObject::destroyed, context, [this, id] { _finishUpload(id, false, tr("载具断开")); });
+    connect(manager, &MissionManager::error, context,
+            [this, id](int, const QString& reason) { _finishUpload(id, false, reason); });
     connect(
-        vehicle->missionManager(), &MissionManager::sendComplete, this,
-        [this, vehiclePtr, mmPtr, itemCount](bool error) {
-            if (error || !mmPtr || !vehiclePtr) {
+        manager, &MissionManager::sendComplete, context,
+        [this, id, manager, target, context, expected, sendsHome](bool error) {
+            if (error || !manager || !target) {
+                _finishUpload(id, false, tr("上传失败"));
                 return;
             }
-            mmPtr->loadFromVehicle();
-            _missionStatus[QString::number(vehiclePtr->id())] = itemCount;
+            _uploadStates[QString::number(id)] = QStringLiteral("reading_back");
             emit missionStatusChanged();
-            emit missionUploaded(vehiclePtr->id(), itemCount);
+            connect(
+                manager, &MissionManager::newMissionItemsAvailable, context,
+                [this, id, manager, expected, sendsHome](bool removed) {
+                    if (!manager || removed ||
+                        !sameMission(expected, missionSignature(manager->missionItems(), sendsHome))) {
+                        _finishUpload(id, false, tr("机载任务回读与上传内容不一致"));
+                        return;
+                    }
+                    const int count = manager->missionItems().size();
+                    _verifiedRevisions[id] = manager->executionRevision();
+                    _missionStatus[QString::number(id)] = count;
+                    emit missionUploaded(id, count);
+                    _finishUpload(id, true, {});
+                },
+                Qt::SingleShotConnection);
+            manager->loadFromVehicle();
         },
         Qt::SingleShotConnection);
+    QTimer::singleShot(120000, context, [this, id] { _finishUpload(id, false, tr("上传/回读超时")); });
+}
+
+void SwarmMissionPlanner::_finishUpload(int vehicleId, bool success, const QString& reason, bool withdrawn)
+{
+    QObject* context = _uploads.take(vehicleId);
+    if (!context)
+        return;
+    // Disconnect immediately: deleteLater alone still permits signals from the terminating transaction.
+    context->disconnect();
+    delete context;
+    _batchFailed |= !success && !withdrawn;
+    if (success)
+        ++_verifiedCount;
+    _uploadStates[QString::number(vehicleId)] = withdrawn ? QStringLiteral("cancelled")
+                                                : success ? QStringLiteral("verified")
+                                                          : QStringLiteral("failed");
+    emit missionStatusChanged();
+    if (!reason.isEmpty())
+        emit plannerFeedback(tr("%1 号机：%2").arg(vehicleId).arg(reason));
+    if (_uploads.isEmpty())
+        emit batchFinished(_batchId, !_batchFailed && _verifiedCount > 0,
+                           _verifiedCount == 0 && !_batchFailed ? tr("全部上传成员已退出") : reason);
+}
+
+void SwarmMissionPlanner::cancelTargets(const QList<int>& ids)
+{
+    for (int id : ids)
+        _finishUpload(id, false, {}, true);
 }
 
 void SwarmMissionPlanner::clearAllMissions()
 {
+    cancelTargets(_uploads.keys());
     MultiVehicleManager* mvm = MultiVehicleManager::instance();
     QmlObjectListModel* vehicles = mvm->vehicles();
     int clearedCount = 0;

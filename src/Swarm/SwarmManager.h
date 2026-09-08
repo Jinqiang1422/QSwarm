@@ -25,6 +25,7 @@
 #include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "SwarmAction.h"
@@ -79,6 +80,9 @@ class SwarmManager : public QObject
     Q_PROPERTY(SwarmPerceptionBridge* perception READ perception CONSTANT)
     Q_PROPERTY(QVariantList alerts READ alerts NOTIFY alertsChanged)
     Q_PROPERTY(QString situationOneLiner READ situationOneLiner NOTIFY situationChanged)
+    Q_PROPERTY(QVariantMap executionStates READ executionStates NOTIFY executionStatesChanged)
+    Q_PROPERTY(QString executionMessage READ executionMessage NOTIFY executionStatesChanged)
+    Q_PROPERTY(quint64 lastExecutionId READ lastExecutionId NOTIFY executionStatesChanged)
     Q_MOC_INCLUDE("SwarmCOPModel.h")
     Q_MOC_INCLUDE("SwarmPerceptionBridge.h")
 
@@ -99,6 +103,7 @@ public:
     QmlObjectListModel* vehicles() const;
     QmlObjectListModel* selectedVehicles() const;
     int vehicleCount() const;
+    QList<int> boundTargetIds() const;
 
     int commandIntervalMs() const { return _commandIntervalMs; }
 
@@ -208,6 +213,9 @@ public:
 
     /// 暂停任务已绑定的目标，不读取当前 UI 选择。
     void pauseTargets(const QList<int>& ids);
+    /// Retire only these members from queued commands, tasks and persistent formation control.
+    void cancelTargets(const QList<int>& ids, const QString& reason);
+    void authorizeTaskTargets(const QList<int>& ids);
 
     /// 批量开始已上传的航线任务
     Q_INVOKABLE void startMissionAll();
@@ -238,7 +246,16 @@ public:
     bool executeActions(const QList<SwarmAction>& actions, const QString& origin = QStringLiteral("ai"),
                         ExecutionApproval approval = ExecutionApproval::Automatic);
 
+    quint64 lastExecutionId() const { return _lastExecutionId; }
+
+    QVariantMap executionStates() const { return _executionStates; }
+
+    QString executionMessage() const { return _executionMessage; }
+
 signals:
+    void executionFinished(quint64 executionId, bool success, const QString& reason);
+    void executionProgress(quint64 executionId, int vehicleId, const QString& state);
+    void executionStatesChanged();
     void vehicleCountChanged();
     void commandIntervalMsChanged();
     void autonomyLevelChanged();
@@ -257,15 +274,22 @@ private slots:
     void _onPerceptionTick();
 
 private:
+    struct Execution;
+    void _advanceExecution(const std::shared_ptr<Execution>& execution);
+    void _finishExecution(const std::shared_ptr<Execution>& execution, bool success, const QString& reason);
+    bool _executeImmediateActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval);
+    QHash<quint64, std::shared_ptr<Execution>> _executions;
+    quint64 _lastExecutionId = 0;
+    QVariantMap _executionStates;
+    QString _executionMessage;
     /// 当前指令作用对象：有选中车辆时返回选中集合，否则返回全部在线车辆（按系统 id 升序）
     QList<Vehicle*> _targetVehicles(bool requireActiveLease = false) const;
 
     /// 以 staggerMs 为间隔对目标车辆依次执行 action；自动化路径在定时器触发时再次校验租约。
     void _forEachVehicleStaggered(const QString& commandName, int staggerMs,
                                   const std::function<void(Vehicle*, bool)>& action);
-    void _armAndTakeoff(Vehicle* vehicle, double altitudeRelative, bool requireActiveLease, quint64 commandGeneration,
-                        int retriesRemaining);
     void _requestAutomationLeases(const QString& origin);
+    void _cancelSelectedTargets(const QString& reason);
     bool _automationAllowedAtDispatch(int vehicleId, bool requireActiveLease, const QString& commandName);
     bool _formationAutomationAllowed(int vehicleId);
     QStringList _autonomousModes(Vehicle* vehicle) const;
@@ -281,12 +305,13 @@ private:
     /// 加载围栏/空域配置（AppDataLocation/SwarmConfig/fences.json；缺失时写默认）
     SwarmConstraintChecker::Config _constraintConfig() const;
 
-    int _commandIntervalMs = 300;           ///< 常规指令机间间隔
-    int _takeoffStaggerMs = 2500;           ///< 起飞指令机间间隔（安全关键，默认更大）
-    quint64 _takeoffCommandGeneration = 0;  ///< 取消被后续飞行指令取代的延迟起飞/解锁重试
-    int _autonomyLevel = 2;                 ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
-    QStringList _l3AllowedTypes;            ///< L3 限定域自主白名单（动作类型）
-    SwarmControlLease _lease;               ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
+    int _commandIntervalMs = 300;  ///< 常规指令机间间隔
+    int _takeoffStaggerMs = 2500;  ///< 起飞指令机间间隔（安全关键，默认更大）
+    QHash<int, quint64> _commandGenerations;
+    QSet<int> _automationExcludedIds;
+    int _autonomyLevel = 2;       ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
+    QStringList _l3AllowedTypes;  ///< L3 限定域自主白名单（动作类型）
+    SwarmControlLease _lease;     ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     bool _automationDispatchInProgress = false;
     std::optional<QList<int>> _dispatchTargetIds;
     QSet<int> _formationTargetIds;

@@ -1,11 +1,16 @@
 #include "SwarmTaskLibrary.h"
 
+#include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QSaveFile>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
 #include <QtGui/QDesktopServices>
+#include <algorithm>
+#include <cmath>
 
 #include "QGCApplication.h"
 #include "SwarmAuditLogger.h"
@@ -21,6 +26,7 @@ const char kTplSearchReturn[] = R"TPL({
   "name": "区域搜索后返航",
   "description": "三阶段：全体起飞→矩形区域条带覆盖搜索→完成后自动返航降落",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {"key":"altitude","label":"作业高度(米)","type":"number","default":30,"min":10,"max":120},
     {"key":"length","label":"区域长度(米)","type":"number","default":200,"min":20,"max":100000},
@@ -46,6 +52,7 @@ const char kTplFormationCruise[] = R"TPL({
   "name": "编队巡航后返航",
   "description": "全体起飞→按指定队形编队巡航→计时结束停止编队并返航",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {"key":"altitude","label":"起飞高度(米)","type":"number","default":30,"min":10,"max":120},
     {"key":"climb_gate","label":"升空判定高度(米)","type":"number","default":25,"min":5,"max":115},
@@ -71,6 +78,7 @@ const char kTplQuickLaunch[] = R"TPL({
   "name": "快速出动待命",
   "description": "全体快速起飞至指定高度悬停，等待人工进一步指令",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {"key":"altitude","label":"起飞高度(米)","type":"number","default":20,"min":5,"max":120},
     {"key":"climb_gate","label":"升空判定高度(米)","type":"number","default":15,"min":3,"max":115}
@@ -87,6 +95,7 @@ const char kTplAllReturn[] = R"TPL({
   "name": "全员返航降落",
   "description": "停止编队并立即返航降落，适用于任务收尾或紧急回收",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [],
   "stages": [
     {"name":"返航","actions":[{"type":"stop_formation"},{"type":"rtl"}],
@@ -98,6 +107,7 @@ const char kTplSectorSweep[] = R"TPL({
   "name": "扇形扫掠搜索",
   "description": "三扇区依次扫掠：全体起飞后按设定角度对三个扇区依次覆盖搜索，完成后返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": ["搜索", "扫掠", "覆盖"],
   "min_fleet": 3,
@@ -139,6 +149,7 @@ const char kTplGridSweep[] = R"TPL({
   "name": "平行网格扫掠",
   "description": "双程网格扫掠：起飞后先按角度一覆盖，再旋转至角度二二次覆盖，提高目标发现率，完成后返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": ["搜索", "扫掠", "网格"],
   "min_fleet": 2,
@@ -174,6 +185,7 @@ const char kTplFormationPatrol[] = R"TPL({
   "name": "编队巡逻",
   "description": "起飞后以主队形巡逻一段时间，变换队形继续巡逻，结束后停止编队返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": ["巡逻", "编队"],
   "min_fleet": 3,
@@ -209,6 +221,7 @@ const char kTplRelayWatch[] = R"TPL({
   "name": "多机接力值守",
   "description": "分组接力空中值守：全体起飞后 A 组先值守，B 组到点接替，最后全体返航（P3 接入感知后升级为接力跟踪）",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": ["接力", "值守"],
   "min_fleet": 4,
@@ -216,8 +229,8 @@ const char kTplRelayWatch[] = R"TPL({
   "parameters": [
     {"key":"altitude","label":"作业高度（米）","type":"number","default":30,"min":10,"max":120},
     {"key":"climb_gate","label":"升空判定高度（米）","type":"number","default":25,"min":5,"max":115},
-    {"key":"group_a_ids","label":"A 组机号列表","type":"array","default":[1,2,3,4]},
-    {"key":"group_b_ids","label":"B 组机号列表","type":"array","default":[5,6,7,8]},
+    {"key":"group_a_ids","label":"A 组机号列表","type":"array","default":[]},
+    {"key":"group_b_ids","label":"B 组机号列表","type":"array","default":[]},
     {"key":"watch_seconds","label":"每组值守时长（秒）","type":"integer","default":300,"min":30,"max":7200}
   ],
   "stages": [
@@ -227,7 +240,7 @@ const char kTplRelayWatch[] = R"TPL({
      "complete_when":{"kind":"duration","seconds":"${watch_seconds}"}},
     {"name":"B组接替","actions":[{"type":"set_selection","vehicle_ids":"${group_b_ids}"}],
      "complete_when":{"kind":"duration","seconds":"${watch_seconds}"}},
-    {"name":"全体返航","actions":[{"type":"set_selection","vehicle_ids":[]},{"type":"rtl"}],
+    {"name":"全体返航","actions":[{"type":"set_selection","vehicle_ids":"${all_vehicle_ids}"},{"type":"rtl"}],
      "complete_when":{"kind":"all_disarmed","timeout_sec":600}}
   ]
 })TPL";
@@ -236,6 +249,7 @@ const char kTplRendezvous[] = R"TPL({
   "name": "会合集结",
   "description": "起飞后以长机为集结点组成环形编队收拢，保持后全体返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": ["集结", "编队"],
   "min_fleet": 3,
@@ -268,10 +282,10 @@ SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager* swarmManager)
                    QStringLiteral("/SwarmTemplates"))
 {
     QDir().mkpath(_templateDir);
-    _ensureDefaults();
-    _scan();
     (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(),
                    [](const QString& message) { qgcApp()->showAppMessage(message); });
+    _ensureDefaults();
+    _scan();
 }
 
 SwarmTaskLibrary::~SwarmTaskLibrary() = default;
@@ -290,14 +304,49 @@ void SwarmTaskLibrary::_ensureDefaults()
         {"会合集结.json", kTplRendezvous},
     };
 
+    static const QHash<QString, QByteArray> legacyDigests{
+        {QStringLiteral("区域搜索后返航"),
+         QByteArray("3d9f90e088fe0366bdd193ddcfe06258be6ee2359f61a1d0e30d4ff649036a13")},
+        {QStringLiteral("编队巡航后返航"),
+         QByteArray("c0fb1568a4580ce1dbaa07d6403781f3e4ecb706fbeace61f2c187d6a35ee1ce")},
+        {QStringLiteral("快速出动待命"),
+         QByteArray("c83e3f4e6e51dbe670e739f1f26bc81a641bac3488e3547dacbcbd6ab71395a0")},
+        {QStringLiteral("全员返航降落"),
+         QByteArray("7d4e3230068f6960454f9d91e57c12273c542edf0f2b1c09ef8c3014e5ce7e4a")},
+        {QStringLiteral("扇形扫掠搜索"),
+         QByteArray("1f709f1781ee578124de978cf1570d6bc4f966d8c6178fd3a55714425966de47")},
+        {QStringLiteral("平行网格扫掠"),
+         QByteArray("a820306d4bff8db36644d579e1e435f77fcdfa2d6727b42eabd87a4d90f99af6")},
+        {QStringLiteral("编队巡逻"), QByteArray("72943503c576a1dbefd943c409fe0550e48a5edb950e4d5efe5dba4a8283ec28")},
+        {QStringLiteral("多机接力值守"),
+         QByteArray("06455cd6a63b7ce5e7a6b24b90a96403a766ca8069ba129db8c5ca050ec8ffea")},
+        {QStringLiteral("会合集结"), QByteArray("fff9e7c57a117005f6d0420fcc6feca73e50e52d62ab967b5cc556b6580c4906")}};
     for (const auto& def : defaults) {
         const QString path = _templateDir + QLatin1Char('/') + QString::fromUtf8(def.fileName);
-        if (!QFile::exists(path)) {
-            QFile file(path);
-            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                file.write(def.json);
+        QFile previous(path);
+        if (previous.exists()) {
+            if (!previous.open(QIODevice::ReadOnly)) {
+                emit libraryFeedback(tr("模板无法读取：%1").arg(path));
+                continue;
+            }
+            const QByteArray oldBytes = previous.readAll();
+            previous.close();
+            const auto oldObject = QJsonDocument::fromJson(oldBytes).object();
+            const QByteArray digest = QCryptographicHash::hash(QJsonDocument(oldObject).toJson(QJsonDocument::Compact),
+                                                               QCryptographicHash::Sha256)
+                                          .toHex();
+            if (digest != legacyDigests.value(oldObject.value(QStringLiteral("name")).toString()))
+                continue;
+            QSaveFile backup(path + QStringLiteral(".pre-revision-2.bak"));
+            if (!backup.open(QIODevice::WriteOnly) || backup.write(oldBytes) != oldBytes.size() || !backup.commit()) {
+                emit libraryFeedback(tr("模板备份失败：%1").arg(path));
+                continue;
             }
         }
+        QSaveFile file(path);
+        const QByteArray bytes(def.json);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
+            emit libraryFeedback(tr("模板更新失败：%1").arg(path));
     }
 }
 
@@ -408,35 +457,139 @@ QJsonArray SwarmTaskLibrary::instantiate(const QString& name, const QVariantMap&
         return QJsonArray();
     }
 
-    // 有效参数 = 模板默认值 ← 调用方覆盖，数值按 min/max 限幅
+    error.clear();
+    const QList<int> targets = _swarmManager->boundTargetIds();
+    if (targets.isEmpty() || targets.size() < tpl->minFleet) {
+        error = tr("绑定目标数量不足：至少需要 %1 架").arg(qMax(1, tpl->minFleet));
+        return {};
+    }
     QJsonObject effectiveParams;
+    QSet<QString> declared;
+    for (const auto& parameter : tpl->parameters)
+        declared.insert(parameter.toObject().value(QStringLiteral("key")).toString());
+    for (auto it = paramValues.begin(); it != paramValues.end(); ++it) {
+        if (!declared.contains(it.key())) {
+            error = tr("未知参数：%1").arg(it.key());
+            return {};
+        }
+    }
     for (const QJsonValue& pv : tpl->parameters) {
         const QJsonObject p = pv.toObject();
         const QString key = p.value(QStringLiteral("key")).toString();
-        QJsonValue value = p.value(QStringLiteral("default"));
-        if (paramValues.contains(key) && paramValues.value(key).isValid()) {
-            value = QJsonValue::fromVariant(paramValues.value(key));
-        }
-        // 类型矫正：声明为数值的参数收到字符串时转换（AI/QML 均可能传入字符串）
-        const QString ptype = p.value(QStringLiteral("type")).toString();
-        if ((ptype == QStringLiteral("number") || ptype == QStringLiteral("integer")) && value.isString()) {
-            value = value.toString().toDouble();
-        }
-        if (value.isDouble()) {
-            double v = value.toDouble();
-            if (p.contains(QStringLiteral("min"))) {
-                v = qMax(v, p.value(QStringLiteral("min")).toDouble());
+        const QString type = p.value(QStringLiteral("type")).toString();
+        QJsonValue value = paramValues.contains(key) ? QJsonValue::fromVariant(paramValues.value(key))
+                                                     : p.value(QStringLiteral("default"));
+        if (!paramValues.contains(key)) {
+            if (key == QStringLiteral("leader_id"))
+                value = targets.first();
+            if (key == QStringLiteral("group_a_ids") || key == QStringLiteral("group_b_ids")) {
+                QJsonArray group;
+                const int split = (targets.size() + 1) / 2;
+                for (int i = 0; i < targets.size(); ++i)
+                    if ((key == QStringLiteral("group_a_ids")) == (i < split))
+                        group.append(targets[i]);
+                value = group;
             }
-            if (p.contains(QStringLiteral("max"))) {
-                v = qMin(v, p.value(QStringLiteral("max")).toDouble());
+            if (key == QStringLiteral("climb_gate") && effectiveParams.contains(QStringLiteral("altitude")))
+                value = qBound(p.value(QStringLiteral("min")).toDouble(),
+                               effectiveParams.value(QStringLiteral("altitude")).toDouble() - 5.0,
+                               p.value(QStringLiteral("max")).toDouble());
+        }
+        if (type == QStringLiteral("number") || type == QStringLiteral("integer")) {
+            if (value.isString()) {
+                static const QRegularExpression number(
+                    QStringLiteral(R"(^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$)"));
+                const QString text = value.toString().trimmed();
+                bool ok = false;
+                const double converted = text.toDouble(&ok);
+                if (!number.match(text).hasMatch() || !ok) {
+                    error = tr("%1：必须输入完整有效数字").arg(key);
+                    return {};
+                }
+                value = converted;
             }
-            value = v;
+            const double n = value.toDouble();
+            if (!value.isDouble() || !std::isfinite(n) || (type == QStringLiteral("integer") && std::trunc(n) != n) ||
+                (p.contains(QStringLiteral("min")) && n < p.value(QStringLiteral("min")).toDouble()) ||
+                (p.contains(QStringLiteral("max")) && n > p.value(QStringLiteral("max")).toDouble())) {
+                error = tr("%1：数值类型或范围无效").arg(key);
+                return {};
+            }
+        } else if (type == QStringLiteral("array")) {
+            if (value.isString()) {
+                QJsonParseError parseError;
+                const auto parsed = QJsonDocument::fromJson(value.toString().toUtf8(), &parseError);
+                if (parseError.error != QJsonParseError::NoError || !parsed.isArray()) {
+                    error = tr("%1：必须为完整 JSON 数组").arg(key);
+                    return {};
+                }
+                value = parsed.array();
+            }
+            if (!value.isArray() || value.toArray().isEmpty()) {
+                error = tr("%1：数组不能为空").arg(key);
+                return {};
+            }
+            QSet<int> seen;
+            for (const auto& entry : value.toArray()) {
+                const int id = entry.toInt(-1);
+                if (!entry.isDouble() || entry.toDouble() != id || !targets.contains(id) || seen.contains(id)) {
+                    error = tr("%1：机号重复或不在绑定目标中").arg(key);
+                    return {};
+                }
+                seen.insert(id);
+            }
+        } else if (type != QStringLiteral("string") || !value.isString()) {
+            error = tr("%1：参数类型无效").arg(key);
+            return {};
         }
         effectiveParams.insert(key, value);
     }
-
-    error.clear();
-    return _substitute(tpl->stages, effectiveParams).toArray();
+    if (effectiveParams.contains(QStringLiteral("climb_gate")) &&
+        effectiveParams.value(QStringLiteral("climb_gate")).toDouble() >
+            effectiveParams.value(QStringLiteral("altitude")).toDouble()) {
+        error = tr("升空判定高度不能高于起飞高度");
+        return {};
+    }
+    QJsonArray allIds;
+    for (int id : targets)
+        allIds.append(id);
+    effectiveParams[QStringLiteral("all_vehicle_ids")] = allIds;
+    if (effectiveParams.contains(QStringLiteral("group_a_ids"))) {
+        QSet<int> unionIds;
+        for (const auto& key : {QStringLiteral("group_a_ids"), QStringLiteral("group_b_ids")}) {
+            for (const auto& v : effectiveParams.value(key).toArray()) {
+                if (unionIds.contains(v.toInt())) {
+                    error = tr("接力分组不得重叠");
+                    return {};
+                }
+                unionIds.insert(v.toInt());
+            }
+        }
+        if (unionIds != QSet<int>(targets.begin(), targets.end())) {
+            error = tr("接力分组必须覆盖全部绑定目标");
+            return {};
+        }
+    }
+    QJsonArray stages = _substitute(tpl->stages, effectiveParams).toArray();
+    for (int i = 0; i < stages.size(); ++i) {
+        auto stage = stages[i].toObject();
+        auto condition = stage.value(QStringLiteral("complete_when")).toObject();
+        if (condition.value(QStringLiteral("kind")) == QStringLiteral("duration") &&
+            !condition.contains(QStringLiteral("timeout_sec"))) {
+            condition[QStringLiteral("timeout_sec")] =
+                qMax(600, condition.value(QStringLiteral("seconds")).toInt() +
+                              condition.value(QStringLiteral("grace_sec")).toInt(3) + 30);
+            stage[QStringLiteral("complete_when")] = condition;
+            stages[i] = stage;
+        }
+    }
+    QStringList errors;
+    const auto parsed = _swarmManager->taskController()->parseStages(stages, QGeoCoordinate(0, 0), errors);
+    if (parsed.isEmpty() || !errors.isEmpty()) {
+        error = errors.join(QStringLiteral("；"));
+        return {};
+    }
+    return stages;
 }
 
 QJsonArray SwarmTaskLibrary::contextSummary() const
@@ -488,7 +641,7 @@ bool SwarmTaskLibrary::runTemplate(const QString& name, const QVariantMap& param
 
     // Schema v2 模板级校验（WP2.1）：规模与载荷
     if (const TaskTemplate* tpl = _find(name)) {
-        const int online = _swarmManager->vehicleCount();
+        const int online = _swarmManager->boundTargetIds().size();
         if (tpl->minFleet > 0 && online < tpl->minFleet) {
             emit libraryFeedback(
                 tr("模板执行失败：「%1」要求最少 %2 架在线，当前仅 %3 架").arg(name).arg(tpl->minFleet).arg(online));
@@ -535,12 +688,16 @@ bool SwarmTaskLibrary::saveTemplate(const QString& name, const QString& descript
 
     QString fileName = name;
     fileName.replace(QLatin1Char('/'), QLatin1Char('_')).replace(QLatin1Char('\\'), QLatin1Char('_'));
-    QFile file(_templateDir + QLatin1Char('/') + fileName + QStringLiteral(".json"));
+    QSaveFile file(_templateDir + QLatin1Char('/') + fileName + QStringLiteral(".json"));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         emit libraryFeedback(tr("保存失败：无法写入 %1").arg(file.fileName()));
         return false;
     }
-    file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+    const auto bytes = QJsonDocument(obj).toJson(QJsonDocument::Indented);
+    if (file.write(bytes) != bytes.size() || !file.commit()) {
+        emit libraryFeedback(tr("保存模板失败"));
+        return false;
+    }
     _scan();
     emit libraryFeedback(tr("模板「%1」已保存").arg(name));
     return true;

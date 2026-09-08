@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: RUF001, RUF002, RUF003, UP038
+# ruff: noqa: RUF001
 """Validate Swarm test assets and their single-source-of-truth contracts."""
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def validate_scenarios(issues: list[Issue]) -> dict[str, int]:
             isinstance(criteria, dict)
             and "max_total_sec" in criteria
             and (
-                not isinstance(criteria["max_total_sec"], (int, float))
+                type(criteria["max_total_sec"]) not in (int, float)
                 or criteria["max_total_sec"] <= 0
             )
         ):
@@ -152,7 +152,7 @@ def validate_templates(issues: list[Issue]) -> dict[str, int]:
             if isinstance(item, dict) and isinstance(item.get("key"), str)
         }
         placeholders = set(PLACEHOLDER_RE.findall(json.dumps(template, ensure_ascii=False)))
-        for missing_key in sorted(placeholders - parameter_keys):
+        for missing_key in sorted(placeholders - parameter_keys - {"all_vehicle_ids"}):
             issues.append(Issue("error", relative, f"占位符 ${{{missing_key}}} 没有对应参数"))
         stages = template.get("stages")
         if not isinstance(stages, list) or not stages:

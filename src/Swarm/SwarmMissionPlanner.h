@@ -75,6 +75,17 @@ public:
                                                   double bandMin, double bandMax) const;
 
     QVariantMap missionStatus() const { return _missionStatus; }
+    Q_PROPERTY(QVariantMap uploadStates READ uploadStates NOTIFY missionStatusChanged)
+
+    QVariantMap uploadStates() const { return _uploadStates; }
+
+    bool busy() const { return !_uploads.isEmpty(); }
+
+    quint64 batchId() const { return _batchId; }
+
+    quint64 verifiedRevision(int vehicleId) const { return _verifiedRevisions.value(vehicleId); }
+
+    void cancelTargets(const QList<int>& ids);
 
     /// 设置逐机自动控制许可判定，阻止向无有效租约的车辆上传或清除任务。
     void setVehicleAutomationAllowedCallback(std::function<bool(int)> callback);
@@ -86,13 +97,21 @@ signals:
     void missionStatusChanged();
     /// 任务成功上传并回读同步（vehicleId，itemCount）
     void missionUploaded(int vehicleId, int itemCount);
+    void batchFinished(quint64 batchId, bool success, const QString& reason);
     /// 规划/上传反馈（供界面显示）
     void plannerFeedback(const QString& message);
 
 private:
     /// 本地平面坐标(x=沿航线, y=垂直航线, 单位米) → WGS84 坐标
     QGeoCoordinate _localToGeo(const QGeoCoordinate& center, double angleDeg, double x, double y) const;
-    void _trackUpload(Vehicle* vehicle, int itemCount);
+    void _trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items);
+    void _finishUpload(int vehicleId, bool success, const QString& reason, bool withdrawn = false);
+    QHash<int, QObject*> _uploads;
+    QVariantMap _uploadStates;
+    quint64 _batchId = 0;
+    bool _batchFailed = false;
+    int _verifiedCount = 0;
+    QHash<int, quint64> _verifiedRevisions;
 
     double _surveyAltitude = 30.0;  ///< 作业高度（相对起飞点，米）
     double _surveySpacing = 20.0;   ///< 航线间隔（米）

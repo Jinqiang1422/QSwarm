@@ -141,6 +141,21 @@ bool originHasOperatorAuthorization(const QString& origin, const SwarmTaskContro
 }
 }  // namespace
 
+struct SwarmManager::Execution
+{
+    quint64 id = 0;
+    QList<SwarmAction> actions;
+    int index = 0;
+    QString origin;
+    ExecutionApproval approval = ExecutionApproval::Automatic;
+    QPointer<QObject> context;
+    QHash<int, QPointer<Vehicle>> targets;
+    QHash<int, quint64> generations;
+    QHash<int, quint64> plannedMissions;
+    QSet<int> withdrawn;
+    bool finished = false;
+};
+
 Q_APPLICATION_STATIC(SwarmManager, _swarmManagerInstance);
 
 SwarmManager::SwarmManager(QObject* parent)
@@ -158,8 +173,38 @@ SwarmManager::SwarmManager(QObject* parent)
 
     _formation->setVehicleAutomationAllowedCallback(
         [this](int vehicleId) { return _formationAutomationAllowed(vehicleId); });
+    _formation->setTargetAllowedCallback([this](int id, const QGeoCoordinate& point) {
+        Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(id);
+        if (!vehicle || !std::isfinite(point.altitude()) || !vehicle->coordinate().isValid())
+            return false;
+        const auto config = _constraintConfig();
+        if (!config.error.isEmpty())
+            return false;
+        if (!config.includePolygons.isEmpty() &&
+            std::none_of(config.includePolygons.begin(), config.includePolygons.end(), [&point](const auto& polygon) {
+                return SwarmTypes::pointInPolygon(point.latitude(), point.longitude(), polygon);
+            }))
+            return false;
+        for (const auto& polygon : config.excludePolygons)
+            if (SwarmTypes::pointInPolygon(point.latitude(), point.longitude(), polygon))
+                return false;
+        if (config.maxAltitudeM > 0 &&
+            (!vehicle->homePosition().isValid() || !std::isfinite(vehicle->homePosition().altitude()) ||
+             point.altitude() - vehicle->homePosition().altitude() > config.maxAltitudeM))
+            return false;
+        for (int otherId : _formationTargetIds) {
+            Vehicle* other = MultiVehicleManager::instance()->getVehicleById(otherId);
+            if (!other || otherId == id || !other->coordinate().isValid())
+                continue;
+            const double dz = point.altitude() - other->altitudeAMSL()->rawValue().toDouble();
+            if (std::isfinite(dz) && std::hypot(point.distanceTo(other->coordinate()), dz) < config.minSeparationM)
+                return false;
+        }
+        return true;
+    });
     _missionPlanner->setVehicleAutomationAllowedCallback([this](int vehicleId) {
-        return (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicleId)) &&
+        return !_automationExcludedIds.contains(vehicleId) &&
+               (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicleId)) &&
                _lease.canAutomate(vehicleId, SwarmClock::nowMs());
     });
 
@@ -215,6 +260,10 @@ void SwarmManager::shutdown()
         return;
     }
     _shutdownComplete = true;
+    const auto executions = _executions.values();
+    for (const auto& execution : executions)
+        _finishExecution(execution, false, tr("应用关闭"));
+    _missionPlanner->cancelTargets(_commandGenerations.keys());
 
     _formation->stop();
     _taskController->shutdown();
@@ -270,8 +319,10 @@ void SwarmManager::setAutonomyLevel(int level)
     level = qBound(1, level, 3);
     if (_autonomyLevel != level) {
         _autonomyLevel = level;
-        if (level == 1)
-            ++_takeoffCommandGeneration;
+        if (level == 1) {
+            for (auto it = _commandGenerations.begin(); it != _commandGenerations.end(); ++it)
+                ++it.value();
+        }
         QSettings().setValue(QStringLiteral("Swarm/autonomyLevel"), level);
         SwarmAuditLogger::instance()->logAutonomyChange(level);
         emit autonomyLevelChanged();
@@ -594,6 +645,17 @@ void SwarmManager::_onTrackBatch(const QVariantList& tracks, qint64 timeUsec)
 void SwarmManager::_onPerceptionTick()
 {
     const qint64 monoMs = SwarmClock::nowMs();
+    for (const auto& execution : std::as_const(_executions)) {
+        for (int id : execution->targets.keys()) {
+            if (!execution->withdrawn.contains(id) && !_automationExcludedIds.contains(id))
+                _lease.renewLease(id, monoMs);
+        }
+    }
+    for (int id : _taskController->activeTargets()) {
+        if (!_automationExcludedIds.contains(id))
+            _lease.renewLease(id, monoMs);
+    }
+    _lease.expireCheck(monoMs);
     _fusion.prune(monoMs);
 
     const auto fused = _fusion.tracks();
@@ -692,6 +754,15 @@ QList<Vehicle*> SwarmManager::_targetVehicles(bool requireActiveLease) const
     return gated;
 }
 
+QList<int> SwarmManager::boundTargetIds() const
+{
+    QList<int> ids;
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            ids.append(vehicle->id());
+    return ids;
+}
+
 void SwarmManager::_forEachVehicleStaggered(const QString& commandName, int staggerMs,
                                             const std::function<void(Vehicle*, bool)>& action)
 {
@@ -710,13 +781,17 @@ void SwarmManager::_forEachVehicleStaggered(const QString& commandName, int stag
     int delayMs = 0;
     for (Vehicle* vehicle : targets) {
         QPointer<Vehicle> vehiclePtr(vehicle);
-        QTimer::singleShot(delayMs, this, [this, vehiclePtr, action, commandName, requireActiveLease, automated]() {
-            if (automated && aiExecutionBlocked())
-                return;
-            if (vehiclePtr && _automationAllowedAtDispatch(vehiclePtr->id(), requireActiveLease, commandName)) {
-                action(vehiclePtr.data(), requireActiveLease);
-            }
-        });
+        const quint64 generation = _commandGenerations[vehicle->id()];
+        QTimer::singleShot(
+            delayMs, this, [this, vehiclePtr, action, commandName, requireActiveLease, automated, generation]() {
+                if (_shutdownComplete || !vehiclePtr || generation != _commandGenerations.value(vehiclePtr->id()))
+                    return;
+                if (automated && aiExecutionBlocked())
+                    return;
+                if (vehiclePtr && _automationAllowedAtDispatch(vehiclePtr->id(), requireActiveLease, commandName)) {
+                    action(vehiclePtr.data(), requireActiveLease);
+                }
+            });
         delayMs += staggerMs;
     }
     emit swarmCommandFeedback(tr("%1：已排队下发至 %2 架无人机").arg(commandName).arg(targets.count()));
@@ -728,6 +803,10 @@ void SwarmManager::_requestAutomationLeases(const QString& origin)
     const bool operatorAuthorized = originHasOperatorAuthorization(origin, _taskController);
     for (Vehicle* vehicle : _targetVehicles()) {
         if (vehicle) {
+            if (!operatorAuthorized && _lease.canAutomate(vehicle->id(), nowMs)) {
+                _lease.renewLease(vehicle->id(), nowMs);
+                continue;
+            }
             const QString token =
                 _lease.requestLeaseForMode(vehicle->id(), origin, QStringLiteral("swarm"), nowMs, vehicle->flightMode(),
                                            _autonomousModes(vehicle), operatorAuthorized);
@@ -781,7 +860,13 @@ bool SwarmManager::_formationAutomationAllowed(int vehicleId)
 
 void SwarmManager::armAll(bool arm)
 {
-    ++_takeoffCommandGeneration;
+    if (!_automationDispatchInProgress) {
+        for (int id : boundTargetIds())
+            _automationExcludedIds.remove(id);
+    }
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            ++_commandGenerations[vehicle->id()];
     SwarmAuditLogger::instance()->logOperatorCommand(arm ? QStringLiteral("armAll") : QStringLiteral("disarmAll"));
     _forEachVehicleStaggered(arm ? tr("集群解锁") : tr("集群上锁"), _commandIntervalMs,
                              [arm](Vehicle* vehicle, bool) { vehicle->setArmed(arm, true /*showError*/); });
@@ -800,61 +885,12 @@ void SwarmManager::takeoffAll(double altitudeRelative)
         emit swarmCommandFeedback(tr("起飞被拒绝：高度或实时约束无效"));
         return;
     }
-    const quint64 commandGeneration = ++_takeoffCommandGeneration;
-    SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("takeoffAll"),
-                                                     {{QStringLiteral("altitude"), altitudeRelative}});
-    _forEachVehicleStaggered(
-        tr("集群起飞"), _takeoffStaggerMs,
-        [this, altitudeRelative, commandGeneration](Vehicle* vehicle, bool requireActiveLease) {
-            if (commandGeneration != _takeoffCommandGeneration) {
-                return;
-            }
-            // PX4 may auto-disarm an already armed vehicle while it waits for its staggered
-            // takeoff slot. Reassert arming for every vehicle at dispatch time instead of
-            // trusting a potentially stale armed state from the earlier arm-all command.
-            vehicle->setArmed(true, true /*showError*/);
-            QPointer<Vehicle> vehiclePtr(vehicle);
-            QTimer::singleShot(
-                1500, this, [this, vehiclePtr, altitudeRelative, requireActiveLease, commandGeneration]() {
-                    if (vehiclePtr) {
-                        _armAndTakeoff(vehiclePtr.data(), altitudeRelative, requireActiveLease, commandGeneration, 30);
-                    }
-                });
-        });
-}
-
-void SwarmManager::_armAndTakeoff(Vehicle* vehicle, double altitudeRelative, bool requireActiveLease,
-                                  quint64 commandGeneration, int retriesRemaining)
-{
-    if (!vehicle || commandGeneration != _takeoffCommandGeneration ||
-        !_automationAllowedAtDispatch(vehicle->id(), requireActiveLease, tr("集群起飞"))) {
-        return;
-    }
-    if (vehicle->armed()) {
-        vehicle->guidedModeTakeoff(altitudeRelative);
-        return;
-    }
-    if (retriesRemaining <= 0) {
-        emit swarmCommandFeedback(tr("集群起飞：%1 号机等待解锁超时").arg(vehicle->id()));
-        SwarmAuditLogger::instance()->log(QStringLiteral("safety"), QStringLiteral("takeoff_arm_timeout"),
-                                          {{QStringLiteral("vehicle_id"), vehicle->id()}});
-        return;
-    }
-
-    vehicle->setArmed(true, true /*showError*/);
-    QPointer<Vehicle> vehiclePtr(vehicle);
-    QTimer::singleShot(1000, this,
-                       [this, vehiclePtr, altitudeRelative, requireActiveLease, commandGeneration, retriesRemaining]() {
-                           if (vehiclePtr) {
-                               _armAndTakeoff(vehiclePtr.data(), altitudeRelative, requireActiveLease,
-                                              commandGeneration, retriesRemaining - 1);
-                           }
-                       });
+    executeActions({action}, QStringLiteral("operator"), ExecutionApproval::OperatorConfirmed);
 }
 
 void SwarmManager::landAll()
 {
-    ++_takeoffCommandGeneration;
+    _cancelSelectedTargets(QStringLiteral("landAll"));
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("landAll"));
     _forEachVehicleStaggered(tr("集群降落"), _commandIntervalMs,
                              [](Vehicle* vehicle, bool) { vehicle->guidedModeLand(); });
@@ -862,7 +898,7 @@ void SwarmManager::landAll()
 
 void SwarmManager::rtlAll()
 {
-    ++_takeoffCommandGeneration;
+    _cancelSelectedTargets(QStringLiteral("rtlAll"));
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("rtlAll"));
     _forEachVehicleStaggered(tr("集群返航"), _commandIntervalMs,
                              [](Vehicle* vehicle, bool) { vehicle->guidedModeRTL(true /*smartRTL*/); });
@@ -870,7 +906,7 @@ void SwarmManager::rtlAll()
 
 void SwarmManager::pauseAll()
 {
-    ++_takeoffCommandGeneration;
+    _cancelSelectedTargets(QStringLiteral("pauseAll"));
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("pauseAll"));
     _forEachVehicleStaggered(tr("集群暂停"), 0 /*立即同时执行*/,
                              [](Vehicle* vehicle, bool) { vehicle->pauseVehicle(); });
@@ -878,21 +914,71 @@ void SwarmManager::pauseAll()
 
 void SwarmManager::pauseTargets(const QList<int>& ids)
 {
+    QScopedValueRollback<bool> dispatchScope(_automationDispatchInProgress, true);
     QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, ids);
     pauseAll();
 }
 
+void SwarmManager::_cancelSelectedTargets(const QString& reason)
+{
+    QList<int> ids;
+    for (Vehicle* vehicle : _targetVehicles()) {
+        if (vehicle)
+            ids.append(vehicle->id());
+    }
+    if (!_automationDispatchInProgress) {
+        cancelTargets(ids, reason);
+    } else {
+        for (int id : ids)
+            ++_commandGenerations[id];
+    }
+}
+
+void SwarmManager::cancelTargets(const QList<int>& ids, const QString& reason)
+{
+    if (ids.isEmpty())
+        return;
+    for (int id : ids) {
+        ++_commandGenerations[id];
+        _automationExcludedIds.insert(id);
+        _formationTargetIds.remove(id);
+    }
+    for (const auto& execution : std::as_const(_executions)) {
+        for (int id : ids)
+            execution->withdrawn.insert(id);
+    }
+    _formation->removeMembers(QSet<int>(ids.begin(), ids.end()));
+    _taskController->withdrawTargets(ids, reason);
+    _missionPlanner->cancelTargets(ids);
+    _aiAgent->invalidatePendingWork();
+    SwarmAuditLogger::instance()->logTaskEvent(
+        QStringLiteral("members_withdrawn"),
+        {{QStringLiteral("reason"), reason}, {QStringLiteral("count"), ids.size()}});
+}
+
 void SwarmManager::startMissionAll()
 {
-    ++_takeoffCommandGeneration;
-    SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("startMissionAll"));
-    _forEachVehicleStaggered(tr("集群开始任务"), _commandIntervalMs,
-                             [](Vehicle* vehicle, bool) { vehicle->startMission(); });
+    SwarmAction action;
+    action.type = QStringLiteral("start_mission");
+    for (Vehicle* vehicle : _targetVehicles())
+        if (vehicle)
+            action.targetIds.append(vehicle->id());
+    executeActions({action}, QStringLiteral("operator"), ExecutionApproval::OperatorConfirmed);
+}
+
+void SwarmManager::authorizeTaskTargets(const QList<int>& ids)
+{
+    if (_shutdownComplete || aiExecutionBlocked())
+        return;
+    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, ids);
+    for (int id : ids)
+        _automationExcludedIds.remove(id);
+    _requestAutomationLeases(QStringLiteral("ai_confirmed"));
 }
 
 void SwarmManager::emergencyDisarmAll()
 {
-    ++_takeoffCommandGeneration;
+    _cancelSelectedTargets(QStringLiteral("emergencyDisarmAll"));
     SwarmAuditLogger::instance()->logOperatorCommand(QStringLiteral("emergencyDisarmAll"));
     _forEachVehicleStaggered(tr("紧急上锁"), 0, [](Vehicle* vehicle, bool) {
         // MAV_CMD_COMPONENT_ARM_DISARM: param1=0(上锁), param2=21196(强制，含空中)
@@ -914,8 +1000,11 @@ bool SwarmManager::startFormation(int leaderVehicleId)
         return false;
     }
     _formationAutomated = false;
+    for (int id : action.targetIds)
+        _automationExcludedIds.remove(id);
     _formationTargetIds = QSet<int>(action.targetIds.cbegin(), action.targetIds.cend());
     _requestAutomationLeases(QStringLiteral("operator"));
+    _formation->setMembers(_formationTargetIds);
     return _formation->start(leaderVehicleId);
 }
 
@@ -1220,7 +1309,8 @@ QList<SwarmAction> SwarmManager::parseAndValidate(const QJsonArray& actionsJson,
 // ---------------------------------------------------------------------------
 // 统一动作管线：执行
 // ---------------------------------------------------------------------------
-bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval)
+bool SwarmManager::_executeImmediateActions(const QList<SwarmAction>& actions, const QString& origin,
+                                            ExecutionApproval approval)
 {
     // 纵深防御兜底闸门:任何入口(含 task 状态机自动推进)在 L1 档位一律拒绝下发,
     // 防止运行中降级自主等级或新增入口绕过前置 autonomy 闸门。
@@ -1264,23 +1354,7 @@ bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
         const bool authorizeLease = approval == ExecutionApproval::OperatorConfirmed &&
                                     (origin != QStringLiteral("task") || _taskController->currentStageIndex() == 0);
         _requestAutomationLeases(authorizeLease ? QStringLiteral("ai_confirmed") : QStringLiteral("ai"));
-        if (type == QStringLiteral("arm")) {
-            armAll(p.value(QStringLiteral("arm")).toBool());
-        } else if (type == QStringLiteral("takeoff")) {
-            takeoffAll(p.value(QStringLiteral("altitude")).toDouble());
-        } else if (type == QStringLiteral("land")) {
-            landAll();
-        } else if (type == QStringLiteral("rtl")) {
-            rtlAll();
-        } else if (type == QStringLiteral("pause")) {
-            pauseAll();
-        } else if (type == QStringLiteral("start_mission")) {
-            startMissionAll();
-        } else if (type == QStringLiteral("disarm")) {
-            armAll(false);
-        } else if (type == QStringLiteral("emergency_disarm")) {
-            emergencyDisarmAll();
-        } else if (type == QStringLiteral("start_formation")) {
+        if (type == QStringLiteral("start_formation")) {
             const QString name = p.value(QStringLiteral("formation")).toString();
             FormationController::FormationType formationType = FormationController::FormationWedge;
             if (name == QStringLiteral("column"))
@@ -1294,24 +1368,17 @@ bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
             _formation->setVerticalStepMeters(p.value(QStringLiteral("vertical_step")).toDouble());
             _formationAutomated = true;
             _formationTargetIds = QSet<int>(action.targetIds.cbegin(), action.targetIds.cend());
+            _formation->setMembers(_formationTargetIds);
             if (!_formation->start(p.value(QStringLiteral("leader_id")).toInt()))
                 return false;
         } else if (type == QStringLiteral("stop_formation")) {
             _formation->stop();
-        } else if (type == QStringLiteral("plan_coverage")) {
-            _missionPlanner->setSurveyAltitude(p.value(QStringLiteral("altitude")).toDouble());
-            _missionPlanner->setSurveySpacing(p.value(QStringLiteral("spacing")).toDouble());
-            if (!_missionPlanner->planAndUploadCoverage(
-                    QGeoCoordinate(p.value(QStringLiteral("center_lat")).toDouble(),
-                                   p.value(QStringLiteral("center_lon")).toDouble()),
-                    p.value(QStringLiteral("length")).toDouble(), p.value(QStringLiteral("width")).toDouble(),
-                    p.value(QStringLiteral("angle")).toDouble(),
-                    p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString()))
-                return false;
         } else if (type == QStringLiteral("clear_missions")) {
             _missionPlanner->clearAllMissions();
         } else if (type == QStringLiteral("plan_tactic")) {
             _executeTactic(p);
+        } else {
+            return false;
         }
     }
     emit swarmCommandFeedback(tr("动作序列已受理（%1 项）").arg(actions.count()));
@@ -1425,6 +1492,7 @@ void SwarmManager::_vehicleAdded(Vehicle* vehicle)
                        _lease.stateOf(vehicle->id()) == SwarmControlLease::LEASED) {
                 // 仅在自动化已持有租约时，集合外模式切换才表示操作员接管。
                 _lease.setManualOverride(vehicle->id(), true);
+                cancelTargets({vehicle->id()}, tr("操作员切换到人工控制模式"));
             }
         };
         connect(vehicle, &Vehicle::flightModeChanged, this, updateLeaseFromMode);
@@ -1452,7 +1520,265 @@ QStringList SwarmManager::_autonomousModes(Vehicle* vehicle) const
 void SwarmManager::_vehicleRemoved(Vehicle* vehicle)
 {
     if (vehicle) {
+        cancelTargets({vehicle->id()}, tr("载具断开"));
         _lease.forgetVehicle(vehicle->id());
     }
     emit vehicleCountChanged();
+}
+
+bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval)
+{
+    const bool manual = origin == QStringLiteral("operator");
+    QString reason;
+    if (_shutdownComplete || (!manual && aiExecutionBlocked(&reason)) ||
+        (approval == ExecutionApproval::Automatic && needsConfirmation(actions, &reason)) ||
+        planHasConstraintError(actions))
+        return false;
+    // A separately submitted recovery instruction retires earlier task ownership too.
+    // Do this before allocating its context so it cannot cancel itself.
+    if (origin != QStringLiteral("task")) {
+        QSet<int> retiring;
+        for (const auto& action : actions) {
+            if (action.type == QStringLiteral("pause") || action.type == QStringLiteral("rtl") ||
+                action.type == QStringLiteral("land") || action.type == QStringLiteral("emergency_disarm"))
+                retiring.unite(QSet<int>(action.targetIds.begin(), action.targetIds.end()));
+        }
+        cancelTargets(retiring.values(), tr("新恢复指令替代已有自动任务"));
+    }
+    auto execution = std::make_shared<Execution>();
+    execution->id = ++_lastExecutionId;
+    _executionStates.clear();
+    _executionMessage.clear();
+    execution->actions = actions;
+    execution->origin = origin;
+    execution->approval = approval;
+    execution->context = new QObject(this);
+    for (const auto& action : actions) {
+        for (int id : action.targetIds) {
+            const bool newOperatorInstruction =
+                approval == ExecutionApproval::OperatorConfirmed &&
+                (origin != QStringLiteral("task") || _taskController->currentStageIndex() == 0);
+            if (newOperatorInstruction)
+                _automationExcludedIds.remove(id);
+            execution->targets[id] = MultiVehicleManager::instance()->getVehicleById(id);
+            execution->generations[id] = _commandGenerations[id];
+            _executionStates[QString::number(id)] = QStringLiteral("pending");
+        }
+    }
+    _executions.insert(execution->id, execution);
+    connect(this, &SwarmManager::executionProgress, execution->context,
+            [this, id = execution->id](quint64 eventId, int vehicleId, const QString& state) {
+                if (eventId != id || id != _lastExecutionId)
+                    return;
+                _executionStates[QString::number(vehicleId)] = state;
+                emit executionStatesChanged();
+            });
+    emit executionStatesChanged();
+    QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+    return true;
+}
+
+void SwarmManager::_finishExecution(const std::shared_ptr<Execution>& execution, bool success, const QString& reason)
+{
+    if (execution->finished)
+        return;
+    execution->finished = true;
+    if (execution->id == _lastExecutionId) {
+        _executionMessage = reason;
+        emit executionStatesChanged();
+    }
+    for (int id : execution->targets.keys()) {
+        const QString state = _executionStates.value(QString::number(id)).toString();
+        if (execution->withdrawn.contains(id))
+            emit executionProgress(execution->id, id, QStringLiteral("withdrawn"));
+        else if (state == QStringLiteral("pending") || state == QStringLiteral("dispatching"))
+            emit executionProgress(execution->id, id,
+                                   success ? QStringLiteral("accepted") : QStringLiteral("cancelled"));
+    }
+    _executions.remove(execution->id);
+    if (execution->context)
+        execution->context->deleteLater();
+    SwarmAuditLogger::instance()->logTaskEvent(QStringLiteral("execution_finished"),
+                                               {{QStringLiteral("execution_id"), QVariant::fromValue(execution->id)},
+                                                {QStringLiteral("success"), success},
+                                                {QStringLiteral("reason"), reason}});
+    emit executionFinished(execution->id, success, reason);
+}
+
+void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution)
+{
+    if (execution->finished)
+        return;
+    if (_shutdownComplete || (execution->origin != QStringLiteral("operator") && aiExecutionBlocked())) {
+        _finishExecution(execution, false, tr("自动执行许可已失效"));
+        return;
+    }
+    if (execution->index >= execution->actions.size()) {
+        _finishExecution(execution, true, {});
+        return;
+    }
+    SwarmAction action = execution->actions[execution->index++];
+    action.targetIds.removeIf([execution](int id) { return execution->withdrawn.contains(id); });
+    if (action.targetIds.isEmpty()) {
+        QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+        return;
+    }
+    QScopedValueRollback<bool> dispatchScope(_automationDispatchInProgress, true);
+    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, action.targetIds);
+    const bool authorize = execution->approval == ExecutionApproval::OperatorConfirmed &&
+                           (execution->origin != QStringLiteral("task") || _taskController->currentStageIndex() == 0);
+    _requestAutomationLeases(authorize ? QStringLiteral("ai_confirmed") : QStringLiteral("ai"));
+    if (planHasConstraintError({action})) {
+        _finishExecution(execution, false, tr("实时约束已变化"));
+        return;
+    }
+    for (int id : action.targetIds) {
+        if (!execution->targets.value(id) ||
+            execution->targets.value(id) != MultiVehicleManager::instance()->getVehicleById(id) ||
+            execution->generations.value(id) != _commandGenerations.value(id)) {
+            _finishExecution(execution, false, tr("执行目标或指令代数已变化"));
+            return;
+        }
+    }
+    if (action.type == QStringLiteral("plan_coverage")) {
+        if (_missionPlanner->busy()) {
+            _finishExecution(execution, false, tr("任务上传忙碌"));
+            return;
+        }
+        const quint64 batch = _missionPlanner->batchId() + 1;
+        connect(
+            _missionPlanner, &SwarmMissionPlanner::batchFinished, execution->context,
+            [this, execution, batch, ids = action.targetIds](quint64 completed, bool success, const QString& reason) {
+                if (completed != batch || execution->finished)
+                    return;
+                if (!success)
+                    _finishExecution(execution, false, reason);
+                else {
+                    for (int id : ids)
+                        execution->plannedMissions[id] = _missionPlanner->verifiedRevision(id);
+                    QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+                }
+            });
+        const auto& p = action.params;
+        _missionPlanner->setSurveyAltitude(p.value(QStringLiteral("altitude")).toDouble());
+        _missionPlanner->setSurveySpacing(p.value(QStringLiteral("spacing")).toDouble());
+        if (!_missionPlanner->planAndUploadCoverage(
+                QGeoCoordinate(p.value(QStringLiteral("center_lat")).toDouble(),
+                               p.value(QStringLiteral("center_lon")).toDouble()),
+                p.value(QStringLiteral("length")).toDouble(), p.value(QStringLiteral("width")).toDouble(),
+                p.value(QStringLiteral("angle")).toDouble(),
+                p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString()))
+            _finishExecution(execution, false, tr("覆盖上传未受理"));
+        return;
+    }
+    static const QSet<QString> commands{QStringLiteral("arm"),     QStringLiteral("disarm"),
+                                        QStringLiteral("takeoff"), QStringLiteral("start_mission"),
+                                        QStringLiteral("pause"),   QStringLiteral("rtl"),
+                                        QStringLiteral("land"),    QStringLiteral("emergency_disarm")};
+    const bool recovery = action.type == QStringLiteral("pause") || action.type == QStringLiteral("rtl") ||
+                          action.type == QStringLiteral("land") || action.type == QStringLiteral("emergency_disarm");
+    if (recovery) {
+        // A task's own landing/return stage keeps its members in the task, but must end guidance.
+        for (int id : action.targetIds)
+            _formationTargetIds.remove(id);
+        _formation->removeMembers(QSet<int>(action.targetIds.begin(), action.targetIds.end()));
+    }
+    if (!commands.contains(action.type)) {
+        if (action.type == QStringLiteral("set_selection")) {
+            QVariantList ids;
+            for (int id : action.targetIds)
+                ids.append(id);
+            action.params[QStringLiteral("vehicle_ids")] = ids;
+        }
+        if (!_executeImmediateActions({action}, execution->origin, execution->approval)) {
+            _finishExecution(execution, false, tr("动作被拒绝"));
+            return;
+        }
+        QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+        return;
+    }
+    auto pending = std::make_shared<int>(action.targetIds.size());
+    auto done = [this, execution, pending](int id, bool ok) {
+        if (execution->finished)
+            return;
+        if (!ok && !execution->withdrawn.contains(id)) {
+            emit executionProgress(execution->id, id, QStringLiteral("failed"));
+            _finishExecution(execution, false, tr("%1 号机动作失败；已执行成员保持当前任务").arg(id));
+            return;
+        }
+        emit executionProgress(
+            execution->id, id,
+            execution->withdrawn.contains(id) ? QStringLiteral("withdrawn") : QStringLiteral("accepted"));
+        if (--*pending == 0)
+            QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+    };
+    int delay = 0;
+    for (int id : action.targetIds) {
+        QPointer<Vehicle> target = execution->targets.value(id);
+        auto allowed = [this, execution, target, id, recovery] {
+            return !execution->finished && !_shutdownComplete && target && !execution->withdrawn.contains(id) &&
+                   execution->generations.value(id) == _commandGenerations.value(id) &&
+                   (recovery || !_automationExcludedIds.contains(id)) &&
+                   (execution->origin == QStringLiteral("operator") || !aiExecutionBlocked()) &&
+                   _lease.canAutomate(id, SwarmClock::nowMs());
+        };
+        QTimer::singleShot(delay, execution->context, [this, execution, action, target, id, allowed, done] {
+            if (!allowed()) {
+                done(id, false);
+                return;
+            }
+            emit executionProgress(execution->id, id, QStringLiteral("dispatching"));
+            SwarmAuditLogger::instance()->logActionDispatch(action.type, action.params, action.description);
+            Vehicle* vehicle = target.data();
+            if (!vehicle) {
+                done(id, false);
+                return;
+            }
+            const auto finished = [done, id](bool ok) { done(id, ok); };
+            if (action.type == QStringLiteral("start_mission")) {
+                if (!vehicle->missionManager() || vehicle->missionManager()->inProgress() ||
+                    vehicle->missionManager()->missionItems().isEmpty() ||
+                    (execution->plannedMissions.contains(id) &&
+                     execution->plannedMissions.value(id) != vehicle->missionManager()->executionRevision())) {
+                    done(id, false);
+                    return;
+                }
+                vehicle->missionManager()->beginMissionExecution();
+                vehicle->firmwarePlugin()->startMissionAsync(vehicle, execution->context, allowed, finished);
+            } else if (action.type == QStringLiteral("takeoff")) {
+                vehicle->firmwarePlugin()->takeoffAsync(vehicle,
+                                                        action.params.value(QStringLiteral("altitude")).toDouble(),
+                                                        execution->context, allowed, finished);
+            } else if (action.type == QStringLiteral("arm") || action.type == QStringLiteral("disarm")) {
+                const bool armed =
+                    action.type == QStringLiteral("arm") && action.params.value(QStringLiteral("arm"), true).toBool();
+                vehicle->setArmed(armed, true);
+                auto* timer = new QTimer(execution->context);
+                timer->setInterval(50);
+                const qint64 started = SwarmClock::nowMs();
+                connect(timer, &QTimer::timeout, timer, [target, allowed, finished, timer, started, armed] {
+                    const bool reached = target && target->armed() == armed;
+                    if (!allowed() || reached || SwarmClock::nowMs() - started > 10000) {
+                        timer->stop();
+                        timer->deleteLater();
+                        finished(allowed() && reached);
+                    }
+                });
+                timer->start();
+            } else {
+                if (action.type == QStringLiteral("pause"))
+                    vehicle->pauseVehicle();
+                else if (action.type == QStringLiteral("rtl"))
+                    vehicle->guidedModeRTL(true);
+                else if (action.type == QStringLiteral("land"))
+                    vehicle->guidedModeLand();
+                else
+                    vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM, true, 0,
+                                            21196);
+                done(id, true);
+            }
+        });
+        if (action.type != QStringLiteral("pause") && action.type != QStringLiteral("emergency_disarm"))
+            delay += action.type == QStringLiteral("takeoff") ? _takeoffStaggerMs : _commandIntervalMs;
+    }
 }

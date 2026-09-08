@@ -1,0 +1,26 @@
+{
+  "name": "多机接力值守",
+  "description": "分组接力空中值守：全体起飞后 A 组先值守，B 组到点接替，最后全体返航（P3 接入感知后升级为接力跟踪）",
+  "version": 1,
+  "schema_version": 2,
+  "tags": ["接力", "值守"],
+  "min_fleet": 4,
+  "required_payload": "camera",
+  "parameters": [
+    {"key":"altitude","label":"作业高度（米）","type":"number","default":30,"min":10,"max":120},
+    {"key":"climb_gate","label":"升空判定高度（米）","type":"number","default":25,"min":5,"max":115},
+    {"key":"group_a_ids","label":"A 组机号列表","type":"array","default":[1,2,3,4]},
+    {"key":"group_b_ids","label":"B 组机号列表","type":"array","default":[5,6,7,8]},
+    {"key":"watch_seconds","label":"每组值守时长（秒）","type":"integer","default":300,"min":30,"max":7200}
+  ],
+  "stages": [
+    {"name":"起飞","actions":[{"type":"takeoff","altitude":"${altitude}"}],
+     "complete_when":{"kind":"all_airborne","min_altitude":"${climb_gate}","timeout_sec":180}},
+    {"name":"A组值守","actions":[{"type":"set_selection","vehicle_ids":"${group_a_ids}"}],
+     "complete_when":{"kind":"duration","seconds":"${watch_seconds}"}},
+    {"name":"B组接替","actions":[{"type":"set_selection","vehicle_ids":"${group_b_ids}"}],
+     "complete_when":{"kind":"duration","seconds":"${watch_seconds}"}},
+    {"name":"全体返航","actions":[{"type":"set_selection","vehicle_ids":[]},{"type":"rtl"}],
+     "complete_when":{"kind":"all_disarmed","timeout_sec":600}}
+  ]
+}

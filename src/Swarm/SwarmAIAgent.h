@@ -107,6 +107,7 @@ public:
 
     /// 清空对话历史（开始新任务会话）
     Q_INVOKABLE void clearHistory();
+    void invalidatePendingWork();
 
     /// 测试接口连通性（GET {baseUrl}/models）
     Q_INVOKABLE void testConnection();

@@ -7,17 +7,17 @@
  *   - 阶段进入时执行动作，随后 1 Hz 监控完成条件（基于各机遥测与 MISSION_CURRENT），
  *     条件满足自动推进下一阶段，直到任务完成；
  *   - 完成条件与任务来源无关：无论任务是 AI 生成还是人工在 Plan 视图设计并上传，
- *     监控的都是各机 MissionManager::currentIndex / flightMode / armed 状态。
+ *     监控当前任务版本的 MISSION_CURRENT 状态；不支持完成状态的固件需人工确认。
  *
  * 完成条件类型（complete_when.kind）：
  *   all_airborne         所有涉及机已解锁且相对高度 ≥ min_altitude（默认 3 米）
  *   all_disarmed         所有涉及机已上锁（降落完成）
- *   all_mission_finished 所有涉及机完成航线任务（曾进入 Mission 模式后退出，或已降落上锁）
+ *   all_mission_finished 当前任务已启动并报告完成；未知完成状态须人工确认
  *   formation_running    编队控制器已激活且僚机全部入队
  *   duration             固定等待 seconds 秒
  *   manual               等待操作员点击“继续”（proceed()）
  *
- * 安全：阶段超时（默认 600 秒）判任务失败；abort() 中止任务并使全体暂停悬停。
+ * 安全：阶段超时（默认 600 秒）判任务失败；abort() 中止任务并暂停任务所属成员。
  *
  ****************************************************************************/
 
@@ -49,6 +49,9 @@ class SwarmTaskController : public QObject
     Q_PROPERTY(QStringList stageNames READ stageNames NOTIFY taskChanged)
     Q_PROPERTY(QString stateText READ stateText NOTIFY taskChanged)
     Q_PROPERTY(bool waitingForProceed READ waitingForProceed NOTIFY taskChanged)
+    Q_PROPERTY(bool canRetry READ canRetry NOTIFY taskChanged)
+    Q_PROPERTY(bool awaitingMissionConfirmation READ awaitingMissionConfirmation NOTIFY taskChanged)
+    Q_PROPERTY(QString executionToken READ executionToken NOTIFY taskChanged)
 
 public:
     explicit SwarmTaskController(SwarmManager* swarmManager);
@@ -91,12 +94,22 @@ public:
     /// 启动多阶段任务（阶段与动作须先经 parseStages / SwarmManager::parseAndValidate 校验）
     bool startTask(const QString& taskName, const QList<Stage>& stages, bool operatorConfirmed = false);
 
-    /// 中止任务：停止状态机并使全体无人机暂停悬停
+    /// 中止任务：撤销任务所属成员的自动动作、编队引导并暂停这些成员
     Q_INVOKABLE void abort(const QString& reason = QString());
 
     /// 手动推进（conditionKind = manual 的阶段）
     Q_INVOKABLE void proceed();
     Q_INVOKABLE void retryBlockedStage();
+    void withdrawTargets(const QList<int>& ids, const QString& reason);
+
+    QList<int> activeTargets() const { return _running ? _taskTargetIds : QList<int>{}; }
+
+    bool canRetry() const { return _blocked && !_stageDispatched; }
+
+    bool awaitingMissionConfirmation() const { return _awaitingMissionConfirmation; }
+
+    QString executionToken() const;
+    Q_INVOKABLE bool confirmMissionCompletion(const QString& token);
 
 signals:
     void taskChanged();
@@ -124,8 +137,17 @@ private:
     int _currentStage = -1;
     QTimer _tickTimer;
     qint64 _stageStartMs = 0;
-    QList<int> _involvedIds;           ///< 进入本阶段时快照的涉及机号
-    QList<int> _taskTargetIds;         ///< 已进入阶段涉及的机号，用于中止时暂停
+    QList<int> _involvedIds;    ///< 进入本阶段时快照的涉及机号
+    QList<int> _taskTargetIds;  ///< 整项任务绑定且尚未退出的机号，用于授权续期与中止
+    QSet<int> _withdrawnIds;
+    quint64 _executionId = 0;
+    quint64 _taskGeneration = 0;
+    bool _actionsPending = false;
+    bool _awaitingMissionConfirmation = false;
+    bool _stageDispatched = false;
+    QHash<int, quint64> _missionRevisions;
+    QHash<int, quint64> _plannedMissionRevisions;
+    void _actionsFinished(quint64 id, bool success, const QString& reason);
     QSet<int> _vehiclesSeenInMission;  ///< all_mission_finished：已观察到进入 Mission 模式的机号
     QString _stateText;
 };

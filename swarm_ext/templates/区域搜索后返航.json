@@ -2,6 +2,7 @@
   "name": "区域搜索后返航",
   "description": "三阶段：全体起飞→矩形区域条带覆盖搜索→完成后自动返航降落",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {
       "key": "altitude",

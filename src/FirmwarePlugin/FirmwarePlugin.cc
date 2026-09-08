@@ -1,10 +1,14 @@
 #include "FirmwarePlugin.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
+#include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
+#include <cmath>
 
 #include "AppMessages.h"
 #include "AutoPilotPlugin.h"
@@ -638,4 +642,95 @@ FirmwarePluginInstanceData::CommandSupportedResult FirmwarePluginInstanceData::g
     }
 
     return MAV_CMD_supported.value(cmd, CommandSupportedResult::UNKNOWN);
+}
+
+QString FirmwarePlugin::_missionStartMode(Vehicle* vehicle) const
+{
+    Q_UNUSED(vehicle);
+    return missionFlightMode();
+}
+
+void FirmwarePlugin::_sendMissionStartCommand(Vehicle* vehicle) const
+{
+    Q_UNUSED(vehicle);
+}
+
+void FirmwarePlugin::_armInModeAsync(Vehicle* vehicle, const QString& mode, QObject* context,
+                                     std::function<bool()> allowed, std::function<void(bool)> finished) const
+{
+    if (!vehicle || !context || !allowed()) {
+        finished(false);
+        return;
+    }
+    auto* timer = new QTimer(context);
+    timer->setInterval(50);
+    QPointer<Vehicle> target(vehicle);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    connect(timer, &QTimer::timeout, timer,
+            [timer, target, mode, allowed, finished, elapsed, armSent = false]() mutable {
+                auto finish = [timer, &finished](bool ok) {
+                    timer->stop();
+                    timer->deleteLater();
+                    finished(ok);
+                };
+                if (!target || !allowed() || elapsed.elapsed() > 10000) {
+                    finish(false);
+                    return;
+                }
+                if (!mode.isEmpty() && target->flightMode() != mode)
+                    return;
+                if (target->armed()) {
+                    finish(true);
+                    return;
+                }
+                if (!armSent) {
+                    armSent = true;
+                    target->setArmed(true, true);
+                }
+            });
+    if (!mode.isEmpty())
+        vehicle->setFlightMode(mode);
+    timer->start();
+}
+
+void FirmwarePlugin::startMissionAsync(Vehicle* vehicle, QObject* context, std::function<bool()> allowed,
+                                       std::function<void(bool)> finished) const
+{
+    if (!vehicle || !context || !allowed()) {
+        finished(false);
+        return;
+    }
+    QPointer<Vehicle> target(vehicle);
+    _armInModeAsync(
+        vehicle, _missionStartMode(vehicle), context, allowed, [this, target, context, allowed, finished](bool ready) {
+            if (!ready || !target || !allowed()) {
+                finished(false);
+                return;
+            }
+            _sendMissionStartCommand(target.data());
+            auto* timer = new QTimer(context);
+            timer->setInterval(50);
+            QElapsedTimer elapsed;
+            elapsed.start();
+            connect(timer, &QTimer::timeout, timer, [timer, target, allowed, finished, elapsed] {
+                const bool ok = target && target->armed() && target->flightMode() == target->missionFlightMode();
+                if (!target || !allowed() || ok || elapsed.elapsed() > 10000) {
+                    timer->stop();
+                    timer->deleteLater();
+                    finished(target && allowed() && ok);
+                }
+            });
+            timer->start();
+        });
+}
+
+void FirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                                  std::function<void(bool)> finished) const
+{
+    Q_UNUSED(vehicle);
+    Q_UNUSED(altitude);
+    Q_UNUSED(context);
+    Q_UNUSED(allowed);
+    finished(false);
 }

@@ -2,6 +2,7 @@
   "name": "编队巡逻",
   "description": "起飞后以主队形巡逻一段时间，变换队形继续巡逻，结束后停止编队返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": [
     "巡逻",

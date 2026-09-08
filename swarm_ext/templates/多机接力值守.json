@@ -2,6 +2,7 @@
   "name": "多机接力值守",
   "description": "分组接力空中值守：全体起飞后 A 组先值守，B 组到点接替，最后全体返航（P3 接入感知后升级为接力跟踪）",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": [
     "接力",
@@ -30,23 +31,13 @@
       "key": "group_a_ids",
       "label": "A 组机号列表",
       "type": "array",
-      "default": [
-        1,
-        2,
-        3,
-        4
-      ]
+      "default": []
     },
     {
       "key": "group_b_ids",
       "label": "B 组机号列表",
       "type": "array",
-      "default": [
-        5,
-        6,
-        7,
-        8
-      ]
+      "default": []
     },
     {
       "key": "watch_seconds",
@@ -103,7 +94,7 @@
       "actions": [
         {
           "type": "set_selection",
-          "vehicle_ids": []
+          "vehicle_ids": "${all_vehicle_ids}"
         },
         {
           "type": "rtl"

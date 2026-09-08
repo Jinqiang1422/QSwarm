@@ -2,6 +2,7 @@
   "name": "编队巡航后返航",
   "description": "全体起飞→按指定队形编队巡航→计时结束停止编队并返航",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {
       "key": "altitude",

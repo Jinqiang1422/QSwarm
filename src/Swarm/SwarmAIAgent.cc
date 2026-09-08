@@ -1212,13 +1212,15 @@ void SwarmAIAgent::confirmPlan()
         return;
     }
     const QList<SwarmAction> plan = _pendingPlan;
+    const QStringList summary = planSummary();
+    // Consume this confirmation before recovery actions invalidate earlier pending work.
+    _pendingPlan.clear();
     if (!_swarmManager->executeActions(plan, QStringLiteral("ai_confirmed"),
                                        SwarmManager::ExecutionApproval::OperatorConfirmed)) {
+        _pendingPlan = plan;
         emit agentFeedback(tr("计划未下发，请检查实时约束或目标机状态"));
         return;
     }
-    const QStringList summary = planSummary();
-    _pendingPlan.clear();
     emit planPendingChanged();
     emit planChanged();
     _appendChat(tr("系统"), tr("操作员已确认，计划开始执行。"));
@@ -1242,10 +1244,28 @@ void SwarmAIAgent::rejectPlan()
 
 void SwarmAIAgent::clearHistory()
 {
+    invalidatePendingWork();
     _history.clear();
     _chatLog.clear();
     emit chatLogChanged();
     emit agentFeedback(tr("AI 对话历史已清空"));
+}
+
+void SwarmAIAgent::invalidatePendingWork()
+{
+    if (_reply) {
+        disconnect(_reply, nullptr, this, nullptr);
+        _reply->abort();
+        _reply->deleteLater();
+        _reply = nullptr;
+    }
+    _setBusy(false);
+    if (planPending()) {
+        rejectPlan();
+    }
+    _candidates.clear();
+    _candidatesVariant.clear();
+    emit candidatesChanged();
 }
 
 void SwarmAIAgent::testConnection()

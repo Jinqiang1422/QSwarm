@@ -15,6 +15,25 @@ MissionManager::MissionManager(Vehicle* vehicle)
     : PlanManager(vehicle, MAV_MISSION_TYPE_MISSION), _cachedLastCurrentIndex(-1)
 {
     connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &MissionManager::_mavlinkMessageReceived);
+    connect(this, &MissionManager::inProgressChanged, this, [this](bool active) {
+        if (!active)
+            return;
+        ++_executionRevision;
+        _executionRequested = false;
+        _executionActiveObserved = false;
+        _missionState = MISSION_STATE_UNKNOWN;
+        _missionId = 0;
+        _lastReachedIndex = -1;
+    });
+}
+
+void MissionManager::beginMissionExecution()
+{
+    ++_executionRevision;
+    _executionRequested = true;
+    _executionActiveObserved = false;
+    _missionState = MISSION_STATE_UNKNOWN;
+    _lastReachedIndex = -1;
 }
 
 MissionManager::~MissionManager() {}
@@ -200,7 +219,17 @@ void MissionManager::generateResumeMission(int resumeIndex)
 /// Called when a new mavlink message for out vehicle is received
 void MissionManager::_mavlinkMessageReceived(const mavlink_message_t& message)
 {
+    if (!_vehicle || message.sysid != _vehicle->id() || message.compid != _vehicle->defaultComponentId())
+        return;
     switch (message.msgid) {
+        case MAVLINK_MSG_ID_MISSION_ITEM_REACHED: {
+            mavlink_mission_item_reached_t reached;
+            mavlink_msg_mission_item_reached_decode(&message, &reached);
+            if (_executionRequested) {
+                _lastReachedIndex = reached.seq;
+            }
+            break;
+        }
         case MAVLINK_MSG_ID_HIGH_LATENCY:
             _handleHighLatency(message);
             break;
@@ -258,6 +287,16 @@ void MissionManager::_handleMissionCurrent(const mavlink_message_t& message)
 {
     mavlink_mission_current_t missionCurrent;
     mavlink_msg_mission_current_decode(&message, &missionCurrent);
+    if (_missionId != 0 && missionCurrent.mission_id != 0 && _missionId != missionCurrent.mission_id) {
+        ++_executionRevision;
+        _executionRequested = false;
+        _executionActiveObserved = false;
+    }
+    if (missionCurrent.mission_id != 0)
+        _missionId = missionCurrent.mission_id;
+    _missionState = missionCurrent.mission_state;
+    if (_executionRequested && _missionState == MISSION_STATE_ACTIVE)
+        _executionActiveObserved = true;
     _updateMissionIndex(missionCurrent.seq);
 }
 

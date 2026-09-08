@@ -2,6 +2,7 @@
   "name": "会合集结",
   "description": "起飞后以长机为集结点组成环形编队收拢，保持后全体返航",
   "version": 1,
+  "builtin_revision": 2,
   "schema_version": 2,
   "tags": [
     "集结",

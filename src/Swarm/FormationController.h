@@ -10,7 +10,7 @@
  *
  * 安全设计：
  *   - 楔形/纵队默认带高度分层（verticalStepMeters），避免僚机处于长机下洗流中；
- *   - 长机丢失、上锁或位置无效时自动停止编队，僚机原地悬停；
+ *   - 成员退出时尝试长机接替；无合格长机时阻塞引导并通知界面；
  *   - 仅对已解锁且已离地的僚机下发位置指令。
  *
  * 说明：1 Hz 的 DO_REPOSITION 引导适用于 SITL 验证与低速编队；
@@ -21,8 +21,11 @@
 
 #pragma once
 
+#include <QtCore/QHash>
 #include <QtCore/QObject>
+#include <QtCore/QSet>
 #include <QtCore/QTimer>
+#include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
 #include <functional>
 
@@ -39,6 +42,7 @@ class FormationController : public QObject
     Q_PROPERTY(
         double verticalStepMeters READ verticalStepMeters WRITE setVerticalStepMeters NOTIFY verticalStepMetersChanged)
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+    Q_PROPERTY(bool blocked READ blocked NOTIFY activeChanged)
     Q_PROPERTY(int leaderVehicleId READ leaderVehicleId NOTIFY leaderVehicleIdChanged)
     Q_PROPERTY(int followerCount READ followerCount NOTIFY followerCountChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
@@ -70,6 +74,8 @@ public:
 
     bool active() const { return _active; }
 
+    bool blocked() const { return _blocked; }
+
     int leaderVehicleId() const { return _leaderVehicleId; }
 
     int followerCount() const { return _followerCount; }
@@ -79,11 +85,14 @@ public:
     /// 以 leaderVehicleId 为长机开始编队。长机由人工/任务驾驶，僚机自动跟随队形。
     bool start(int leaderVehicleId);
 
-    /// 停止编队，僚机原地悬停
+    /// 停止自动编队引导；不改变各机飞行模式
     Q_INVOKABLE void stop();
 
     /// 设置逐机自动控制许可判定。SwarmManager 集成时采用 fail-closed 租约判定。
     void setVehicleAutomationAllowedCallback(std::function<bool(int)> callback);
+    void setTargetAllowedCallback(std::function<bool(int, const QGeoCoordinate&)> callback);
+    void setMembers(const QSet<int>& members);
+    void removeMembers(const QSet<int>& members);
 
 signals:
     void formationTypeChanged();
@@ -115,8 +124,22 @@ private:
 
     QTimer _updateTimer;
     bool _active = false;
+    bool _blocked = false;
     int _leaderVehicleId = 0;
     int _followerCount = 0;
     QString _statusText;
     std::function<bool(int)> _vehicleAutomationAllowed;
+    std::function<bool(int, const QGeoCoordinate&)> _targetAllowed;
+    QSet<int> _members;
+
+    struct Slot
+    {
+        double distance = 0;
+        double bearing = 0;
+        double altitude = 0;
+    };
+
+    QHash<int, Slot> _slots;
+    bool _membersBound = false;
+    bool _handover();
 };

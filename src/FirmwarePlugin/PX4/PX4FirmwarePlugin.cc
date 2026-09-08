@@ -1,6 +1,10 @@
 #include "PX4FirmwarePlugin.h"
 
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QPointer>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
+#include <cmath>
 
 #include "AppMessages.h"
 #include "PX4AutoPilotPlugin.h"
@@ -834,4 +838,44 @@ QVariant PX4FirmwarePlugin::expandedToolbarIndicatorSource(const Vehicle* /*vehi
     }
 
     return QVariant();
+}
+
+void PX4FirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                                     std::function<void(bool)> finished) const
+{
+    if (!vehicle || !context || !allowed() || !std::isfinite(altitude)) {
+        finished(false);
+        return;
+    }
+    const double amsl = vehicle->altitudeAMSL()->rawValue().toDouble() + altitude;
+    if (!std::isfinite(amsl)) {
+        finished(false);
+        return;
+    }
+    auto* deadline = new QTimer(context);
+    deadline->setSingleShot(true);
+    QPointer<Vehicle> target(vehicle);
+    connect(deadline, &QTimer::timeout, deadline, [target, deadline, finished] {
+        if (target)
+            disconnect(target, nullptr, deadline, nullptr);
+        deadline->deleteLater();
+        finished(false);
+    });
+    connect(vehicle, &Vehicle::mavCommandResult, deadline,
+            [this, target, context, deadline, allowed, finished](int, int component, int command, int result, int) {
+                if (!target || component != target->defaultComponentId() || command != MAV_CMD_NAV_TAKEOFF ||
+                    result == MAV_RESULT_IN_PROGRESS)
+                    return;
+                disconnect(target, nullptr, deadline, nullptr);
+                deadline->stop();
+                deadline->deleteLater();
+                if (result != MAV_RESULT_ACCEPTED || !allowed()) {
+                    finished(false);
+                    return;
+                }
+                _armInModeAsync(target.data(), {}, context, allowed, finished);
+            });
+    deadline->start(10000);
+    vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, NAN, NAN, 0, NAN, NAN, NAN,
+                            float(amsl));
 }

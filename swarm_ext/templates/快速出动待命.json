@@ -2,6 +2,7 @@
   "name": "快速出动待命",
   "description": "全体快速起飞至指定高度悬停，等待人工进一步指令",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [
     {
       "key": "altitude",

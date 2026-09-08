@@ -1,8 +1,12 @@
 #include "APMFirmwarePlugin.h"
 
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QRegularExpressionMatch>
+#include <QtCore/QTimer>
 #include <QtNetwork/QTcpSocket>
+#include <cmath>
 
 #include "APMAutoPilotPlugin.h"
 #include "APMMavlinkStreamRateSettings.h"
@@ -171,7 +175,10 @@ void APMFirmwarePlugin::_handleIncomingParamValue(Vehicle* vehicle, mavlink_mess
     mavlink_status_t* mavlinkStatusReEncode = mavlink_get_channel_status(channel);
     mavlinkStatusReEncode->flags |= MAVLINK_STATUS_FLAG_IN_MAVLINK1;
 
-    Q_ASSERT(qgcApp()->thread() == QThread::currentThread());
+    if (qgcApp()->thread() != QThread::currentThread()) {
+        qCWarning(APMFirmwarePluginLog) << "Ignoring MAVLink re-encoding outside the application thread";
+        return;
+    }
     (void) mavlink_msg_param_value_encode_chan(message->sysid, message->compid, channel, message, &paramValue);
 }
 
@@ -344,7 +351,10 @@ void APMFirmwarePlugin::_setInfoSeverity(mavlink_message_t* message) const
 
     statusText.severity = MAV_SEVERITY_INFO;
 
-    Q_ASSERT(qgcApp()->thread() == QThread::currentThread());
+    if (qgcApp()->thread() != QThread::currentThread()) {
+        qCWarning(APMFirmwarePluginLog) << "Ignoring MAVLink re-encoding outside the application thread";
+        return;
+    }
     (void) mavlink_msg_statustext_encode_chan(message->sysid, message->compid, channel, message, &statusText);
 }
 
@@ -361,7 +371,10 @@ void APMFirmwarePlugin::_adjustCalibrationMessageSeverity(mavlink_message_t* mes
     mavlinkStatusReEncode->flags |= MAVLINK_STATUS_FLAG_IN_MAVLINK1;
     statusText.severity = MAV_SEVERITY_INFO;
 
-    Q_ASSERT(qgcApp()->thread() == QThread::currentThread());
+    if (qgcApp()->thread() != QThread::currentThread()) {
+        qCWarning(APMFirmwarePluginLog) << "Ignoring MAVLink re-encoding outside the application thread";
+        return;
+    }
     (void) mavlink_msg_statustext_encode_chan(message->sysid, message->compid, channel, message, &statusText);
 }
 
@@ -1443,4 +1456,56 @@ QVariant APMFirmwarePlugin::expandedToolbarIndicatorSource(const Vehicle* vehicl
     }
 
     return QVariant();
+}
+
+QString APMFirmwarePlugin::_missionStartMode(Vehicle* vehicle) const
+{
+    if (!vehicle)
+        return {};
+    return vehicle->flying() || vehicle->fixedWing() ? missionFlightMode() : guidedFlightMode();
+}
+
+void APMFirmwarePlugin::_sendMissionStartCommand(Vehicle* vehicle) const
+{
+    if (vehicle && !vehicle->flying() && !vehicle->fixedWing())
+        vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_MISSION_START, true);
+}
+
+void APMFirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
+                                     std::function<void(bool)> finished) const
+{
+    if (!vehicle || (!vehicle->multiRotor() && !vehicle->vtol()) || !std::isfinite(altitude)) {
+        finished(false);
+        return;
+    }
+    QPointer<Vehicle> target(vehicle);
+    const double height = qMax(altitude, minimumTakeoffAltitudeMeters(vehicle));
+    _armInModeAsync(
+        vehicle, guidedFlightMode(), context, allowed, [target, height, context, allowed, finished](bool ready) {
+            if (!ready || !target || !allowed()) {
+                finished(false);
+                return;
+            }
+            auto* deadline = new QTimer(context);
+            deadline->setSingleShot(true);
+            connect(deadline, &QTimer::timeout, deadline, [target, deadline, finished] {
+                if (target)
+                    disconnect(target, nullptr, deadline, nullptr);
+                deadline->deleteLater();
+                finished(false);
+            });
+            connect(target, &Vehicle::mavCommandResult, deadline,
+                    [target, deadline, allowed, finished](int, int component, int command, int result, int) {
+                        if (!target || component != target->defaultComponentId() || command != MAV_CMD_NAV_TAKEOFF ||
+                            result == MAV_RESULT_IN_PROGRESS)
+                            return;
+                        disconnect(target, nullptr, deadline, nullptr);
+                        deadline->stop();
+                        deadline->deleteLater();
+                        finished(result == MAV_RESULT_ACCEPTED && allowed());
+                    });
+            deadline->start(10000);
+            target->sendMavCommand(target->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0,
+                                   float(height));
+        });
 }

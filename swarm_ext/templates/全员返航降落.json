@@ -2,6 +2,7 @@
   "name": "全员返航降落",
   "description": "停止编队并立即返航降落，适用于任务收尾或紧急回收",
   "version": 1,
+  "builtin_revision": 2,
   "parameters": [],
   "stages": [
     {

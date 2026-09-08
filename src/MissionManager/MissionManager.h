@@ -29,6 +29,17 @@ public:
     /// Generates a new mission which starts from the specified index. It will include all the CMD_DO items
     /// from mission start to resumeIndex in the generate mission.
     void generateResumeMission(int resumeIndex);
+    void beginMissionExecution();
+
+    quint64 executionRevision() const { return _executionRevision; }
+
+    int missionState() const { return _missionState; }
+
+    bool executionComplete() const { return _executionActiveObserved && _missionState == MISSION_STATE_COMPLETE; }
+
+    int lastReachedIndex() const { return _lastReachedIndex; }
+
+signals:
 
 private slots:
     void _mavlinkMessageReceived(const mavlink_message_t& message);
@@ -41,4 +52,10 @@ private:
     void _handleHeartbeat(const mavlink_message_t& message);
 
     int _cachedLastCurrentIndex;
+    quint64 _executionRevision = 0;
+    quint32 _missionId = 0;
+    int _missionState = MISSION_STATE_UNKNOWN;
+    int _lastReachedIndex = -1;
+    bool _executionActiveObserved = false;
+    bool _executionRequested = false;
 };
