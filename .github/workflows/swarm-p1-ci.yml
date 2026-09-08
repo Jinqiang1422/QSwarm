@@ -10,9 +10,27 @@ permissions:
 
 on:
   push:
-    paths: ["src/Swarm/**", "src/FlyView/Swarm*.qml", "test/Swarm/**", "swarm_ext/**", ".github/workflows/swarm-p1-ci.yml"]
+    paths:
+      - "src/Swarm/**"
+      - "src/FlyView/Swarm*.qml"
+      - "test/Swarm/**"
+      - "src/MissionManager/**"
+      - "src/FirmwarePlugin/**"
+      - "src/QmlControls/RCToParam*"
+      - "test/QmlControls/RCToParam*"
+      - "swarm_ext/**"
+      - ".github/workflows/swarm-p1-ci.yml"
   pull_request:
-    paths: ["src/Swarm/**", "src/FlyView/Swarm*.qml", "test/Swarm/**", "swarm_ext/**", ".github/workflows/swarm-p1-ci.yml"]
+    paths:
+      - "src/Swarm/**"
+      - "src/FlyView/Swarm*.qml"
+      - "test/Swarm/**"
+      - "src/MissionManager/**"
+      - "src/FirmwarePlugin/**"
+      - "src/QmlControls/RCToParam*"
+      - "test/QmlControls/RCToParam*"
+      - "swarm_ext/**"
+      - ".github/workflows/swarm-p1-ci.yml"
 
 jobs:
   cpp-tests:
@@ -78,6 +96,8 @@ jobs:
         run: pip install --quiet numpy scipy
       - name: 感知服务单元测试（编解码/几何互逆/跟踪稳定/端到端）
         run: python3 swarm_ext/services/perception/test_perception.py
+      - name: 感知协议故障与跨语言契约
+        run: python3 -m unittest discover -s swarm_ext/services/perception -p test_protocol.py -v
       - name: 场景 06 端到端馈送（离线文件模式）
         run: python3 swarm_ext/services/perception/service.py
              --scenario swarm_ext/sim/scenarios/06_perception_feed.json

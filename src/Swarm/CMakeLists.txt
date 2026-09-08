@@ -15,6 +15,7 @@ target_sources(
             SwarmAuditLogger.cc
             SwarmAuditLogger.h
             SwarmAutonomy.h
+            SwarmClock.h
             SwarmConstraintChecker.cc
             SwarmConstraintChecker.h
             SwarmControlLease.cc

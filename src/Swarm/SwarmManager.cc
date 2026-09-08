@@ -25,6 +25,7 @@
 #include "SwarmAIAgent.h"
 #include "SwarmAuditLogger.h"
 #include "SwarmCOPModel.h"
+#include "SwarmClock.h"
 #include "SwarmInputFilter.h"
 #include "SwarmMissionPlanner.h"
 #include "SwarmPerceptionBridge.h"
@@ -159,7 +160,7 @@ SwarmManager::SwarmManager(QObject* parent)
         [this](int vehicleId) { return _formationAutomationAllowed(vehicleId); });
     _missionPlanner->setVehicleAutomationAllowedCallback([this](int vehicleId) {
         return (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicleId)) &&
-               _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch());
+               _lease.canAutomate(vehicleId, SwarmClock::nowMs());
     });
 
     // P3：感知链路 → 航迹融合；2Hz 节拍驱动 prune/COP/事件检测/态势
@@ -354,7 +355,7 @@ QString SwarmManager::controlLeaseState(int vehicleId) const
 
 bool SwarmManager::automationAllowed(int vehicleId) const
 {
-    return _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch());
+    return _lease.canAutomate(vehicleId, SwarmClock::nowMs());
 }
 #endif
 
@@ -536,7 +537,11 @@ QString SwarmManager::fenceSummary()
 
 bool SwarmManager::startPerception(int port)
 {
-    const bool ok = _perception->listen(quint16(port));
+    const QSettings settings;
+    const bool ok = _perception->listen(
+        quint16(port),
+        settings.value(QStringLiteral("Swarm/perceptionBindAddress"), QStringLiteral("127.0.0.1")).toString(),
+        settings.value(QStringLiteral("Swarm/perceptionAllowedSources")).toStringList());
     if (ok) {
         // 威胁区图层 = 禁飞区多边形（fences.json exclude）
         const SwarmConstraintChecker::Config cfg = _constraintConfig();
@@ -567,7 +572,7 @@ void SwarmManager::stopPerception()
 
 void SwarmManager::_onTrackBatch(const QVariantList& tracks, qint64 timeUsec)
 {
-    const qint64 monoMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 monoMs = SwarmClock::nowMs();
     for (const QVariant& v : tracks) {
         const QVariantMap m = v.toMap();
         SwarmTrackFusion::TrackReport r;
@@ -580,14 +585,15 @@ void SwarmManager::_onTrackBatch(const QVariantList& tracks, qint64 timeUsec)
         r.vn = m.value(QStringLiteral("vn")).toDouble();
         r.confidence = m.value(QStringLiteral("confidence"), 0.5).toDouble();
         r.source = m.value(QStringLiteral("source")).toInt();
-        r.timeUsec = timeUsec;
+        r.timeUsec = m.value(QStringLiteral("time_usec"), timeUsec).toLongLong();
+        r.streamId = m.value(QStringLiteral("stream_id")).toString();
         _fusion.ingest(r, monoMs);
     }
 }
 
 void SwarmManager::_onPerceptionTick()
 {
-    const qint64 monoMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 monoMs = SwarmClock::nowMs();
     _fusion.prune(monoMs);
 
     const auto fused = _fusion.tracks();
@@ -650,7 +656,7 @@ void SwarmManager::_raiseAlerts(const QList<SwarmEventDetector::Alert>& alerts)
 
 QString SwarmManager::situationDigestJson() const
 {
-    const qint64 monoMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 monoMs = SwarmClock::nowMs();
     const QJsonObject digest = SwarmSituationDigest::build(
         _vehicleStates(), _fusion.tracks(), _taskController->stateText(), _taskController->running(), _alerts, monoMs);
     return QString::fromUtf8(QJsonDocument(digest).toJson(QJsonDocument::Compact));
@@ -678,7 +684,7 @@ QList<Vehicle*> SwarmManager::_targetVehicles(bool requireActiveLease) const
         if (!v || _lease.stateOf(v->id()) == SwarmControlLease::MANUAL_OVERRIDE) {
             continue;  // 已人工接管的机，跳过自动下发
         }
-        if (requireActiveLease && !_lease.canAutomate(v->id(), QDateTime::currentMSecsSinceEpoch())) {
+        if (requireActiveLease && !_lease.canAutomate(v->id(), SwarmClock::nowMs())) {
             continue;
         }
         gated.append(v);
@@ -718,7 +724,7 @@ void SwarmManager::_forEachVehicleStaggered(const QString& commandName, int stag
 
 void SwarmManager::_requestAutomationLeases(const QString& origin)
 {
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 nowMs = SwarmClock::nowMs();
     const bool operatorAuthorized = originHasOperatorAuthorization(origin, _taskController);
     for (Vehicle* vehicle : _targetVehicles()) {
         if (vehicle) {
@@ -740,7 +746,7 @@ void SwarmManager::_requestAutomationLeases(const QString& origin)
 
 bool SwarmManager::_automationAllowedAtDispatch(int vehicleId, bool requireActiveLease, const QString& commandName)
 {
-    if (!requireActiveLease || _lease.canAutomate(vehicleId, QDateTime::currentMSecsSinceEpoch())) {
+    if (!requireActiveLease || _lease.canAutomate(vehicleId, SwarmClock::nowMs())) {
         return true;
     }
 
@@ -757,7 +763,7 @@ bool SwarmManager::_formationAutomationAllowed(int vehicleId)
 {
     if (!_formationTargetIds.contains(vehicleId) || (_formationAutomated && aiExecutionBlocked()))
         return false;
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 nowMs = SwarmClock::nowMs();
     Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(vehicleId);
     if (!vehicle) {
         return false;

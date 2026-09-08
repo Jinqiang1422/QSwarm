@@ -48,14 +48,17 @@ tr = swarm_msgs.make_track(
     7, 2, 39.9051234, 116.4054321, ve=1.5, vn=-0.5, confidence=0.87, sensor_id=1, time_usec=123456
 )
 frames = swarm_msgs.encode("track", tr, seq=3)
-check("单帧小报文", len(frames) == 1, f"({len(frames)} 帧)")
-kind, obj = reas.feed(*frames[0])
+check("帧长受限", all(len(p) <= 128 for _, p in frames), f"({len(frames)} 帧)")
+result = None
+for frame in frames:
+    result = reas.feed(*frame) or result
+kind, obj = result
 check("单帧还原", kind == "track" and obj["track_id"] == 7 and abs(obj["lat"] - 39.9051234) < 1e-7)
 
 big = swarm_msgs.make_track_batch([tr] * 20, 999)  # 必超 128B → 分片
 frames = swarm_msgs.encode("track_batch", big, seq=4)
 check("大报文分片", len(frames) >= 3, f"({len(frames)} 帧, {sum(len(p) for _, p in frames)} 字节)")
-check("分片类型序列", frames[0][0] == swarm_msgs.PT_MIDDLE and frames[-1][0] == swarm_msgs.PT_LAST)
+check("分片类型序列", all(pt == swarm_msgs.PT_V2 for pt, _ in frames))
 reas2 = swarm_msgs.Reassembler()
 result = None
 for pt, payload in frames:
@@ -63,8 +66,8 @@ for pt, payload in frames:
 check(
     "分片重组", result is not None and result[0] == "track_batch" and len(result[1]["tracks"]) == 20
 )
-orphan = swarm_msgs.Reassembler().feed(swarm_msgs.PT_LAST, frames[-1][1])
-check("丢首帧容错", orphan is None or orphan[0] == "track_batch")
+orphan = swarm_msgs.Reassembler().feed(*frames[-1])
+check("缺片不交付", orphan is None)
 
 # ---------------------------------------------------------------------------
 print("== 2. 像素↔几何互逆 ==")

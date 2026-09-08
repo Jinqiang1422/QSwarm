@@ -237,33 +237,17 @@ void tst_p3modules::digest_structure()
 
 void tst_p3modules::bridge_wireDecode()
 {
-    // 与 Python swarm_msgs 同一字节布局：[pt:2B BE][seq:1B][JSON]
     const QByteArray json = R"({"kind":"track","data":[7,2,399051234,1164054321,-1,150,-50,870,1,0,123456]})";
-    QByteArray dg;
-    dg.append(char(42000 >> 8)).append(char(42000 & 0xFF)).append(char(0)).append(json);
-
     SwarmTunnel::Reassembly rx;
-    const QJsonObject msg = SwarmTunnel::parseDatagram(dg, rx);
+    QJsonObject msg;
+    for (const auto& frame : SwarmTunnel::encodeDatagrams(json, 7, 3))
+        msg = SwarmTunnel::parseDatagram(frame, rx);
     QCOMPARE(msg.value(QStringLiteral("kind")).toString(), QStringLiteral("track"));
-    const QJsonObject t = msg.value(QStringLiteral("data")).toObject();
-    QCOMPARE(t.value(QStringLiteral("track_id")).toInt(), 7);
-    QVERIFY(qAbs(t.value(QStringLiteral("lat")).toDouble() - 39.9051234) < 1e-7);
-    QVERIFY(qAbs(t.value(QStringLiteral("ve")).toDouble() - 1.5) < 1e-6);
-    QVERIFY(qAbs(t.value(QStringLiteral("confidence")).toDouble() - 0.87) < 1e-6);
-
-    // 分片：同一 JSON 切两半，MIDDLE + LAST
-    const int half = json.size() / 2;
-    QByteArray dg1, dg2;
-    dg1.append(char(42001 >> 8)).append(char(42001 & 0xFF)).append(char(1)).append(json.left(half));
-    dg2.append(char(42002 >> 8)).append(char(42002 & 0xFF)).append(char(1)).append(json.mid(half));
-    SwarmTunnel::Reassembly rx2;
-    QVERIFY(SwarmTunnel::parseDatagram(dg1, rx2).isEmpty());  // 未完
-    const QJsonObject msg2 = SwarmTunnel::parseDatagram(dg2, rx2);
-    QCOMPARE(msg2.value(QStringLiteral("kind")).toString(), QStringLiteral("track"));
-
-    // 丢首帧的孤立尾帧：容错按单帧尝试，本例应解析失败返回空
-    SwarmTunnel::Reassembly rx3;
-    QVERIFY(SwarmTunnel::parseDatagram(dg2, rx3).isEmpty());
+    const auto track = msg.value(QStringLiteral("data")).toObject();
+    QCOMPARE(track.value(QStringLiteral("track_id")).toInt(), 7);
+    QVERIFY(qAbs(track.value(QStringLiteral("lat")).toDouble() - 39.9051234) < 1e-7);
+    QVERIFY(qAbs(track.value(QStringLiteral("ve")).toDouble() - 1.5) < 1e-6);
+    QVERIFY(qAbs(track.value(QStringLiteral("confidence")).toDouble() - 0.87) < 1e-6);
 }
 
 // 感知输入校验闸门(第七轮):非法坐标/低置信航迹应被丢弃,防污染态势与 LLM

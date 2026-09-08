@@ -11,7 +11,7 @@
     SWARM_PLAN_META            ↔ kind="plan_meta"
 
   payload_type 约定（TUNNEL payload_type 字段，uint16）：
-    42000 = JSON 单帧/首帧   42001 = JSON 中间帧   42002 = JSON 尾帧
+    42003 = JSON v2 分片（版本/会话/消息编号/索引/数量/总长/CRC32）；旧 42000–42002 不再接收
 -->
 <mavlink>
     <include>common.xml</include>

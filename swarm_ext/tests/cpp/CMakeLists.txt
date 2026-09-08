@@ -145,3 +145,8 @@ add_executable(
 target_include_directories(tst_performance PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_performance PRIVATE Qt6::Core Qt6::Positioning Qt6::Test)
 add_test(NAME performance COMMAND tst_performance)
+
+add_executable(tst_protocol tst_protocol.cc)
+target_include_directories(tst_protocol PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_protocol PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME protocol COMMAND tst_protocol)

@@ -25,6 +25,7 @@ public:
     /// 上游航迹上报（与 swarm_msgs.make_track / SWARM_TARGET_TRACK 字段一一对应）
     struct TrackReport
     {
+        QString streamId;
         int trackId = 0;   ///< 服务侧航迹 ID
         int sensorId = 0;  ///< 来源传感器
         int category = 0;  ///< SWARM_TARGET_CATEGORY
@@ -96,14 +97,16 @@ public:
 
 private:
     int _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
-    static quint64 _sourceKey(int sensorId, int trackId);
+    static QString _sourceKey(const TrackReport& report);
     void _rebuildTrackIndexes();
     void _localToGeo(double eastM, double northM, double& lat, double& lon) const;
 
     Config _cfg;
     QList<FusedTrack> _tracks;
-    QHash<quint64, int> _sourceAssociations;  ///< (sensorId, trackId) → fusedId
-    QHash<int, int> _trackIndexes;            ///< fusedId → _tracks index
+    QHash<QString, int> _sourceAssociations;
+    QHash<QString, qint64> _sourceTimestamps;
+    QHash<QString, qint64> _sourceReceived;  ///< (sensorId, trackId) → fusedId
+    QHash<int, int> _trackIndexes;           ///< fusedId → _tracks index
     double _refLat = 0.0, _refLon = 0.0;
     bool _refSet = false;
     int _nextFusedId = 1;

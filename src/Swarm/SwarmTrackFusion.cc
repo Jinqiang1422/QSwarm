@@ -64,9 +64,10 @@ int SwarmTrackFusion::_associate(double eastM, double northM, qint64 monoMs) con
     return bestIdx;
 }
 
-quint64 SwarmTrackFusion::_sourceKey(int sensorId, int trackId)
+QString SwarmTrackFusion::_sourceKey(const TrackReport& r)
 {
-    return (quint64(quint32(sensorId)) << 32) | quint32(trackId);
+    return r.streamId + QLatin1Char('|') + QString::number(r.source) + QLatin1Char('|') + QString::number(r.sensorId) +
+           QLatin1Char('|') + QString::number(r.trackId);
 }
 
 void SwarmTrackFusion::_rebuildTrackIndexes()
@@ -97,7 +98,8 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
 {
     // 感知输入校验闸门(纵深防御):丢弃非法坐标/低置信航迹,防伪造或污染的外部
     // 航迹进入融合 → COP → LLM 态势解读(与指挥侧输入闸门对称);须在设参考点前拦截。
-    if (!SwarmTypes::isValidLatLon(r.lat, r.lon) || r.confidence < _cfg.minConfidence) {
+    if (!SwarmTypes::isValidLatLon(r.lat, r.lon) || !std::isfinite(r.confidence) || !std::isfinite(r.ve) ||
+        !std::isfinite(r.vn) || r.confidence > 1.0 || r.confidence < _cfg.minConfidence) {
         _rejectedCount++;
         return -1;
     }
@@ -107,7 +109,13 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
     double eastM, northM;
     SwarmTypes::latLonToLocalM(_refLat, _refLon, r.lat, r.lon, eastM, northM);
 
-    const quint64 sourceKey = _sourceKey(r.sensorId, r.trackId);
+    const QString sourceKey = _sourceKey(r);
+    if (r.timeUsec > 0 && _sourceTimestamps.contains(sourceKey) && r.timeUsec <= _sourceTimestamps.value(sourceKey)) {
+        ++_rejectedCount;
+        return -1;
+    }
+    _sourceTimestamps[sourceKey] = r.timeUsec;
+    _sourceReceived[sourceKey] = monoMs;
     int idx = -1;
     const int knownFusedId = _sourceAssociations.value(sourceKey, -1);
     const int knownIndex = _trackIndexes.value(knownFusedId, -1);
@@ -174,6 +182,14 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
 
 void SwarmTrackFusion::prune(qint64 monoMs)
 {
+    for (auto it = _sourceReceived.begin(); it != _sourceReceived.end();) {
+        if (monoMs - it.value() > _cfg.dropMs) {
+            _sourceAssociations.remove(it.key());
+            _sourceTimestamps.remove(it.key());
+            it = _sourceReceived.erase(it);
+        } else
+            ++it;
+    }
     for (FusedTrack& t : _tracks) {
         const qint64 age = monoMs - t.lastSeenMs;
         if (t.state != QStringLiteral("tentative") && age > _cfg.coastMs) {
@@ -194,6 +210,8 @@ void SwarmTrackFusion::clear()
 {
     _tracks.clear();
     _sourceAssociations.clear();
+    _sourceTimestamps.clear();
+    _sourceReceived.clear();
     _trackIndexes.clear();
     _refLat = 0.0;
     _refLon = 0.0;

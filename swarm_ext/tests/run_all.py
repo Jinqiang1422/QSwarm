@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: RUF001, RUF002, RUF003, UP036
+# ruff: noqa: RUF001, UP036
 """Layered test orchestrator for the QGroundControl Swarm extension."""
 
 from __future__ import annotations
@@ -280,6 +280,22 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             [sys.executable, "test_perception.py"],
             cwd=SWARM_ROOT / "services" / "perception",
             timeout_sec=180,
+        ),
+        TestSpec(
+            "python.perception_protocol",
+            "L1 Python/算法",
+            "感知 v2 分片边界、来源隔离和跨语言字节契约",
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                str(SWARM_ROOT / "services/perception"),
+                "-p",
+                "test_protocol.py",
+                "-v",
+            ],
         ),
         TestSpec(
             "python.llm_eval_sanity",

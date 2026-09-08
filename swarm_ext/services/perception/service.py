@@ -170,7 +170,7 @@ def run_scenario(scn: dict, sink, realtime: bool = False, verbose: bool = True) 
                 stack.callback(capture.close)
                 captures[cam.sensor_id] = capture
         trackers = {cam.sensor_id: MultiObjectTracker() for cam in cams}
-        seq = 0
+        encoder = swarm_msgs.Encoder()
         t0 = time.time()
         stats = {"frames": 0, "detections": 0, "track_msgs": 0, "heartbeats": 0, "bytes": 0}
 
@@ -212,16 +212,15 @@ def run_scenario(scn: dict, sink, realtime: bool = False, verbose: bool = True) 
                         )
                     )
             if all_tracks:
-                for pt, payload in swarm_msgs.encode(
-                    "track_batch", swarm_msgs.make_track_batch(all_tracks, wire_usec), seq
+                for pt, payload in encoder.encode(
+                    "track_batch", swarm_msgs.make_track_batch(all_tracks, wire_usec)
                 ):
                     sink.send(pt, payload)
                     stats["bytes"] += len(payload)
                 stats["track_msgs"] += 1
-                seq = (seq + 1) & 0xFF
             if f % int(fps) == 0:  # 1Hz 心跳
                 hb = swarm_msgs.make_heartbeat(len(all_tracks), fps, len(cams), 0, wire_usec)
-                for pt, payload in swarm_msgs.encode("heartbeat", hb, seq):
+                for pt, payload in encoder.encode("heartbeat", hb):
                     sink.send(pt, payload)
                     stats["bytes"] += len(payload)
                 stats["heartbeats"] += 1

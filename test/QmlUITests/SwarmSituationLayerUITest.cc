@@ -6,6 +6,7 @@
 
 #include "SwarmAcceptanceServer.h"
 #include "SwarmCOPModel.h"
+#include "SwarmClock.h"
 #include "SwarmManager.h"
 #include "SwarmTrackFusion.h"
 
@@ -36,12 +37,12 @@ void SwarmSituationLayerUITest::_testDelegatesFollowCOPModel()
             return rendered.value(QStringLiteral("situation_layers")).toInt() == 1;
         },
         TestTimeout::longMs(), QStringLiteral("single swarm situation layer to enter the visual tree"));
-    QVERIFY2(situationLayerReady,
-             qPrintable(QStringLiteral("Expected one situation layer, observed %1")
-                            .arg(rendered.value(QStringLiteral("situation_layers")).toInt())));
+    QVERIFY2(situationLayerReady, qPrintable(QStringLiteral("Expected one situation layer, observed %1")
+                                                 .arg(rendered.value(QStringLiteral("situation_layers")).toInt())));
 
     manager->trackFusion().clear();
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 nowMs = SwarmClock::nowMs();
+    const qint64 measurementUsec = QDateTime::currentMSecsSinceEpoch() * 1000;
     for (int index = 0; index < 3; ++index) {
         SwarmTrackFusion::TrackReport report;
         report.trackId = index + 1;
@@ -50,8 +51,10 @@ void SwarmSituationLayerUITest::_testDelegatesFollowCOPModel()
         report.lat = 1.0 + index * 10.0;
         report.lon = 2.0 + index * 20.0;
         report.confidence = 0.9;
-        report.timeUsec = nowMs * 1000;
+        report.timeUsec = measurementUsec;
         QCOMPARE(manager->trackFusion().ingest(report, nowMs), index + 1);
+        // A second observation must carry a newer measurement timestamp; duplicates are rejected.
+        report.timeUsec += 1000;
         QCOMPARE(manager->trackFusion().ingest(report, nowMs + 1), index + 1);
     }
 

@@ -3,7 +3,7 @@
  * QGroundControl 集群指挥控制扩展 — SwarmPerceptionBridge（WP3.2/3.7 接收端）
  *
  * 感知服务（独立进程）→ QGC 的链路桥：
- *   UDP 帧 [payload_type:uint16be][payload]（payload[0]=seq，其余 JSON 分片）
+ *   UDP 帧 [payload_type:uint16be=42003][v2 头部 25 字节][JSON 分片]
  *   ──► TUNNEL JSON 重组（与 services/perception/swarm_msgs.py 同一契约）
  *   ──► track_batch / heartbeat 信号 ──► SwarmTrackFusion / COP / 事件检测
  *
@@ -18,6 +18,7 @@
 #include <QtCore/QByteArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QObject>
+#include <QtCore/QTimer>
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
 #include <QtQmlIntegration/QtQmlIntegration>
@@ -34,7 +35,8 @@ class SwarmPerceptionBridge : public QObject
 
     Q_PROPERTY(bool listening READ listening NOTIFY listeningChanged)
     Q_PROPERTY(quint16 listenPort READ listenPort NOTIFY listeningChanged)
-    Q_PROPERTY(bool serviceOnline READ serviceOnline NOTIFY heartbeatChanged)
+    Q_PROPERTY(bool serviceOnline READ serviceOnline NOTIFY onlineChanged)
+    Q_PROPERTY(QVariantMap diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(double heartbeatHz READ heartbeatHz NOTIFY heartbeatChanged)
     Q_PROPERTY(int lastTrackCount READ lastTrackCount NOTIFY tracksChanged)
     Q_PROPERTY(double wireLatencyMs READ wireLatencyMs NOTIFY tracksChanged)
@@ -55,8 +57,10 @@ public:
 
     double wireLatencyMs() const { return _wireLatencyMs; }
 
-    Q_INVOKABLE bool listen(quint16 port = 15600);
+    Q_INVOKABLE bool listen(quint16 port = 15600, const QString& bindAddress = QStringLiteral("127.0.0.1"),
+                            const QStringList& allowedSources = {});
     Q_INVOKABLE void stop();
+    QVariantMap diagnostics() const;
 
     // 协议解析核心见 SwarmTunnelProtocol.h（QtCore-only，单测直接驱动）；
     // 本类仅保留 socket 薄封装与信号分发。
@@ -71,6 +75,8 @@ public:
 signals:
     void listeningChanged();
     void heartbeatChanged();
+    void onlineChanged();
+    void diagnosticsChanged();
     void tracksChanged();
     /// 批量航迹到达（字段字典列表 + 量测时间戳 us）
     void trackBatchReceived(const QVariantList& tracks, qint64 timeUsec);
@@ -79,6 +85,7 @@ signals:
 
 private slots:
     void _onReadyRead();
+    void _expire();
 
 private:
     void _dispatch(const QJsonObject& msg);
@@ -87,6 +94,15 @@ private:
     bool _listening = false;
     quint16 _port = 15600;
     Reassembly _rx;
+    QTimer _expiryTimer;
+    QStringList _allowedSources;
+    QString _stream;
+    QHash<QString, quint64> _sourceSessions;
+    QHash<QString, qint64> _sourceHeartbeats;
+    QHash<QString, qint64> _sourceActivity;
+    bool _online = false;
+    bool _drainScheduled = false;
+    quint64 _listenGeneration = 0;
 
     qint64 _lastHeartbeatMonoMs = -1;
     double _heartbeatHz = 0.0;

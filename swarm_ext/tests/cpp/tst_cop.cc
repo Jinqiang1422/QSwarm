@@ -10,9 +10,13 @@
 #include <QtCore/QJsonObject>
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QUdpSocket>
+#include <QtQml/QQmlComponent>
+#include <QtQml/QQmlContext>
+#include <QtQml/QQmlEngine>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QtTest>
 #include <algorithm>
+#include <memory>
 
 #include "SwarmCOPModel.h"
 #include "SwarmPerceptionBridge.h"
@@ -25,6 +29,7 @@ private slots:
     void modelExportsStableTrackContract();
     void coverageGridIsBounded();
     void perceptionBridgeReceivesUdpTrackBatch();
+    void heartbeatExpiryUpdatesQml();
 };
 
 void tst_cop::modelExportsStableTrackContract()
@@ -94,14 +99,10 @@ void tst_cop::perceptionBridgeReceivesUdpTrackBatch()
         {QStringLiteral("data"),
          QJsonObject{{QStringLiteral("t"), double(sentUsec)}, {QStringLiteral("tracks"), QJsonArray{wireTrack}}}},
     };
-    QByteArray datagram;
-    datagram.append(char(SwarmTunnel::PT_SINGLE >> 8));
-    datagram.append(char(SwarmTunnel::PT_SINGLE & 0xFF));
-    datagram.append(char(0));
-    datagram.append(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
     QUdpSocket sender;
-    QCOMPARE(sender.writeDatagram(datagram, QHostAddress::LocalHost, port), qint64(datagram.size()));
+    for (const auto& datagram :
+         SwarmTunnel::encodeDatagrams(QJsonDocument(payload).toJson(QJsonDocument::Compact), 1, 1))
+        QCOMPARE(sender.writeDatagram(datagram, QHostAddress::LocalHost, port), qint64(datagram.size()));
     QVERIFY(trackSpy.wait(1000));
     QCOMPARE(bridge.lastTrackCount(), 1);
     QVERIFY(bridge.wireLatencyMs() >= 0.0);
@@ -110,6 +111,29 @@ void tst_cop::perceptionBridgeReceivesUdpTrackBatch()
     const QVariantList received = trackSpy.takeFirst().at(0).toList();
     QCOMPARE(received.count(), 1);
     QCOMPARE(received.first().toMap().value(QStringLiteral("category")).toInt(), 2);
+}
+
+void tst_cop::heartbeatExpiryUpdatesQml()
+{
+    SwarmPerceptionBridge bridge;
+    QVERIFY(bridge.listen(0));
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);
+    QQmlComponent component(&engine);
+    component.setData("import QtQml\nQtObject { property bool online: bridge.serviceOnline }", QUrl());
+    std::unique_ptr<QObject> view(component.create());
+    QVERIFY2(view != nullptr, qPrintable(component.errorString()));
+    QUdpSocket sender;
+    const auto frame = SwarmTunnel::encodeDatagrams(R"({"kind":"heartbeat","data":{}})", 1, 1).first();
+    QCOMPARE(sender.writeDatagram(frame, QHostAddress::LocalHost, bridge.listenPort()), qint64(frame.size()));
+    QTRY_VERIFY_WITH_TIMEOUT(view->property("online").toBool(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->property("online").toBool(), 4000);
+    QVERIFY(!bridge.serviceOnline());
+    const auto second = SwarmTunnel::encodeDatagrams(R"({"kind":"heartbeat","data":{}})", 1, 2).first();
+    QCOMPARE(sender.writeDatagram(second, QHostAddress::LocalHost, bridge.listenPort()), qint64(second.size()));
+    QTRY_VERIFY_WITH_TIMEOUT(bridge.serviceOnline(), 1000);
+    bridge.stop();
+    QVERIFY(!view->property("online").toBool());
 }
 
 QTEST_GUILESS_MAIN(tst_cop)
