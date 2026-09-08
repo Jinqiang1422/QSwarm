@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class Fact;
 class FactMetaData;
+class Vehicle;
 
 class RCToParamDialogController : public QObject
 {
@@ -23,7 +25,7 @@ public:
     explicit RCToParamDialogController(QObject* parent = nullptr);
     ~RCToParamDialogController();
 
-    Fact* tuningFact() { return _tuningFact; }
+    Fact* tuningFact() const;
 
     Fact* scale() { return _scaleFact; }
 
@@ -34,6 +36,9 @@ public:
     Fact* max() { return _maxFact; }
 
     void setTuningFact(Fact* tuningFact);
+    Q_INVOKABLE void bind(Vehicle* vehicle, Fact* fact);
+    Q_INVOKABLE bool apply(const QString& scale, const QString& center, int tuningId, const QString& minimum,
+                           const QString& maximum);
 
 signals:
     void tuningFactChanged(Fact* fact);
@@ -43,7 +48,11 @@ private slots:
     void _parameterUpdated();
 
 private:
-    Fact* _tuningFact = nullptr;
+    bool _bindingValid() const;
+    void _invalidate();
+    QPointer<Fact> _tuningFact;
+    QPointer<Vehicle> _vehicle;
+    QList<QMetaObject::Connection> _bindingConnections;
     Fact* _scaleFact = nullptr;
     Fact* _centerFact = nullptr;
     Fact* _minFact = nullptr;

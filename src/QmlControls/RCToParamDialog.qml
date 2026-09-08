@@ -8,12 +8,18 @@ import QGroundControl.Controls
 import QGroundControl.FactControls
 
 QGCPopupDialog {
+    id: root
     title:      qsTr("RC To Param")
     buttons:    Dialog.Cancel | Dialog.Ok
 
     property alias tuningFact: controller.tuningFact
+    property string validationError: ""
 
-    onAccepted: QGroundControl.multiVehicleManager.activeVehicle.sendParamMapRC(tuningFact.name, scale.text, centerValue.text, tuningID.currentIndex, minValue.text, maxValue.text)
+    acceptButtonEnabled: controller.ready
+    onAccepted: {
+        preventClose = !controller.apply(scale.text, centerValue.text, tuningID.currentIndex, minValue.text, maxValue.text)
+        validationError = preventClose ? qsTr("Check the vehicle connection and numeric limits. Min ≤ Center ≤ Max is required.") : ""
+    }
 
     RCToParamDialogController {
         id: controller
@@ -44,7 +50,7 @@ QGCPopupDialog {
             enabled:        controller.ready
 
             QGCLabel { text: qsTr("Parameter") }
-            QGCLabel { text: tuningFact.name }
+            QGCLabel { text: root.tuningFact ? root.tuningFact.name : qsTr("Vehicle or parameter unavailable") }
 
             QGCLabel { text: qsTr("Tuning ID") }
             QGCComboBox {
@@ -77,6 +83,14 @@ QGCPopupDialog {
                 id:     maxValue
                 text:   controller.max.valueString
             }
+        }
+
+        QGCLabel {
+            Layout.fillWidth: true
+            Layout.preferredWidth: mainGrid.width
+            wrapMode: Text.WordWrap
+            visible: root.validationError.length > 0
+            text: root.validationError
         }
 
         QGCLabel {
