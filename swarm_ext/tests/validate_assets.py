@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -44,7 +45,30 @@ def _load_json(path: Path, issues: list[Issue]) -> object | None:
 
 def _scenario_actions() -> set[str]:
     source = (SWARM_ROOT / "sim" / "run_scenario.py").read_text(encoding="utf-8")
-    return set(re.findall(r'(?:if|elif) action == "([^"]+)"', source))
+    actions = set()
+    for node in ast.walk(ast.parse(source)):
+        if (
+            not isinstance(node, ast.Compare)
+            or not isinstance(node.left, ast.Name)
+            or node.left.id != "action"
+        ):
+            continue
+        if len(node.ops) != 1:
+            continue
+        value = node.comparators[0]
+        if (
+            isinstance(node.ops[0], ast.Eq)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+        ):
+            actions.add(value.value)
+        elif isinstance(node.ops[0], ast.In) and isinstance(value, ast.Tuple):
+            actions.update(
+                item.value
+                for item in value.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            )
+    return actions
 
 
 def _manager_actions() -> set[str]:

@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001, RUF002, RUF003, UP038
+# ruff: noqa: RUF002, RUF003
 """校准重判工具：对 run_eval.py 已生成的报告重新判定 intent_accuracy。
 校准规则：剔除 __error__(请求超时/异常)；tools 类允许期望是实际的子序列
 (承认合理补全前置动作)；start_swarm_task 只比阶段数不比自由命名的 task_name。

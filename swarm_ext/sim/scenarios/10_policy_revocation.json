@@ -1,0 +1,20 @@
+{
+  "name": "10 L3 自动动作排队期间收紧权限",
+  "fleet": 2,
+  "requires_qgc": true,
+  "steps": [
+    {"action": "wait_all_online", "timeout_sec": 120},
+    {"action": "qgc_configure_execution", "settings": {"autonomy_level": 3, "allowed_types": ["arm"], "command_interval_ms": 5000, "authorize_targets": true}},
+    {"action": "qgc_execute_actions", "origin": "ai", "actions": [{"type": "arm", "arm": true}]},
+    {"action": "qgc_expect_dispatch_counts", "counts": {"1": {"arm": 1}, "2": {"arm": 0}}},
+    {"action": "qgc_configure_execution", "settings": {"autonomy_level": 2}},
+    {"action": "qgc_expect_execution", "success": false},
+    {"action": "qgc_configure_execution", "settings": {"autonomy_level": 3, "allowed_types": ["arm"]}},
+    {"action": "wait_seconds", "seconds": 6},
+    {"action": "qgc_expect_dispatch_counts", "counts": {"1": {"arm": 1}, "2": {"arm": 0}}},
+    {"action": "qgc_execute_actions", "origin": "operator", "actions": [{"type": "disarm"}]},
+    {"action": "qgc_expect_execution", "success": true},
+    {"action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 30}
+  ],
+  "pass_criteria": {"all_steps_completed": true, "max_total_sec": 180}
+}

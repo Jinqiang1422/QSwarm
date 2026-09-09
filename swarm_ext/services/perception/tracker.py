@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: RUF001, RUF002, RUF003
+# ruff: noqa: RUF002, RUF003
 """
 WP3.2 检测跟踪服务 — 多目标跟踪器
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: RUF001, RUF002, RUF003, UP038
+# ruff: noqa: RUF001, RUF002, RUF003
 """
 run_eval.py — LLM 集群指令评测回归脚本（WP1.4）
 

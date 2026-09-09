@@ -425,10 +425,12 @@ class QGCFleet:
 
     def wait_all_airborne(self, min_alt: float, timeout: float, expected_count: int) -> bool:
         status = self.client.wait_status(
-            lambda current: len(current.get("vehicles", [])) >= expected_count
-            and all(
-                _finite_float(vehicle.get("alt_rel_m"), -999.0) >= min_alt
-                for vehicle in current.get("vehicles", [])
+            lambda current: (
+                len(current.get("vehicles", [])) >= expected_count
+                and all(
+                    _finite_float(vehicle.get("alt_rel_m"), -999.0) >= min_alt
+                    for vehicle in current.get("vehicles", [])
+                )
             ),
             timeout,
         )
@@ -448,11 +450,13 @@ class QGCFleet:
 
     def wait_all_disarmed_or_low(self, max_alt: float, timeout: float, expected_count: int) -> bool:
         status = self.client.wait_status(
-            lambda current: len(current.get("vehicles", [])) >= expected_count
-            and all(
-                not vehicle.get("armed")
-                and _finite_float(vehicle.get("alt_rel_m"), 999.0) <= max_alt
-                for vehicle in current.get("vehicles", [])
+            lambda current: (
+                len(current.get("vehicles", [])) >= expected_count
+                and all(
+                    not vehicle.get("armed")
+                    and _finite_float(vehicle.get("alt_rel_m"), 999.0) <= max_alt
+                    for vehicle in current.get("vehicles", [])
+                )
             ),
             timeout,
         )
@@ -505,8 +509,10 @@ class QGCFleet:
             response = self.client.request("arm_all")
             remaining = max(0.0, deadline - time.monotonic())
             status = self.client.wait_status(
-                lambda current: len(current.get("vehicles", [])) >= expected_count
-                and all(vehicle.get("armed") for vehicle in current.get("vehicles", [])),
+                lambda current: (
+                    len(current.get("vehicles", [])) >= expected_count
+                    and all(vehicle.get("armed") for vehicle in current.get("vehicles", []))
+                ),
                 min(5.0, remaining),
             )
             vehicles = status.get("vehicles", [])
@@ -594,6 +600,45 @@ def _remove_gazebo_model(instance: int, px4_pid: int) -> dict:
     }
 
 
+def task_matches(status: dict, expected: dict, task_id: str) -> bool:
+    """Check one bound task, including its terminal evidence before any cleanup action."""
+    task = status.get("task", {})
+    if not status.get("ok") or not task_id or task.get("task_id") != task_id:
+        return False
+    for key in ("running", "blocked", "name", "stage_index", "waiting_for_proceed", "outcome"):
+        if key in expected and task.get(key) != expected[key]:
+            return False
+    result = task.get("result", {})
+    if expected.get("running") is False and (
+        result.get("task_id") != task_id
+        or result.get("outcome") != expected.get("outcome", "Succeeded")
+    ):
+        return False
+    for key in ("completed_ids", "withdrawn_ids"):
+        if key in expected and sorted(result.get(key, [])) != sorted(expected[key]):
+            return False
+    dispatches = result.get("dispatches", task.get("dispatches", []))
+    for dispatch in expected.get("required_dispatches", []):
+        if not any(
+            all(item.get(key) == value for key, value in dispatch.items()) for item in dispatches
+        ):
+            return False
+    if expected.get("no_dispatch_after_withdrawal"):
+        offsets = result.get("withdrawal_offsets", {})
+        if not offsets:
+            return False
+        for vehicle_id, offset in offsets.items():
+            if not isinstance(offset, int) or offset < 0 or offset > len(dispatches):
+                return False
+            if any(item.get("vehicle_id") == int(vehicle_id) for item in dispatches[offset:]):
+                return False
+    vehicles = {vehicle.get("id"): vehicle for vehicle in status.get("vehicles", [])}
+    return all(
+        vehicle_id in vehicles and vehicles[vehicle_id].get("armed") is False
+        for vehicle_id in expected.get("disarmed_ids", [])
+    )
+
+
 def run_scenario(
     scenario: dict,
     conn_str: str,
@@ -603,6 +648,8 @@ def run_scenario(
     fleet_size = scenario.get("fleet", 8)
     expected_online = fleet_size
     report = {"scenario": scenario["name"], "steps": [], "pass": True}
+    bound_task_id = ""
+    bound_execution_id = ""
     t_start = time.time()
     requires_qgc = bool(scenario.get("requires_qgc", False))
     if dry_run:
@@ -751,10 +798,9 @@ def run_scenario(
                 )
                 mission_vehicle_count = expected_online
                 status = qgc_client.wait_status(
-                    lambda current, required_count=mission_vehicle_count: len(
-                        current.get("mission", {}).get("status", {})
-                    )
-                    >= required_count,
+                    lambda current, required_count=mission_vehicle_count: (
+                        len(current.get("mission", {}).get("status", {})) >= required_count
+                    ),
                     float(step.get("timeout_sec", 60.0)),
                 )
                 mission = status.get("mission", {})
@@ -791,10 +837,10 @@ def run_scenario(
                 )
                 minimum_followers = int(step.get("min_followers", expected_online - 1))
                 status = qgc_client.wait_status(
-                    lambda current, required_count=minimum_followers: current.get(
-                        "formation", {}
-                    ).get("active")
-                    and current.get("formation", {}).get("follower_count", 0) >= required_count,
+                    lambda current, required_count=minimum_followers: (
+                        current.get("formation", {}).get("active")
+                        and current.get("formation", {}).get("follower_count", 0) >= required_count
+                    ),
                     float(step.get("timeout_sec", 15.0)),
                 )
                 ok = bool(response.get("ok")) and bool(status.get("formation", {}).get("active"))
@@ -830,6 +876,51 @@ def run_scenario(
                 record(desc, bool(response.get("ok")), {"response": response})
             except QGCAcceptanceError as exc:
                 record(desc, False, {"error": str(exc)})
+        elif action == "qgc_configure_execution":
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+            try:
+                response = qgc_client.request(
+                    "configure_execution_test", **step.get("settings", {})
+                )
+                record(desc, bool(response.get("ok")), {"response": response})
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
+        elif action in ("qgc_expect_execution", "qgc_expect_dispatch_counts"):
+            if not qgc_client:
+                record(desc, False, {"error": "QGC acceptance interface is required"})
+                continue
+
+            def execution_matches(current, wanted=step, execution_id=bound_execution_id):
+                if wanted["action"] == "qgc_expect_execution":
+                    result = current.get("execution", {})
+                    return (
+                        bool(execution_id)
+                        and result.get("execution_id") == execution_id
+                        and result.get("success") == wanted["success"]
+                    )
+                counts = current.get("dispatch_counts", {})
+                return all(
+                    counts.get(vehicle_id, {}).get(command, 0) == count
+                    for vehicle_id, commands in wanted["counts"].items()
+                    for command, count in commands.items()
+                )
+
+            try:
+                status = qgc_client.wait_status(
+                    execution_matches, float(step.get("timeout_sec", 15))
+                )
+                record(
+                    desc,
+                    bool(status.get("ok")) and execution_matches(status),
+                    {
+                        "execution": status.get("execution"),
+                        "dispatch_counts": status.get("dispatch_counts"),
+                    },
+                )
+            except QGCAcceptanceError as exc:
+                record(desc, False, {"error": str(exc)})
         elif action == "qgc_execute_actions":
             if not qgc_client:
                 record(desc, False, {"error": "QGC acceptance interface is required"})
@@ -842,6 +933,7 @@ def run_scenario(
                     center_lat=float(step.get("center_lat", 0.0)),
                     center_lon=float(step.get("center_lon", 0.0)),
                 )
+                bound_execution_id = response.get("execution_id", "")
                 record(desc, bool(response.get("ok")), {"response": response})
             except QGCAcceptanceError as exc:
                 record(desc, False, {"error": str(exc)})
@@ -907,15 +999,23 @@ def run_scenario(
             if not qgc_client:
                 record(desc, False, {"error": "QGC acceptance interface is required"})
                 continue
+            coordinates = list(fleet.position.values())
+            center_lat = (
+                sum(point[0] for point in coordinates) / len(coordinates) if coordinates else 0.0
+            )
+            center_lon = (
+                sum(point[1] for point in coordinates) / len(coordinates) if coordinates else 0.0
+            )
             try:
                 response = qgc_client.request(
                     "start_task",
                     name=str(step.get("name", "acceptance_task")),
-                    center_lat=float(step.get("center_lat", 39.9)),
-                    center_lon=float(step.get("center_lon", 116.4)),
+                    center_lat=float(step.get("center_lat", center_lat)),
+                    center_lon=float(step.get("center_lon", center_lon)),
                     stages=step.get("stages", []),
                 )
-                record(desc, bool(response.get("ok")), {"response": response})
+                bound_task_id = response.get("status", {}).get("task", {}).get("task_id", "")
+                record(desc, bool(response.get("ok") and bound_task_id), {"response": response})
             except QGCAcceptanceError as exc:
                 record(desc, False, {"error": str(exc)})
         elif action == "qgc_expect_task":
@@ -924,20 +1024,30 @@ def run_scenario(
                 continue
             expected = {
                 key: step[key]
-                for key in ("running", "name", "stage_index", "waiting_for_proceed")
+                for key in (
+                    "running",
+                    "blocked",
+                    "name",
+                    "stage_index",
+                    "waiting_for_proceed",
+                    "outcome",
+                    "completed_ids",
+                    "withdrawn_ids",
+                    "required_dispatches",
+                    "disarmed_ids",
+                    "no_dispatch_after_withdrawal",
+                )
                 if key in step
             }
             try:
                 status = qgc_client.wait_status(
-                    lambda current, wanted=expected: all(
-                        current.get("task", {}).get(key) == value for key, value in wanted.items()
+                    lambda current, wanted=expected, task_id=bound_task_id: task_matches(
+                        current, wanted, task_id
                     ),
                     float(step.get("timeout_sec", 10.0)),
                 )
                 task = status.get("task", {})
-                ok = bool(status.get("ok")) and all(
-                    task.get(key) == value for key, value in expected.items()
-                )
+                ok = task_matches(status, expected, bound_task_id)
                 record(desc, ok, {"task": task, "expected": expected})
             except QGCAcceptanceError as exc:
                 record(desc, False, {"error": str(exc)})

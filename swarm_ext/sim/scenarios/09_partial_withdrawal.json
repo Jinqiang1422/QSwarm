@@ -32,7 +32,10 @@
     },
     {"t": 0, "action": "wait_seconds", "seconds": 1},
     {"t": 0, "action": "qgc_proceed_task"},
-    {"t": 0, "action": "qgc_expect_task", "running": false, "timeout_sec": 180},
+    {"t": 0, "action": "qgc_expect_task", "running": false, "outcome": "Succeeded", "timeout_sec": 180,
+     "completed_ids": [2], "withdrawn_ids": [1], "disarmed_ids": [2],
+     "required_dispatches": [{"stage_index": 1, "vehicle_id": 2, "type": "rtl"}],
+     "no_dispatch_after_withdrawal": true},
     {"t": 0, "action": "rtl_all"},
     {"t": 0, "action": "wait_all_disarmed_or_low", "max_altitude": 2, "timeout_sec": 120}
   ],

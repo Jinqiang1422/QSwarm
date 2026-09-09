@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: RUF001, RUF002, RUF003
+# ruff: noqa: RUF001
 """Strict swarm regression: a fresh PX4 fleet and isolated QGC state per scenario."""
 
 from __future__ import annotations

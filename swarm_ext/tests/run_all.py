@@ -270,7 +270,14 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             "python.acceptance_metrics",
             "L1 Python/算法",
             "编队几何、距离与 COP 真值匹配",
-            [sys.executable, "-m", "unittest", "-v", "test_qgc_acceptance.py"],
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "-v",
+                "test_qgc_acceptance.py",
+                "test_task_verdict.py",
+            ],
             cwd=SWARM_ROOT / "sim",
         ),
         TestSpec(

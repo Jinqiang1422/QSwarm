@@ -1,0 +1,14 @@
+{
+  "name": "12 任务超时明确报告失败",
+  "fleet": 1,
+  "requires_qgc": true,
+  "steps": [
+    {"action": "wait_all_online", "timeout_sec": 120},
+    {"action": "qgc_start_task", "name": "超时失败验收", "stages": [
+      {"name": "等待未发起的起飞", "actions": [{"type": "set_selection", "vehicle_ids": [1]}], "complete_when": {"kind": "all_airborne", "timeout_sec": 4, "grace_sec": 0}}
+    ]},
+    {"action": "qgc_expect_task", "running": false, "outcome": "Failed", "timeout_sec": 15, "completed_ids": [], "withdrawn_ids": [], "disarmed_ids": [1]},
+    {"action": "qgc_expect_dispatch_counts", "counts": {"1": {"arm": 0, "takeoff": 0}}}
+  ],
+  "pass_criteria": {"all_steps_completed": true, "max_total_sec": 150}
+}
