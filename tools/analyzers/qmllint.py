@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import shutil
+import re
 from typing import TYPE_CHECKING, ClassVar
 
 from common.analyzer import AnalysisResult, AnalyzerBase
-from common.logging import log_info, log_warn
+from common.logging import log_error, log_info, log_warn
 from common.proc import run_captured
 
 if TYPE_CHECKING:
@@ -22,14 +22,19 @@ class QmlLintAnalyzer(AnalyzerBase):
     )
 
     def run(self, files: list[Path], fix: bool = False) -> AnalysisResult:
-        if shutil.which("qmllint") is None:
-            log_warn("qmllint not found - skipping")
-            log_info(self.install_hint)
-            return AnalysisResult(tool=self.name, passed=True, output="Skipped")
+        if not self.require_tool("qmllint"):
+            return AnalysisResult(tool=self.name, passed=False, output="Tool not found")
 
         if not files:
             log_info("No QML files to lint")
             return AnalysisResult(tool=self.name, passed=True)
+
+        version = run_captured(["qmllint", "--version"])
+        version_output = version.stdout + version.stderr
+        if version.returncode != 0 or not re.search(r"\bqmllint\s+6\.", version_output):
+            message = "Qt 6 qmllint is required; put the Qt SDK bin directory first in PATH"
+            log_error(message)
+            return AnalysisResult(tool=self.name, passed=False, output=message)
 
         log_info(f"Running qmllint on {len(files)} files...")
 
@@ -37,8 +42,13 @@ class QmlLintAnalyzer(AnalyzerBase):
         files_with_issues: list[str] = []
         all_output: list[str] = []
 
+        command = ["qmllint"]
+        qml_imports = self.build_dir / "qml"
+        if qml_imports.is_dir():
+            command.extend(["-I", str(qml_imports)])
+
         for file in files:
-            result = run_captured(["qmllint", "--bare", str(file)])
+            result = run_captured([*command, str(file)])
 
             output = result.stdout + result.stderr
             if output.strip():

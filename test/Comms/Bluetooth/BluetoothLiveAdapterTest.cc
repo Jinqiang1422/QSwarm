@@ -1,19 +1,19 @@
 #include "BluetoothLiveAdapterTest.h"
 
-#include "BluetoothConfiguration.h"
-
 #include <QtBluetooth/QBluetoothHostInfo>
 #include <QtBluetooth/QBluetoothLocalDevice>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QRegularExpression>
 #include <QtTest/QSignalSpy>
 
+#include "BluetoothConfiguration.h"
+
 static QList<QBluetoothHostInfo> _localAdaptersOrSkip()
 {
     return QBluetoothLocalDevice::allDevices();
 }
 
-static QVariantList _waitForConfigAdapters(BluetoothConfiguration &config, QSignalSpy &adapterStateSpy, int timeoutMs)
+static QVariantList _waitForConfigAdapters(BluetoothConfiguration& config, QSignalSpy& adapterStateSpy, int timeoutMs)
 {
     QVariantList adapters = config.getAllAvailableAdapters();
     if (!adapters.isEmpty()) {
@@ -36,9 +36,9 @@ static QVariantList _waitForConfigAdapters(BluetoothConfiguration &config, QSign
     return adapters;
 }
 
-static QString _firstAdapterAddressOrEmpty(const QVariantList &adapters)
+static QString _firstAdapterAddressOrEmpty(const QVariantList& adapters)
 {
-    for (const QVariant &entry : std::as_const(adapters)) {
+    for (const QVariant& entry : std::as_const(adapters)) {
         const QString address = entry.toMap().value(QStringLiteral("address")).toString();
         if (!address.isEmpty()) {
             return address;
@@ -59,12 +59,11 @@ void BluetoothLiveAdapterTest::init()
                      QRegularExpression(QStringLiteral("Cannot find a compatible running Bluez")));
     ignoreLogMessage("qt.bluetooth", QtWarningMsg,
                      QRegularExpression(QStringLiteral("LE controller has invalid adapter")));
-    ignoreLogMessage("qt.bluetooth.bluez", QtInfoMsg,
-                     QRegularExpression(QStringLiteral("Missing CAP_NET_ADMIN")));
-    ignoreLogMessage("qt.bluetooth.bluez", QtWarningMsg,
-                     QRegularExpression(QStringLiteral(
-                         "Cannot open HCI socket|Cannot determine bluetoothd version|"
-                         "Disabling Qt Bluetooth LE feature|Cannot find Bluez 5 adapter")));
+    ignoreLogMessage("qt.bluetooth.bluez", QtInfoMsg, QRegularExpression(QStringLiteral("Missing CAP_NET_ADMIN")));
+    ignoreLogMessage(
+        "qt.bluetooth.bluez", QtWarningMsg,
+        QRegularExpression(QStringLiteral("Cannot open HCI socket|Cannot determine bluetoothd version|"
+                                          "Disabling Qt Bluetooth LE feature|Cannot find Bluez 5 adapter")));
 }
 
 void BluetoothLiveAdapterTest::_testLiveAdapterSelectionAndState()
@@ -85,7 +84,7 @@ void BluetoothLiveAdapterTest::_testLiveAdapterSelectionAndState()
     QVERIFY2(!adapterAddress.isEmpty(), "No valid adapter address exposed by BluetoothConfiguration");
 
     bool hostAddressSeen = false;
-    for (const QBluetoothHostInfo &host : localHosts) {
+    for (const QBluetoothHostInfo& host : localHosts) {
         if (host.address().toString() == adapterAddress) {
             hostAddressSeen = true;
             break;
@@ -119,7 +118,7 @@ void BluetoothLiveAdapterTest::_testLiveAdapterQueryApis()
     QCOMPARE(config.getAdapterAddress(), adapterAddress);
 
     const QVariantList connected = config.getConnectedDevices();
-    for (const QVariant &entry : connected) {
+    for (const QVariant& entry : connected) {
         const QVariantMap device = entry.toMap();
         QVERIFY(device.contains(QStringLiteral("address")));
         QVERIFY(device.value(QStringLiteral("address")).toString().size() > 0);
@@ -128,7 +127,7 @@ void BluetoothLiveAdapterTest::_testLiveAdapterQueryApis()
     }
 
     const QVariantList paired = config.getAllPairedDevices();
-    for (const QVariant &entry : paired) {
+    for (const QVariant& entry : paired) {
         const QVariantMap device = entry.toMap();
         QVERIFY(device.contains(QStringLiteral("address")));
         QVERIFY(device.value(QStringLiteral("address")).toString().size() > 0);
@@ -173,7 +172,7 @@ void BluetoothLiveAdapterTest::_testLiveScanLifecycle()
 
     if (config.scanning()) {
         config.stopScan();
-        // Single bounded QTRY call replaces the previous spy.wait / qWait(50)
+        // Wait for discovery completion with a single bounded condition check.
         // fallback pair — exits immediately once scanning is false, otherwise
         // times out at the same 3 s bound.
         QTRY_VERIFY_WITH_TIMEOUT(!config.scanning(), 3000);

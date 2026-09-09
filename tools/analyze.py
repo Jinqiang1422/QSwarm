@@ -86,6 +86,9 @@ class FileCollector:
         if not search_path.exists():
             return []
 
+        if search_path.is_file():
+            return [search_path] if search_path.suffix in extensions else []
+
         files: list[Path] = []
         for ext in extensions:
             files.extend(search_path.rglob(f"*{ext}"))
@@ -94,29 +97,30 @@ class FileCollector:
     def _get_changed_files(self, extensions: tuple[str, ...], compare_ref: str) -> list[Path]:
         """Get files changed compared to an available upstream ref."""
         patterns = [f"*{ext}" for ext in extensions]
-        result = run_git(
-            "diff", "--name-only", f"{compare_ref}...", "--", *patterns, cwd=self.repo_root
-        )
-
-        if result.returncode != 0:
-            return []
-
-        files: list[Path] = []
-        for line in result.stdout.strip().splitlines():
-            if not line:
-                continue
-            full_path = self.repo_root / line
-            if full_path.is_file():
-                files.append(full_path)
+        commands = [
+            ["diff", "--name-only", "-z", f"{compare_ref}...", "--", *patterns],
+            ["diff", "--name-only", "-z", "HEAD", "--", *patterns],
+            ["ls-files", "--others", "--exclude-standard", "-z", "--", *patterns],
+        ]
+        files: set[Path] = set()
+        for command in commands:
+            result = run_git(*command, cwd=self.repo_root)
+            if result.returncode != 0:
+                raise RuntimeError(f"Unable to collect changed files: {result.stderr.strip()}")
+            for name in result.stdout.split("\0"):
+                if name:
+                    full_path = self.repo_root / name
+                    if full_path.is_file():
+                        files.add(full_path)
         return sorted(files)
 
 
 def validate_path(path_str: str, repo_root: Path) -> Path:
     """Validate and sanitize a user-provided path."""
-    if ".." in path_str:
+    if ".." in Path(path_str).parts:
         raise ValueError(f"Invalid path: {path_str} (must not contain '..')")
 
-    if path_str.startswith("/"):
+    if Path(path_str).is_absolute():
         raise ValueError(f"Invalid path: {path_str} (must be relative)")
 
     target = Path(path_str)
@@ -125,6 +129,9 @@ def validate_path(path_str: str, repo_root: Path) -> Path:
 
     if not full_path.is_relative_to(repo_resolved):
         raise ValueError("Invalid path: resolves outside repository")
+
+    if not full_path.exists():
+        raise ValueError(f"Invalid path: {path_str} does not exist")
 
     return target
 
@@ -195,9 +202,9 @@ Examples:
     )
 
     parser.add_argument(
-        "path",
-        nargs="?",
-        help="Path to analyze (relative to repo root)",
+        "paths",
+        nargs="*",
+        help="Files or directories to analyze (relative to repo root)",
     )
     parser.add_argument(
         "-t",
@@ -280,13 +287,14 @@ def main() -> int:
 
     build_dir = repo_root / args.build_dir
 
-    target_path: Path | None = None
-    if args.path:
-        try:
-            target_path = validate_path(args.path, repo_root)
-        except ValueError as e:
-            log_error(str(e))
-            return 1
+    if args.all and args.paths:
+        log_error("Use either --all or explicit paths")
+        return 1
+    try:
+        target_paths = [validate_path(path, repo_root) for path in args.paths]
+    except ValueError as e:
+        log_error(str(e))
+        return 1
 
     try:
         jobs = args.jobs if args.jobs > 0 else os.cpu_count() or 1
@@ -297,17 +305,24 @@ def main() -> int:
 
     collector = FileCollector(repo_root)
 
-    if args.tool == "qmllint":
-        files = collector.get_qml_files(target_path, args.all)
-    else:
-        files = collector.get_cpp_files(target_path, args.all)
+    collect = collector.get_qml_files if args.tool == "qmllint" else collector.get_cpp_files
+    try:
+        if target_paths:
+            files = sorted({file for path in target_paths for file in collect(path)})
+        else:
+            files = collect(analyze_all=args.all)
+    except RuntimeError as e:
+        log_error(str(e))
+        return 1
 
     result = analyzer.run(files, fix=args.fix)
+    summary = f"{result.files_checked} files checked; {result.issues} files with issues"
 
     if result.passed:
-        log_ok("Analysis complete")
+        log_ok(f"Analysis complete: {summary}")
         return 0
     else:
+        log_error(f"Analysis failed: {summary}")
         return 1
 
 

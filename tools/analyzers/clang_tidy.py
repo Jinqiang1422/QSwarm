@@ -23,10 +23,10 @@ class ClangTidyAnalyzer(AnalyzerBase):
         super().__init__(repo_root, build_dir)
         self.jobs = jobs
 
-    def _analyze_file(self, file: Path) -> tuple[str, bool]:
+    def _analyze_file(self, file: Path) -> tuple[str, bool, str]:
         rel_path = self.relative_path(file)
         result = run_captured(["clang-tidy", "-p", str(self.build_dir), str(file)])
-        return rel_path, result.returncode != 0
+        return rel_path, result.returncode != 0, result.stdout + result.stderr
 
     def run(self, files: list[Path], fix: bool = False) -> AnalysisResult:
         if not self.require_compile_commands():
@@ -46,13 +46,17 @@ class ClangTidyAnalyzer(AnalyzerBase):
         log_info(f"Running clang-tidy on {len(files)} files ({self.jobs} jobs)...")
 
         files_with_issues: list[str] = []
+        all_output: list[str] = []
 
         with ThreadPoolExecutor(max_workers=self.jobs) as pool:
             futures = {pool.submit(self._analyze_file, f): f for f in files}
             for future in as_completed(futures):
-                rel_path, has_issues = future.result()
+                rel_path, has_issues, output = future.result()
                 status = "ISSUES" if has_issues else "OK"
                 print(f"  {rel_path}... {status}")
+                if output.strip():
+                    print(output)
+                    all_output.append(output)
                 if has_issues:
                     files_with_issues.append(rel_path)
 
@@ -60,6 +64,7 @@ class ClangTidyAnalyzer(AnalyzerBase):
             tool=self.name,
             passed=not files_with_issues,
             issues=len(files_with_issues),
+            output="\n".join(all_output),
             files_checked=len(files),
             files_with_issues=files_with_issues,
         )

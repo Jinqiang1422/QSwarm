@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, ClassVar
 
@@ -36,19 +36,19 @@ class ClazyAnalyzer(AnalyzerBase):
                 str(file),
             ],
         )
-        has_issues = result.returncode != 0 and bool(result.stderr.strip())
-        return rel_path, has_issues, result.stderr
+        output = result.stdout + result.stderr
+        # Clazy emits diagnostics with exit status zero unless compilation fails.
+        has_issues = result.returncode != 0 or bool(re.search(r"\b(?:warning|error):", output))
+        return rel_path, has_issues, output
 
     def run(self, files: list[Path], fix: bool = False) -> AnalysisResult:
-        if not self.compile_commands.exists():
-            log_warn("compile_commands.json not found - skipping clazy")
-            log_info("Run: cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
-            return AnalysisResult(tool=self.name, passed=True, output="Skipped")
+        if not self.require_compile_commands():
+            return AnalysisResult(
+                tool=self.name, passed=False, output="compile_commands.json not found"
+            )
 
-        if shutil.which("clazy-standalone") is None:
-            log_warn("clazy-standalone not found - skipping")
-            log_info(self.install_hint)
-            return AnalysisResult(tool=self.name, passed=True, output="Skipped")
+        if not self.require_tool("clazy-standalone"):
+            return AnalysisResult(tool=self.name, passed=False, output="Tool not found")
 
         if not files:
             log_info("No files to analyze")

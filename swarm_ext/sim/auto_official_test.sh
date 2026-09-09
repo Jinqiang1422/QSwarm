@@ -42,6 +42,8 @@ echo "==== [auto] 阶段 2/4: 起 $N 机官方 SITL(容器内 fresh build ~20min
 QGC_SITL_CONTAINER_NAME="$CONTAINER_NAME" \
     bash "$SIM_DIR/run_official_sitl.sh" "$HOME/PX4-Autopilot" "$N" > /tmp/auto_sitl.log 2>&1 &
 SITL_BG=$!
+# Invoked by the EXIT trap; ShellCheck cannot follow this indirect call.
+# shellcheck disable=SC2329
 cleanup() {
     echo "[auto] 清理 SITL..."
     kill "$SITL_BG" 2>/dev/null || true
