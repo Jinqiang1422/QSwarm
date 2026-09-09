@@ -27,22 +27,26 @@ python3 service.py --scenario ../../sim/scenarios/06_perception_feed.json \
 python3 service.py --scenario real_feed.json --out udp://<QGC_IP>:15600 --realtime
 ```
 
-QGC 侧：AI 面板「感知链路」启动（默认 UDP 15600），或 `SwarmManager::startPerception(port)`。
+QGC 侧：AI 面板「感知链路」启动（默认 `127.0.0.1:15600`），或 `SwarmManager::startPerception(port)`。
+远程接入须设置 `Swarm/perceptionBindAddress` 和非空的 `Swarm/perceptionAllowedSources` 地址白名单。
 
 ## 协议（与 mavlink/swarm_perception.xml 语义对应）
 
 ```text
-UDP 帧 = [payload_type:uint16be][payload]
-payload = [seq:uint8][JSON 分片 ≤126B]
-payload_type：42000 单帧 / 42001 中间帧 / 42002 尾帧
-kind：heartbeat(1Hz) / track / track_batch
+UDP 帧 = [payload_type:uint16be=42003][payload，最多128B]
+payload = [v2 头部25B][JSON 分片，最多103B]
+头部 = version:uint8 + session:uint64 + message_id:uint32
+     + fragment_index:uint16 + fragment_count:uint16 + total_length:uint32 + crc32:uint32
+kind：heartbeat(1Hz) / track / track_batch / plan_meta
 航迹线格式（位置式数组）：
   [track_id, category, lat×1e7, lon×1e7, alt_dm|-1, ve_cm/s, vn_cm/s,
    confidence×1000, sensor_id, source, time_usec]
 ```
 
-真实 MAVLink 通道部署时，同一 payload 字节流直接装入 TUNNEL(#385) 消息 payload 字段
-（payload_type 同值），QGC 侧解析路径一致。
+完整字段、字节序、重组限制和升级要求以[感知协议 v2](../../docs/PERCEPTION_PROTOCOL_V2.md)为准。
+两端必须同时升级；运行时拒绝旧的 42000/42001/42002 帧。
+载荷大小适配 MAVLink TUNNEL(#385)，当前服务与 QGC 感知桥验证的是 UDP 传输。
+通过真实 MAVLink 链路转发 TUNNEL 仍须实现相应接线并验证，不能据此视为已完成硬件通道验收。
 
 ## 真实检测器接入
 
