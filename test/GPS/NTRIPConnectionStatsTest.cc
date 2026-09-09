@@ -1,5 +1,6 @@
 #include "NTRIPConnectionStatsTest.h"
 
+#include <QtCore/QTimer>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
@@ -47,8 +48,12 @@ void NTRIPConnectionStatsTest::testDataRate()
     QSignalSpy rateSpy(&stats, &NTRIPConnectionStats::dataRateChanged);
 
     stats.recordMessage(1024);
-    QTest::qWait(1100);
-    stats.recordMessage(1024);
+    QTimer traffic;
+    traffic.setInterval(20);
+    traffic.callOnTimeout(&stats, [&stats]() { stats.recordMessage(1024); });
+    traffic.start();
+    QTRY_VERIFY_WITH_TIMEOUT(stats.dataRateBytesPerSec() > 0.0, TestTimeout::mediumMs());
+    traffic.stop();
 
     QVERIFY(rateSpy.count() >= 1);
     QVERIFY(stats.dataRateBytesPerSec() > 0.0);

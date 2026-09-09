@@ -3,16 +3,16 @@
 #ifdef QGC_GST_STREAMING
 
 #include "CpuVideoFramePool.h"
-#include "Fixtures/RAIIFixtures.h"
 #include "Fact.h"
+#include "Fixtures/RAIIFixtures.h"
 #include "GStreamer.h"
 #include "GStreamerFrameMap.h"
 #include "GStreamerHelpers.h"
 #include "GStreamerLogging.h"
-#include "GstVideoReceiver.h"
 #include "GstHwPathTelemetry.h"
 #include "GstHwVideoBufferFactory.h"
 #include "GstSourceFactory.h"
+#include "GstVideoReceiver.h"
 #include "HwBuffers/dmabuf/GstDmaDrmCaps.h"
 #include "QGCQVideoSinkController.h"
 #include "gstqgc/GstQgcAllocation.h"
@@ -52,10 +52,10 @@
 #include <QtMultimediaQuick/private/qquickvideooutput_p.h>
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QSignalSpy>
-#include <gst/gst.h>
-#include <gst/video/gstvideometa.h>
 #include <atomic>
 #include <cstring>
+#include <gst/gst.h>
+#include <gst/video/gstvideometa.h>
 #include <iterator>
 #include <memory>
 #include <string_view>
@@ -699,7 +699,7 @@ void GStreamerTest::_testAppsinkTeardownUnderLoad()
         gst_object_unref(sinkBin);
 
         QVERIFY(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE);
-        QTest::qWait(150);
+        QTRY_VERIFY_WITH_TIMEOUT(videoSink.videoFrame().isValid(), TestTimeout::mediumMs());
         // controllerOwner1 goes out of scope here — implicit teardown.
 
         gst_element_set_state(pipeline, GST_STATE_NULL);
@@ -775,9 +775,8 @@ void GStreamerTest::_testInactiveQgcQVideoSinkDropsAndCounts()
     QVideoSink videoSink;
     QObject controllerOwner;
     int frameCount = 0;
-    QObject::connect(&videoSink, &QVideoSink::videoFrameChanged, &controllerOwner, [&](const QVideoFrame&) {
-        ++frameCount;
-    });
+    QObject::connect(&videoSink, &QVideoSink::videoFrameChanged, &controllerOwner,
+                     [&](const QVideoFrame&) { ++frameCount; });
 
     GError* err = nullptr;
     GstElement* pipeline = gst_parse_launch(
@@ -820,10 +819,10 @@ void GStreamerTest::_testInactiveQgcQVideoSinkDropsAndCounts()
         GError* gstError = nullptr;
         gchar* debug = nullptr;
         gst_message_parse_error(msg, &gstError, &debug);
-        const QString errorMessage = QStringLiteral("%1 (%2)")
-                                         .arg(gstError ? QString::fromUtf8(gstError->message)
-                                                       : QStringLiteral("unknown"))
-                                         .arg(debug ? QString::fromUtf8(debug) : QString());
+        const QString errorMessage =
+            QStringLiteral("%1 (%2)")
+                .arg(gstError ? QString::fromUtf8(gstError->message) : QStringLiteral("unknown"))
+                .arg(debug ? QString::fromUtf8(debug) : QString());
         g_clear_error(&gstError);
         g_free(debug);
         QFAIL(qPrintable(QStringLiteral("Pipeline error: %1").arg(errorMessage)));
@@ -993,8 +992,7 @@ void GStreamerTest::_testQVideoSinkControllerRepeatedSetupKeepsNewBindingActive(
 
     QVERIFY2(GStreamer::setupQVideoSinkElement(bin, firstSink.get(), &controllerOwner),
              "initial setupQVideoSinkElement() failed");
-    auto* firstController =
-        controllerOwner.findChild<QGCQVideoSinkController*>(QString(), Qt::FindDirectChildrenOnly);
+    auto* firstController = controllerOwner.findChild<QGCQVideoSinkController*>(QString(), Qt::FindDirectChildrenOnly);
     QVERIFY(firstController);
 
     QVERIFY2(GStreamer::setupQVideoSinkElement(bin, secondSink.get(), &controllerOwner),
@@ -1493,16 +1491,16 @@ void GStreamerTest::_testAdapterFlushDropsInFlightSamples()
     gst_object_unref(flushStopPeer);
     QVERIFY(flushStopSent);
 
-    // Drain the Qt event loop so any push_frame_queued lambdas queued before the flush run.
-    QTest::qWait(100);
-
     // The flush must leave no buffer stuck in flight: every buffer the sink accepted is now
     // accounted for as either delivered or dropped. A leaked in-flight buffer would make
     // input strictly exceed delivered+dropped.
-    guint64 inputAfter = 0, deliveredAfter = 0, droppedAfter = 0;
-    g_object_get(vsink, "frames-input", &inputAfter, "frames-delivered", &deliveredAfter, "frames-dropped",
-                 &droppedAfter, nullptr);
-    QCOMPARE(inputAfter, deliveredAfter + droppedAfter);
+    const auto allBuffersAccountedFor = [vsink]() {
+        guint64 inputAfter = 0, deliveredAfter = 0, droppedAfter = 0;
+        g_object_get(vsink, "frames-input", &inputAfter, "frames-delivered", &deliveredAfter, "frames-dropped",
+                     &droppedAfter, nullptr);
+        return inputAfter == deliveredAfter + droppedAfter;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(allBuffersAccountedFor(), TestTimeout::mediumMs());
     gst_object_unref(vsink);
 
     gst_object_unref(idSrc);

@@ -238,7 +238,7 @@ void NTRIPHttpTransportTest::testTlsFatalErrorEmitsSingleError()
     QCOMPARE(errorSpy.count(), 1);
 
     // abort() inside _failFatal must not re-enter the error/disconnect handlers.
-    QTest::qWait(200);
+    QVERIFY(!errorSpy.wait(TestTimeout::shortMs()));
     QCOMPARE(errorSpy.count(), 1);
 }
 

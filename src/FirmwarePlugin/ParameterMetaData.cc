@@ -1,19 +1,19 @@
 #include "ParameterMetaData.h"
-#include "JsonParsing.h"
-#include "QGCCompression.h"
-#include "QGCLoggingCategory.h"
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QThread>
 
+#include "JsonParsing.h"
+#include "QGCCompression.h"
+#include "QGCLoggingCategory.h"
+
 QGC_LOGGING_CATEGORY(ParameterMetaDataLog, "FirmwarePlugin.ParameterMetaData")
 
 const FactMetaData::DefineMap_t ParameterMetaData::kEmptyDefines;
 
-ParameterMetaData::ParameterMetaData(QObject *parent)
-    : QObject(parent)
+ParameterMetaData::ParameterMetaData(QObject* parent) : QObject(parent)
 {
     qCDebug(ParameterMetaDataLog) << this;
 }
@@ -23,9 +23,8 @@ ParameterMetaData::~ParameterMetaData()
     qCDebug(ParameterMetaDataLog) << this;
 }
 
-void ParameterMetaData::loadParameterFactMetaDataFile(const QString &metaDataFile)
+void ParameterMetaData::loadParameterFactMetaDataFile(const QString& metaDataFile)
 {
-    Q_ASSERT(QThread::currentThread() == thread());
     if (Q_UNLIKELY(QThread::currentThread() != thread())) {
         qCCritical(ParameterMetaDataLog) << "loadParameterFactMetaDataFile called from wrong thread";
         return;
@@ -52,19 +51,18 @@ void ParameterMetaData::loadParameterFactMetaDataFile(const QString &metaDataFil
     parseParameterJson(doc.object());
 }
 
-FactMetaData *ParameterMetaData::getMetaDataForFact(const QString &name, FactMetaData::ValueType_t type)
+FactMetaData* ParameterMetaData::getMetaDataForFact(const QString& name, FactMetaData::ValueType_t type)
 {
-    Q_ASSERT(QThread::currentThread() == thread());
     if (Q_UNLIKELY(QThread::currentThread() != thread())) {
         qCCritical(ParameterMetaDataLog) << "getMetaDataForFact called from wrong thread";
         return nullptr;
     }
 
-    if (FactMetaData *cached = _cachedMetaData.value(name)) {
+    if (FactMetaData* cached = _cachedMetaData.value(name)) {
         return cached;
     }
 
-    FactMetaData *metaData = _lookupMetaData(name, type);
+    FactMetaData* metaData = _lookupMetaData(name, type);
     if (!metaData) {
         metaData = _createDefaultMetaData(name, type);
     }
@@ -74,12 +72,12 @@ FactMetaData *ParameterMetaData::getMetaDataForFact(const QString &name, FactMet
     return metaData;
 }
 
-QVersionNumber ParameterMetaData::versionFromJsonData(const QByteArray &jsonData)
+QVersionNumber ParameterMetaData::versionFromJsonData(const QByteArray& jsonData)
 {
     return versionFromJsonData(jsonData, nullptr);
 }
 
-QVersionNumber ParameterMetaData::versionFromJsonData(const QByteArray &jsonData, bool *validJson)
+QVersionNumber ParameterMetaData::versionFromJsonData(const QByteArray& jsonData, bool* validJson)
 {
     QJsonDocument doc;
     QString errorString;
@@ -109,7 +107,7 @@ QVersionNumber ParameterMetaData::versionFromJsonData(const QByteArray &jsonData
     return {};
 }
 
-QVersionNumber ParameterMetaData::versionFromMetaDataFile(const QString &metaDataFile)
+QVersionNumber ParameterMetaData::versionFromMetaDataFile(const QString& metaDataFile)
 {
     QString errorString;
     const QByteArray data = QGCCompression::readFile(metaDataFile, &errorString);
@@ -121,7 +119,7 @@ QVersionNumber ParameterMetaData::versionFromMetaDataFile(const QString &metaDat
     return versionFromJsonData(data);
 }
 
-QVersionNumber ParameterMetaData::versionFromFileName(const QString &fileName)
+QVersionNumber ParameterMetaData::versionFromFileName(const QString& fileName)
 {
     static const QRegularExpression regex(QStringLiteral("\\.(\\d+)\\.(\\d+)\\.json$"));
     const QRegularExpressionMatch match = regex.match(fileName);
@@ -131,26 +129,27 @@ QVersionNumber ParameterMetaData::versionFromFileName(const QString &fileName)
     return {};
 }
 
-FactMetaData *ParameterMetaData::_lookupMetaData(const QString &name, FactMetaData::ValueType_t type)
+FactMetaData* ParameterMetaData::_lookupMetaData(const QString& name, FactMetaData::ValueType_t type)
 {
     Q_UNUSED(name)
     Q_UNUSED(type)
     return nullptr;
 }
 
-FactMetaData *ParameterMetaData::_createDefaultMetaData(const QString &name, FactMetaData::ValueType_t type)
+FactMetaData* ParameterMetaData::_createDefaultMetaData(const QString& name, FactMetaData::ValueType_t type)
 {
     Q_UNUSED(name)
     return new FactMetaData(type, this);
 }
 
-void ParameterMetaData::_postProcessMetaData(const QString &name, FactMetaData *metaData)
+void ParameterMetaData::_postProcessMetaData(const QString& name, FactMetaData* metaData)
 {
     Q_UNUSED(name)
     Q_UNUSED(metaData)
 }
 
-bool ParameterMetaData::setRawConvertedValue(FactMetaData *metaData, const QString &rawText, void (FactMetaData::*setter)(const QVariant &))
+bool ParameterMetaData::setRawConvertedValue(FactMetaData* metaData, const QString& rawText,
+                                             void (FactMetaData::*setter)(const QVariant&))
 {
     QVariant converted;
     QString errorString;
@@ -158,23 +157,25 @@ bool ParameterMetaData::setRawConvertedValue(FactMetaData *metaData, const QStri
         (metaData->*setter)(converted);
         return true;
     }
-    qCDebug(ParameterMetaDataLog) << "Invalid value for" << metaData->name() << "raw:" << rawText << "error:" << errorString;
+    qCDebug(ParameterMetaDataLog) << "Invalid value for" << metaData->name() << "raw:" << rawText
+                                  << "error:" << errorString;
     return false;
 }
 
-void ParameterMetaData::setEnumFromPairs(FactMetaData *metaData, const QList<ValueDescPair> &pairs)
+void ParameterMetaData::setEnumFromPairs(FactMetaData* metaData, const QList<ValueDescPair>& pairs)
 {
     QStringList enumStrings;
     QVariantList enumValues;
 
-    for (const auto &[code, description] : pairs) {
+    for (const auto& [code, description] : pairs) {
         QVariant enumValue;
         QString errorString;
         if (metaData->convertAndValidateRaw(code, false, enumValue, errorString)) {
             enumValues << enumValue;
             enumStrings << description;
         } else {
-            qCWarning(ParameterMetaDataLog) << "Skipping invalid enum value for" << metaData->name() << "code:" << code << "error:" << errorString;
+            qCWarning(ParameterMetaDataLog)
+                << "Skipping invalid enum value for" << metaData->name() << "code:" << code << "error:" << errorString;
         }
     }
 
@@ -183,20 +184,22 @@ void ParameterMetaData::setEnumFromPairs(FactMetaData *metaData, const QList<Val
     }
 }
 
-void ParameterMetaData::setBitmaskFromPairs(FactMetaData *metaData, const QList<ValueDescPair> &pairs)
+void ParameterMetaData::setBitmaskFromPairs(FactMetaData* metaData, const QList<ValueDescPair>& pairs)
 {
     QStringList bitmaskStrings;
     QVariantList bitmaskValues;
 
-    for (const auto &[bitIndexStr, description] : pairs) {
+    for (const auto& [bitIndexStr, description] : pairs) {
         bool ok = false;
         const uint bitIndex = bitIndexStr.toUInt(&ok);
         if (!ok) {
-            qCWarning(ParameterMetaDataLog) << "Skipping invalid bitmask index for" << metaData->name() << "value:" << bitIndexStr;
+            qCWarning(ParameterMetaDataLog)
+                << "Skipping invalid bitmask index for" << metaData->name() << "value:" << bitIndexStr;
             continue;
         }
         if (bitIndex >= 64) {
-            qCWarning(ParameterMetaDataLog) << "Skipping out-of-range bitmask index for" << metaData->name() << "bit:" << bitIndex;
+            qCWarning(ParameterMetaDataLog)
+                << "Skipping out-of-range bitmask index for" << metaData->name() << "bit:" << bitIndex;
             continue;
         }
 
@@ -213,31 +216,32 @@ void ParameterMetaData::setBitmaskFromPairs(FactMetaData *metaData, const QList<
             // wider bit indices would truncate to 0 and silently produce a bogus entry.
             QVariant signedRaw;
             switch (metaData->type()) {
-            case FactMetaData::valueTypeInt8:
-                if (bitIndex == 7) {
-                    signedRaw = QVariant::fromValue(static_cast<qint8>(static_cast<quint8>(bits)));
-                }
-                break;
-            case FactMetaData::valueTypeInt16:
-                if (bitIndex == 15) {
-                    signedRaw = QVariant::fromValue(static_cast<qint16>(static_cast<quint16>(bits)));
-                }
-                break;
-            case FactMetaData::valueTypeInt32:
-                if (bitIndex == 31) {
-                    signedRaw = QVariant::fromValue(static_cast<qint32>(static_cast<quint32>(bits)));
-                }
-                break;
-            case FactMetaData::valueTypeInt64:
-                if (bitIndex == 63) {
-                    signedRaw = QVariant::fromValue(static_cast<qint64>(bits));
-                }
-                break;
-            default:
-                break;
+                case FactMetaData::valueTypeInt8:
+                    if (bitIndex == 7) {
+                        signedRaw = QVariant::fromValue(static_cast<qint8>(static_cast<quint8>(bits)));
+                    }
+                    break;
+                case FactMetaData::valueTypeInt16:
+                    if (bitIndex == 15) {
+                        signedRaw = QVariant::fromValue(static_cast<qint16>(static_cast<quint16>(bits)));
+                    }
+                    break;
+                case FactMetaData::valueTypeInt32:
+                    if (bitIndex == 31) {
+                        signedRaw = QVariant::fromValue(static_cast<qint32>(static_cast<quint32>(bits)));
+                    }
+                    break;
+                case FactMetaData::valueTypeInt64:
+                    if (bitIndex == 63) {
+                        signedRaw = QVariant::fromValue(static_cast<qint64>(bits));
+                    }
+                    break;
+                default:
+                    break;
             }
             if (!signedRaw.isValid() || !metaData->convertAndValidateRaw(signedRaw, false, bitmaskValue, errorString)) {
-                qCWarning(ParameterMetaDataLog) << "Skipping invalid bitmask value for" << metaData->name() << "bit:" << bitIndex << "error:" << errorString;
+                qCWarning(ParameterMetaDataLog) << "Skipping invalid bitmask value for" << metaData->name()
+                                                << "bit:" << bitIndex << "error:" << errorString;
                 continue;
             }
         }

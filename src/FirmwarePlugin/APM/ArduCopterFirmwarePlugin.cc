@@ -24,7 +24,12 @@ bool ArduCopterFirmwarePlugin::missionReturnPath(Vehicle* vehicle, const QGeoCoo
         const QString original = QStringLiteral("noremap.") + name;
         if (!parameters->parameterExists(ParameterManager::defaultComponentId, original))
             return qQNaN();
-        return parameters->getParameter(ParameterManager::defaultComponentId, original)->rawValue().toDouble();
+        const Fact* fact = parameters->getParameter(ParameterManager::defaultComponentId, original);
+        if (!fact)
+            return qQNaN();
+        bool valid = false;
+        const double result = fact->rawValue().toDouble(&valid);
+        return valid ? result : qQNaN();
     };
     const auto meters = [&value](const QString& modern, const QString& legacy) {
         const double current = value(modern);
@@ -219,9 +224,10 @@ int ArduCopterFirmwarePlugin::remapParamNameHigestMinorVersionNumber(int majorVe
 
 bool ArduCopterFirmwarePlugin::multiRotorXConfig(Vehicle* vehicle) const
 {
-    return (
-        vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, "FRAME")->rawValue().toInt() !=
-        0);
+    if (!vehicle || !vehicle->parameterManager())
+        return false;
+    const Fact* frame = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, "FRAME");
+    return frame && frame->rawValue().toInt() != 0;
 }
 
 QString ArduCopterFirmwarePlugin::pauseFlightMode() const

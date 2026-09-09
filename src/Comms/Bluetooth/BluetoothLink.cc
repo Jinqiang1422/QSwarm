@@ -1,21 +1,21 @@
 #include "BluetoothLink.h"
-#include "BluetoothWorker.h"
-#include "QGCLoggingCategory.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QPermissions>
 #include <QtCore/QThread>
 
+#include "BluetoothWorker.h"
+#include "QGCLoggingCategory.h"
+
 QGC_LOGGING_CATEGORY(BluetoothLinkLog, "Comms.Bluetooth.BluetoothLink")
 
 /*===========================================================================*/
 
-BluetoothLink::BluetoothLink(SharedLinkConfigurationPtr &config, QObject *parent)
-    : LinkInterface(config, parent)
-    , _bluetoothConfig(qobject_cast<BluetoothConfiguration*>(config.get()))
-    , _workerThread(new QThread(this))
+BluetoothLink::BluetoothLink(SharedLinkConfigurationPtr& config, QObject* parent)
+    : LinkInterface(config, parent),
+      _bluetoothConfig(qobject_cast<BluetoothConfiguration*>(config.get())),
+      _workerThread(new QThread(this))
 {
-    Q_ASSERT(_bluetoothConfig);
     if (!_bluetoothConfig) {
         qCCritical(BluetoothLinkLog) << "Invalid BluetoothConfiguration";
         return;
@@ -26,7 +26,8 @@ BluetoothLink::BluetoothLink(SharedLinkConfigurationPtr &config, QObject *parent
     qCDebug(BluetoothLinkLog) << this;
 
     const QString threadName = (_bluetoothConfig->mode() == BluetoothConfiguration::BluetoothMode::ModeLowEnergy)
-        ? QStringLiteral("BLE_%1") : QStringLiteral("Bluetooth_%1");
+                                   ? QStringLiteral("BLE_%1")
+                                   : QStringLiteral("Bluetooth_%1");
     _workerThread->setObjectName(threadName.arg(_bluetoothConfig->name()));
 
     _worker->moveToThread(_workerThread.data());
@@ -34,12 +35,17 @@ BluetoothLink::BluetoothLink(SharedLinkConfigurationPtr &config, QObject *parent
     (void) connect(_workerThread.data(), &QThread::started, _worker.data(), &BluetoothWorker::setupConnection);
     (void) connect(_workerThread.data(), &QThread::finished, _worker.data(), &QObject::deleteLater);
 
-    (void) connect(_worker.data(), &BluetoothWorker::connected, this, &BluetoothLink::_onConnected, Qt::QueuedConnection);
-    (void) connect(_worker.data(), &BluetoothWorker::disconnected, this, &BluetoothLink::_onDisconnected, Qt::QueuedConnection);
-    (void) connect(_worker.data(), &BluetoothWorker::errorOccurred, this, &BluetoothLink::_onErrorOccurred, Qt::QueuedConnection);
-    (void) connect(_worker.data(), &BluetoothWorker::dataReceived, this, &BluetoothLink::_onDataReceived, Qt::QueuedConnection);
+    (void) connect(_worker.data(), &BluetoothWorker::connected, this, &BluetoothLink::_onConnected,
+                   Qt::QueuedConnection);
+    (void) connect(_worker.data(), &BluetoothWorker::disconnected, this, &BluetoothLink::_onDisconnected,
+                   Qt::QueuedConnection);
+    (void) connect(_worker.data(), &BluetoothWorker::errorOccurred, this, &BluetoothLink::_onErrorOccurred,
+                   Qt::QueuedConnection);
+    (void) connect(_worker.data(), &BluetoothWorker::dataReceived, this, &BluetoothLink::_onDataReceived,
+                   Qt::QueuedConnection);
     (void) connect(_worker.data(), &BluetoothWorker::dataSent, this, &BluetoothLink::_onDataSent, Qt::QueuedConnection);
-    (void) connect(_worker.data(), &BluetoothWorker::rssiUpdated, this, &BluetoothLink::_onRssiUpdated, Qt::QueuedConnection);
+    (void) connect(_worker.data(), &BluetoothWorker::rssiUpdated, this, &BluetoothLink::_onRssiUpdated,
+                   Qt::QueuedConnection);
 
     (void) connect(_bluetoothConfig, &BluetoothConfiguration::errorOccurred, this, &BluetoothLink::_onErrorOccurred);
 
@@ -102,7 +108,7 @@ void BluetoothLink::_onDisconnected()
     }
 }
 
-void BluetoothLink::_onErrorOccurred(const QString &errorString)
+void BluetoothLink::_onErrorOccurred(const QString& errorString)
 {
     qCWarning(BluetoothLinkLog) << "Communication error:" << errorString;
 
@@ -112,20 +118,20 @@ void BluetoothLink::_onErrorOccurred(const QString &errorString)
     }
 
     const QString linkType = (_bluetoothConfig->mode() == BluetoothConfiguration::BluetoothMode::ModeLowEnergy)
-        ? tr("Bluetooth Low Energy") : tr("Bluetooth");
+                                 ? tr("Bluetooth Low Energy")
+                                 : tr("Bluetooth");
 
-    emit communicationError(tr("%1 Link Error").arg(linkType),
-                           tr("Link %1: (Device: %2) %3").arg(_bluetoothConfig->name(),
-                                                              _bluetoothConfig->device().name(),
-                                                              errorString));
+    emit communicationError(
+        tr("%1 Link Error").arg(linkType),
+        tr("Link %1: (Device: %2) %3").arg(_bluetoothConfig->name(), _bluetoothConfig->device().name(), errorString));
 }
 
-void BluetoothLink::_onDataReceived(const QByteArray &data)
+void BluetoothLink::_onDataReceived(const QByteArray& data)
 {
     emit bytesReceived(this, data);
 }
 
-void BluetoothLink::_onDataSent(const QByteArray &data)
+void BluetoothLink::_onDataSent(const QByteArray& data)
 {
     emit bytesSent(this, data);
 }
@@ -137,7 +143,7 @@ void BluetoothLink::_onRssiUpdated(qint16 rssi)
     }
 }
 
-void BluetoothLink::_writeBytes(const QByteArray &bytes)
+void BluetoothLink::_writeBytes(const QByteArray& bytes)
 {
     if (_worker) {
         (void) QMetaObject::invokeMethod(_worker.data(), "writeData", Qt::QueuedConnection, Q_ARG(QByteArray, bytes));
@@ -151,9 +157,8 @@ void BluetoothLink::_checkPermission()
 
     const Qt::PermissionStatus permissionStatus = QCoreApplication::instance()->checkPermission(permission);
     if (permissionStatus == Qt::PermissionStatus::Undetermined) {
-        QCoreApplication::instance()->requestPermission(permission, this, [this](const QPermission &perm) {
-            _handlePermissionStatus(perm.status());
-        });
+        QCoreApplication::instance()->requestPermission(
+            permission, this, [this](const QPermission& perm) { _handlePermissionStatus(perm.status()); });
     } else {
         _handlePermissionStatus(permissionStatus);
     }

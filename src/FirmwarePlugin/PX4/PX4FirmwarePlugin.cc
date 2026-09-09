@@ -857,7 +857,12 @@ bool PX4FirmwarePlugin::missionReturnPath(Vehicle* vehicle, const QGeoCoordinate
         auto* parameters = vehicle->parameterManager();
         if (!parameters->parameterExists(ParameterManager::defaultComponentId, name))
             return qQNaN();
-        return parameters->getParameter(ParameterManager::defaultComponentId, name)->rawValue().toDouble();
+        const Fact* fact = parameters->getParameter(ParameterManager::defaultComponentId, name);
+        if (!fact)
+            return qQNaN();
+        bool valid = false;
+        const double result = fact->rawValue().toDouble(&valid);
+        return valid ? result : qQNaN();
     };
     const double type = value(QStringLiteral("RTL_TYPE"));
     const double altitude = value(QStringLiteral("RTL_RETURN_ALT"));

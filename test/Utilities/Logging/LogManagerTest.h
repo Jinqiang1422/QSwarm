@@ -8,6 +8,7 @@ class LogManagerTest : public UnitTest
 
 private slots:
     void _buildEntry();
+    void _installHandlerTwice();
     void _captureMessages();
     void _captureByCategory();
     void _hasCapturedWarning();

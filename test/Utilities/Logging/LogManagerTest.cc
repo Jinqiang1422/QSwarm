@@ -1,9 +1,8 @@
 #include "LogManagerTest.h"
 
-
 #include "LogManager.h"
-#include "UnitTestList.h"
 #include "QGCLoggingCategory.h"
+#include "UnitTestList.h"
 
 QGC_LOGGING_CATEGORY(LogManagerTestLog, "Test.Logging.LogManagerTest")
 
@@ -114,3 +113,25 @@ void LogManagerTest::_hasCapturedUncategorized()
 }
 
 UT_REGISTER_TEST(LogManagerTest, TestLabel::Unit, TestLabel::Utilities)
+
+void LogManagerTest::_installHandlerTwice()
+{
+    auto* manager = LogManager::instance();
+    QVERIFY(manager);
+    const auto previousHandler = qInstallMessageHandler(nullptr);
+    qInstallMessageHandler(previousHandler);
+    LogManager::installHandler(false);
+    const auto currentHandler = qInstallMessageHandler(nullptr);
+    qInstallMessageHandler(currentHandler);
+    QCOMPARE(LogManager::instance(), manager);
+    QVERIFY(currentHandler == previousHandler);
+
+    LogManager::setCaptureEnabled(true);
+    LogManager::clearCapturedMessages();
+    qInfo("handler remains usable");
+    const auto messages = LogManager::capturedMessages();
+    LogManager::clearCapturedMessages();
+    LogManager::setCaptureEnabled(false);
+    QCOMPARE(messages.size(), 1);
+    QCOMPARE(messages.front().message, QStringLiteral("handler remains usable"));
+}

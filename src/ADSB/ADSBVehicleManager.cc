@@ -1,26 +1,28 @@
 #include "ADSBVehicleManager.h"
-#include "MAVLinkLib.h"
-#include "AppMessages.h"
-#include "SettingsManager.h"
-#include "ADSBVehicleManagerSettings.h"
-#include "ADSBTCPLink.h"
-#include "ADSBVehicle.h"
-#include "QmlObjectListModel.h"
-#include "QGCLoggingCategory.h"
 
 #include <QtCore/QApplicationStatic>
 #include <QtCore/QTimer>
 #include <qassert.h>
 
+#include "ADSBTCPLink.h"
+#include "ADSBVehicle.h"
+#include "ADSBVehicleManagerSettings.h"
+#include "AppMessages.h"
+#include "MAVLinkLib.h"
+#include "QGCLoggingCategory.h"
+#include "QmlObjectListModel.h"
+#include "SettingsManager.h"
+
 QGC_LOGGING_CATEGORY(ADSBVehicleManagerLog, "ADSB.ADSBVehicleManager")
 
-Q_APPLICATION_STATIC(ADSBVehicleManager, _adsbVehicleManager, SettingsManager::instance()->adsbVehicleManagerSettings());
+Q_APPLICATION_STATIC(ADSBVehicleManager, _adsbVehicleManager,
+                     SettingsManager::instance()->adsbVehicleManagerSettings());
 
-ADSBVehicleManager::ADSBVehicleManager(ADSBVehicleManagerSettings *settings, QObject *parent)
-    : QObject(parent)
-    , _adsbSettings(settings)
-    , _adsbVehicleCleanupTimer(new QTimer(this))
-    , _adsbVehicles(new QmlObjectListModel(this))
+ADSBVehicleManager::ADSBVehicleManager(ADSBVehicleManagerSettings* settings, QObject* parent)
+    : QObject(parent),
+      _adsbSettings(settings),
+      _adsbVehicleCleanupTimer(new QTimer(this)),
+      _adsbVehicles(new QmlObjectListModel(this))
 {
     // qCDebug(ADSBVehicleManagerLog) << Q_FUNC_INFO << this;
 
@@ -52,12 +54,12 @@ ADSBVehicleManager::~ADSBVehicleManager()
     // qCDebug(ADSBVehicleManagerLog) << Q_FUNC_INFO << this;
 }
 
-ADSBVehicleManager *ADSBVehicleManager::instance()
+ADSBVehicleManager* ADSBVehicleManager::instance()
 {
     return _adsbVehicleManager();
 }
 
-void ADSBVehicleManager::mavlinkMessageReceived(const mavlink_message_t &message)
+void ADSBVehicleManager::mavlinkMessageReceived(const mavlink_message_t& message)
 {
     if (message.msgid != MAVLINK_MSG_ID_ADSB_VEHICLE) {
         return;
@@ -66,7 +68,7 @@ void ADSBVehicleManager::mavlinkMessageReceived(const mavlink_message_t &message
     _handleADSBVehicle(message);
 }
 
-void ADSBVehicleManager::_handleADSBVehicle(const mavlink_message_t &message)
+void ADSBVehicleManager::_handleADSBVehicle(const mavlink_message_t& message)
 {
     mavlink_adsb_vehicle_t adsbVehicleMsg{};
     mavlink_msg_adsb_vehicle_decode(&message, &adsbVehicleMsg);
@@ -127,7 +129,6 @@ void ADSBVehicleManager::_handleADSBVehicle(const mavlink_message_t &message)
     }
 
     if (adsbVehicleMsg.flags & ADSB_FLAGS_SOURCE_UAT) {
-
     }
 
     adsbVehicleMsg.altitude_type = adsbVehicleMsg.altitude_type;
@@ -136,7 +137,7 @@ void ADSBVehicleManager::_handleADSBVehicle(const mavlink_message_t &message)
     adsbVehicleUpdate(vehicleInfo);
 }
 
-void ADSBVehicleManager::adsbVehicleUpdate(const ADSB::VehicleInfo_t &vehicleInfo)
+void ADSBVehicleManager::adsbVehicleUpdate(const ADSB::VehicleInfo_t& vehicleInfo)
 {
     const uint32_t icaoAddress = vehicleInfo.icaoAddress;
     if (_adsbICAOMap.contains(icaoAddress)) {
@@ -152,11 +153,14 @@ void ADSBVehicleManager::adsbVehicleUpdate(const ADSB::VehicleInfo_t &vehicleInf
     }
 }
 
-void ADSBVehicleManager::_start(const QString &hostAddress, quint16 port)
+void ADSBVehicleManager::_start(const QString& hostAddress, quint16 port)
 {
-    Q_ASSERT(!_adsbTcpLink);
+    if (_adsbTcpLink) {
+        qCWarning(ADSBVehicleManagerLog) << "ADSB TCP link is already running";
+        return;
+    }
 
-    ADSBTCPLink *adsbTcpLink = new ADSBTCPLink(QHostAddress(hostAddress), port, this);
+    ADSBTCPLink* adsbTcpLink = new ADSBTCPLink(QHostAddress(hostAddress), port, this);
     if (!adsbTcpLink->init()) {
         delete adsbTcpLink;
         adsbTcpLink = nullptr;
@@ -165,16 +169,18 @@ void ADSBVehicleManager::_start(const QString &hostAddress, quint16 port)
     }
 
     _adsbTcpLink = adsbTcpLink;
-    (void) connect(_adsbTcpLink, &ADSBTCPLink::adsbVehicleUpdate, this, &ADSBVehicleManager::adsbVehicleUpdate, Qt::AutoConnection);
-    (void) connect(_adsbTcpLink, &ADSBTCPLink::errorOccurred, this, &ADSBVehicleManager::_linkError, Qt::AutoConnection);
+    (void) connect(_adsbTcpLink, &ADSBTCPLink::adsbVehicleUpdate, this, &ADSBVehicleManager::adsbVehicleUpdate,
+                   Qt::AutoConnection);
+    (void) connect(_adsbTcpLink, &ADSBTCPLink::errorOccurred, this, &ADSBVehicleManager::_linkError,
+                   Qt::AutoConnection);
 
     _adsbVehicleCleanupTimer->start();
 }
 
 void ADSBVehicleManager::_stop()
 {
-    Q_CHECK_PTR(_adsbTcpLink);
-    _adsbTcpLink->deleteLater();
+    if (_adsbTcpLink)
+        _adsbTcpLink->deleteLater();
     _adsbTcpLink = nullptr;
 
     _adsbVehicleCleanupTimer->stop();
@@ -196,7 +202,7 @@ void ADSBVehicleManager::_cleanupStaleVehicles()
     }
 }
 
-void ADSBVehicleManager::_linkError(const QString &errorMsg, bool stopped)
+void ADSBVehicleManager::_linkError(const QString& errorMsg, bool stopped)
 {
     qCDebug(ADSBVehicleManagerLog) << errorMsg;
 
