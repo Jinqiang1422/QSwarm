@@ -1,8 +1,5 @@
 #include "BluetoothConfiguration.h"
 
-#include "QGCLoggingCategory.h"
-#include "QGCNetworkHelper.h"
-
 #include <QtBluetooth/QBluetoothHostInfo>
 #include <QtBluetooth/QBluetoothUuid>
 #include <QtConcurrent/QtConcurrentRun>
@@ -11,26 +8,30 @@
 #include <QtCore/QTimer>
 #include <QtCore/QVariantMap>
 
+#include "QGCLoggingCategory.h"
+#include "QGCNetworkHelper.h"
+
 QGC_LOGGING_CATEGORY(BluetoothConfigurationLog, "Comms.Bluetooth.BluetoothConfiguration")
 QGC_LOGGING_CATEGORY(BluetoothConfigurationVerboseLog, "Comms.Bluetooth.BluetoothConfiguration.Verbose")
 
 /*===========================================================================*/
 
-BluetoothConfiguration::BluetoothConfiguration(const QString &name, QObject *parent)
-    : LinkConfiguration(name, parent)
+BluetoothConfiguration::BluetoothConfiguration(const QString& name, QObject* parent) : LinkConfiguration(name, parent)
 {
     qCDebug(BluetoothConfigurationLog) << this;
 }
 
-BluetoothConfiguration::BluetoothConfiguration(const BluetoothConfiguration *copy, QObject *parent)
+BluetoothConfiguration::BluetoothConfiguration(const BluetoothConfiguration* copy, QObject* parent)
     : LinkConfiguration(copy, parent)
-    , _mode(copy->mode())
-    , _device(copy->device())
-    , _connectedRssi(copy->connectedRssi())
-    , _serviceUuid(copy->_serviceUuid)
-    , _readCharacteristicUuid(copy->readCharacteristicUuid())
-    , _writeCharacteristicUuid(copy->writeCharacteristicUuid())
 {
+    if (copy) {
+        _mode = copy->mode();
+        _device = copy->device();
+        _connectedRssi = copy->connectedRssi();
+        _serviceUuid = copy->_serviceUuid;
+        _readCharacteristicUuid = copy->readCharacteristicUuid();
+        _writeCharacteristicUuid = copy->writeCharacteristicUuid();
+    }
     qCDebug(BluetoothConfigurationLog) << this;
 }
 
@@ -46,7 +47,7 @@ BluetoothConfiguration::~BluetoothConfiguration()
     qCDebug(BluetoothConfigurationLog) << this;
 }
 
-bool BluetoothConfiguration::_createLocalDevice(const QBluetoothAddress &address)
+bool BluetoothConfiguration::_createLocalDevice(const QBluetoothAddress& address)
 {
     if (_localDevice) {
         _localDevice->disconnect();
@@ -65,7 +66,8 @@ bool BluetoothConfiguration::_createLocalDevice(const QBluetoothAddress &address
 
     _connectLocalDeviceSignals();
 
-    qCDebug(BluetoothConfigurationLog) << "Initialized Bluetooth adapter:" << _localDevice->name() << _localDevice->address().toString();
+    qCDebug(BluetoothConfigurationLog) << "Initialized Bluetooth adapter:" << _localDevice->name()
+                                       << _localDevice->address().toString();
     emit adapterStateChanged();
     return true;
 }
@@ -76,16 +78,16 @@ void BluetoothConfiguration::_connectLocalDeviceSignals()
         return;
     }
 
-    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::hostModeStateChanged,
-                   this, &BluetoothConfiguration::_onHostModeStateChanged);
-    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::deviceConnected,
-                   this, &BluetoothConfiguration::_onDeviceConnected);
-    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::deviceDisconnected,
-                   this, &BluetoothConfiguration::_onDeviceDisconnected);
-    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::pairingFinished,
-                   this, &BluetoothConfiguration::_onPairingFinished);
-    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::errorOccurred,
-                   this, &BluetoothConfiguration::_onLocalDeviceErrorOccurred);
+    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::hostModeStateChanged, this,
+                   &BluetoothConfiguration::_onHostModeStateChanged);
+    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::deviceConnected, this,
+                   &BluetoothConfiguration::_onDeviceConnected);
+    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::deviceDisconnected, this,
+                   &BluetoothConfiguration::_onDeviceDisconnected);
+    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::pairingFinished, this,
+                   &BluetoothConfiguration::_onPairingFinished);
+    (void) connect(_localDevice.data(), &QBluetoothLocalDevice::errorOccurred, this,
+                   &BluetoothConfiguration::_onLocalDeviceErrorOccurred);
 }
 
 void BluetoothConfiguration::_initDeviceDiscoveryAgent()
@@ -95,17 +97,17 @@ void BluetoothConfiguration::_initDeviceDiscoveryAgent()
 
         _deviceDiscoveryAgent->setLowEnergyDiscoveryTimeout(15000);
 
-        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
-                       this, &BluetoothConfiguration::_deviceDiscovered);
-        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::canceled,
-                       this, &BluetoothConfiguration::scanningChanged);
-        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::finished,
-                       this, &BluetoothConfiguration::_onDiscoveryFinished);
-        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::errorOccurred,
-                       this, &BluetoothConfiguration::_onDiscoveryErrorOccurred);
+        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::deviceDiscovered, this,
+                       &BluetoothConfiguration::_deviceDiscovered);
+        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::canceled, this,
+                       &BluetoothConfiguration::scanningChanged);
+        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::finished, this,
+                       &BluetoothConfiguration::_onDiscoveryFinished);
+        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::errorOccurred, this,
+                       &BluetoothConfiguration::_onDiscoveryErrorOccurred);
 
-        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::deviceUpdated,
-                       this, &BluetoothConfiguration::_deviceUpdated);
+        (void) connect(_deviceDiscoveryAgent.data(), &QBluetoothDeviceDiscoveryAgent::deviceUpdated, this,
+                       &BluetoothConfiguration::_deviceUpdated);
     }
 
     if (!_localDevice) {
@@ -137,19 +139,16 @@ void BluetoothConfiguration::_refreshAvailableAdaptersAsync()
         });
     }
 
-    _adapterWatcher->setFuture(QtConcurrent::run([]() {
-        return QBluetoothLocalDevice::allDevices();
-    }));
+    _adapterWatcher->setFuture(QtConcurrent::run([]() { return QBluetoothLocalDevice::allDevices(); }));
 }
 
-void BluetoothConfiguration::_updateAvailableAdapters(const QList<QBluetoothHostInfo> &hosts)
+void BluetoothConfiguration::_updateAvailableAdapters(const QList<QBluetoothHostInfo>& hosts)
 {
     QVariantList adapters;
-    const QBluetoothAddress selectedAddress = (_localDevice && _localDevice->isValid())
-        ? _localDevice->address()
-        : QBluetoothAddress();
+    const QBluetoothAddress selectedAddress =
+        (_localDevice && _localDevice->isValid()) ? _localDevice->address() : QBluetoothAddress();
 
-    for (const QBluetoothHostInfo &host : hosts) {
+    for (const QBluetoothHostInfo& host : hosts) {
         QVariantMap adapter;
         adapter["name"] = host.name();
         adapter["address"] = host.address().toString();
@@ -170,7 +169,7 @@ bool BluetoothConfiguration::_ensureLocalDevice()
     }
 
     // Prefer known adapter entries first.
-    for (const QVariant &entry : std::as_const(_availableAdapters)) {
+    for (const QVariant& entry : std::as_const(_availableAdapters)) {
         const QBluetoothAddress address(entry.toMap().value("address").toString());
         if (!address.isNull() && _createLocalDevice(address)) {
             return true;
@@ -181,7 +180,7 @@ bool BluetoothConfiguration::_ensureLocalDevice()
     const QList<QBluetoothHostInfo> hosts = QBluetoothLocalDevice::allDevices();
     if (!hosts.isEmpty()) {
         _updateAvailableAdapters(hosts);
-        for (const QBluetoothHostInfo &host : hosts) {
+        for (const QBluetoothHostInfo& host : hosts) {
             if (!host.address().isNull() && _createLocalDevice(host.address())) {
                 return true;
             }
@@ -201,18 +200,19 @@ bool BluetoothConfiguration::_ensureLocalDevice()
     return false;
 }
 
-void BluetoothConfiguration::_deviceUpdated(const QBluetoothDeviceInfo &info, QBluetoothDeviceInfo::Fields updatedFields)
+void BluetoothConfiguration::_deviceUpdated(const QBluetoothDeviceInfo& info,
+                                            QBluetoothDeviceInfo::Fields updatedFields)
 {
     qCDebug(BluetoothConfigurationLog) << "Device Updated:" << info.name() << "Fields:" << updatedFields;
 
     if (!info.isValid() || (updatedFields == QBluetoothDeviceInfo::Field::None)) {
         qCDebug(BluetoothConfigurationVerboseLog) << "Ignoring device update: invalid or no updated fields"
-                                         << info.name() << info.address().toString() << updatedFields;
+                                                  << info.name() << info.address().toString() << updatedFields;
         return;
     }
 
     bool found = false;
-    for (QBluetoothDeviceInfo &dev : _deviceList) {
+    for (QBluetoothDeviceInfo& dev : _deviceList) {
         if (dev.address() == info.address()) {
             found = true;
             if (updatedFields & QBluetoothDeviceInfo::Field::RSSI) {
@@ -226,7 +226,7 @@ void BluetoothConfiguration::_deviceUpdated(const QBluetoothDeviceInfo &info, QB
             }
             if (updatedFields & QBluetoothDeviceInfo::Field::ServiceData) {
                 const QMultiHash<QBluetoothUuid, QByteArray> data = info.serviceData();
-                for (const QBluetoothUuid &uuid : info.serviceIds()) {
+                for (const QBluetoothUuid& uuid : info.serviceIds()) {
                     dev.setServiceData(uuid, data.value(uuid));
                 }
             }
@@ -250,7 +250,7 @@ void BluetoothConfiguration::_deviceUpdated(const QBluetoothDeviceInfo &info, QB
     }
 }
 
-bool BluetoothConfiguration::_isDeviceCompatibleWithMode(const QBluetoothDeviceInfo &info) const
+bool BluetoothConfiguration::_isDeviceCompatibleWithMode(const QBluetoothDeviceInfo& info) const
 {
     // Some stacks temporarily report unknown core configuration while discovery is active.
     // Treat unknown as compatible so devices appear during live scans.
@@ -278,15 +278,18 @@ void BluetoothConfiguration::setMode(BluetoothMode mode)
     }
 }
 
-void BluetoothConfiguration::copyFrom(const LinkConfiguration *source)
+void BluetoothConfiguration::copyFrom(const LinkConfiguration* source)
 {
-    LinkConfiguration::copyFrom(source);
-
-    const BluetoothConfiguration *bluetoothSource = qobject_cast<const BluetoothConfiguration*>(source);
+    if (source == this) {
+        return;
+    }
+    const BluetoothConfiguration* bluetoothSource = qobject_cast<const BluetoothConfiguration*>(source);
     if (!bluetoothSource) {
         qCWarning(BluetoothConfigurationLog) << "Invalid source configuration type";
         return;
     }
+
+    LinkConfiguration::copyFrom(source);
 
     if (_mode != bluetoothSource->mode()) {
         _mode = bluetoothSource->mode();
@@ -319,7 +322,7 @@ void BluetoothConfiguration::copyFrom(const LinkConfiguration *source)
     }
 }
 
-void BluetoothConfiguration::loadSettings(QSettings &settings, const QString &root)
+void BluetoothConfiguration::loadSettings(QSettings& settings, const QString& root)
 {
     settings.beginGroup(root);
 
@@ -333,13 +336,15 @@ void BluetoothConfiguration::loadSettings(QSettings &settings, const QString &ro
     }
 
     _serviceUuid = QBluetoothUuid(settings.value("serviceUuid", _serviceUuid.toString()).toString());
-    _readCharacteristicUuid = QBluetoothUuid(settings.value("readCharUuid", _readCharacteristicUuid.toString()).toString());
-    _writeCharacteristicUuid = QBluetoothUuid(settings.value("writeCharUuid", _writeCharacteristicUuid.toString()).toString());
+    _readCharacteristicUuid =
+        QBluetoothUuid(settings.value("readCharUuid", _readCharacteristicUuid.toString()).toString());
+    _writeCharacteristicUuid =
+        QBluetoothUuid(settings.value("writeCharUuid", _writeCharacteristicUuid.toString()).toString());
 
     settings.endGroup();
 }
 
-void BluetoothConfiguration::saveSettings(QSettings &settings, const QString &root) const
+void BluetoothConfiguration::saveSettings(QSettings& settings, const QString& root) const
 {
     settings.beginGroup(root);
 
@@ -356,7 +361,8 @@ void BluetoothConfiguration::saveSettings(QSettings &settings, const QString &ro
 QString BluetoothConfiguration::settingsTitle() const
 {
     if (isBluetoothAvailable()) {
-        return (_mode == BluetoothMode::ModeLowEnergy) ? tr("Bluetooth Low Energy Link Settings") : tr("Bluetooth Link Settings");
+        return (_mode == BluetoothMode::ModeLowEnergy) ? tr("Bluetooth Low Energy Link Settings")
+                                                       : tr("Bluetooth Link Settings");
     }
     return tr("Bluetooth Not Available");
 }
@@ -384,7 +390,7 @@ qint16 BluetoothConfiguration::selectedRssi() const
 {
     const QBluetoothAddress selAddr = _device.address();
     if (!selAddr.isNull()) {
-        for (const QBluetoothDeviceInfo &dev : _deviceList) {
+        for (const QBluetoothDeviceInfo& dev : _deviceList) {
             if (dev.address() == selAddr) {
                 return dev.rssi();
             }
@@ -393,7 +399,7 @@ qint16 BluetoothConfiguration::selectedRssi() const
     return 0;
 }
 
-void BluetoothConfiguration::setServiceUuid(const QString &uuid)
+void BluetoothConfiguration::setServiceUuid(const QString& uuid)
 {
     const QBluetoothUuid newUuid(uuid);
     if (!uuid.isEmpty() && newUuid.isNull()) {
@@ -406,7 +412,7 @@ void BluetoothConfiguration::setServiceUuid(const QString &uuid)
     }
 }
 
-void BluetoothConfiguration::setReadUuid(const QString &uuid)
+void BluetoothConfiguration::setReadUuid(const QString& uuid)
 {
     const QBluetoothUuid newUuid(uuid);
     if (!uuid.isEmpty() && newUuid.isNull()) {
@@ -419,7 +425,7 @@ void BluetoothConfiguration::setReadUuid(const QString &uuid)
     }
 }
 
-void BluetoothConfiguration::setWriteUuid(const QString &uuid)
+void BluetoothConfiguration::setWriteUuid(const QString& uuid)
 {
     const QBluetoothUuid newUuid(uuid);
     if (!uuid.isEmpty() && newUuid.isNull()) {
@@ -445,7 +451,7 @@ void BluetoothConfiguration::startScan()
         permission.setCommunicationModes(QBluetoothPermission::Access);
         const Qt::PermissionStatus status = QCoreApplication::instance()->checkPermission(permission);
         if (status == Qt::PermissionStatus::Undetermined) {
-            QCoreApplication::instance()->requestPermission(permission, this, [this](const QPermission &perm) {
+            QCoreApplication::instance()->requestPermission(permission, this, [this](const QPermission& perm) {
                 if (perm.status() == Qt::PermissionStatus::Granted) {
                     startScan();
                 } else {
@@ -459,7 +465,8 @@ void BluetoothConfiguration::startScan()
         }
     }
 
-    if (_localDevice && _localDevice->isValid() && (_localDevice->hostMode() == QBluetoothLocalDevice::HostPoweredOff)) {
+    if (_localDevice && _localDevice->isValid() &&
+        (_localDevice->hostMode() == QBluetoothLocalDevice::HostPoweredOff)) {
         _localDevice->powerOn();
     }
 
@@ -482,9 +489,9 @@ void BluetoothConfiguration::stopScan()
     }
 }
 
-void BluetoothConfiguration::setDevice(const QString &name)
+void BluetoothConfiguration::setDevice(const QString& name)
 {
-    for (const QBluetoothDeviceInfo &info : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& info : std::as_const(_deviceList)) {
         if (info.name() == name) {
             stopScan();
             _applySelectedDevice(info);
@@ -493,7 +500,7 @@ void BluetoothConfiguration::setDevice(const QString &name)
     }
 }
 
-void BluetoothConfiguration::setDeviceByAddress(const QString &address)
+void BluetoothConfiguration::setDeviceByAddress(const QString& address)
 {
     if (address.isEmpty()) {
         return;
@@ -503,7 +510,7 @@ void BluetoothConfiguration::setDeviceByAddress(const QString &address)
         return;
     }
 
-    for (const QBluetoothDeviceInfo &info : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& info : std::as_const(_deviceList)) {
         if (info.address() == addr) {
             stopScan();
             _applySelectedDevice(info);
@@ -512,7 +519,7 @@ void BluetoothConfiguration::setDeviceByAddress(const QString &address)
     }
 }
 
-void BluetoothConfiguration::_applySelectedDevice(const QBluetoothDeviceInfo &info)
+void BluetoothConfiguration::_applySelectedDevice(const QBluetoothDeviceInfo& info)
 {
     _device = info;
 
@@ -520,7 +527,7 @@ void BluetoothConfiguration::_applySelectedDevice(const QBluetoothDeviceInfo &in
         const QList<QBluetoothUuid> serviceUuids = info.serviceUuids();
         if (!serviceUuids.isEmpty()) {
             QBluetoothUuid serviceUuid = QBluetoothUuid();
-            for (const QBluetoothUuid &uuid : serviceUuids) {
+            for (const QBluetoothUuid& uuid : serviceUuids) {
                 if ((uuid == NORDIC_UART_SERVICE) || (uuid == TI_SENSORTAG_SERVICE)) {
                     serviceUuid = uuid;
 
@@ -573,8 +580,8 @@ void BluetoothConfiguration::_requestHostMode(QBluetoothLocalDevice::HostMode mo
         _queuedHostMode = mode;
         _hasQueuedHostModeRequest = true;
         if (_requestedHostMode != mode) {
-            qCDebug(BluetoothConfigurationLog) << "Host mode change already pending; queueing request"
-                                      << _requestedHostMode << "->" << mode;
+            qCDebug(BluetoothConfigurationLog)
+                << "Host mode change already pending; queueing request" << _requestedHostMode << "->" << mode;
         }
         return;
     }
@@ -585,19 +592,19 @@ void BluetoothConfiguration::_requestHostMode(QBluetoothLocalDevice::HostMode mo
     _localDevice->setHostMode(mode);
 }
 
-void BluetoothConfiguration::_deviceDiscovered(const QBluetoothDeviceInfo &info)
+void BluetoothConfiguration::_deviceDiscovered(const QBluetoothDeviceInfo& info)
 {
     if (!info.isValid()) {
-        qCDebug(BluetoothConfigurationVerboseLog) << "Ignoring discovered device: invalid device info"
-                                         << info.name() << info.address().toString();
+        qCDebug(BluetoothConfigurationVerboseLog)
+            << "Ignoring discovered device: invalid device info" << info.name() << info.address().toString();
         return;
     }
 
     if (!_isDeviceCompatibleWithMode(info)) {
-        qCDebug(BluetoothConfigurationVerboseLog) << "Ignoring discovered device: incompatible with mode"
-                                         << ((_mode == BluetoothMode::ModeLowEnergy) ? "BLE" : "Classic")
-                                         << info.name() << info.address().toString()
-                                         << "CoreCfg:" << info.coreConfigurations();
+        qCDebug(BluetoothConfigurationVerboseLog)
+            << "Ignoring discovered device: incompatible with mode"
+            << ((_mode == BluetoothMode::ModeLowEnergy) ? "BLE" : "Classic") << info.name() << info.address().toString()
+            << "CoreCfg:" << info.coreConfigurations();
         return;
     }
 
@@ -646,9 +653,8 @@ void BluetoothConfiguration::_deviceDiscovered(const QBluetoothDeviceInfo &info)
     _updateDeviceList();
 
     qCDebug(BluetoothConfigurationLog) << ((_mode == BluetoothMode::ModeLowEnergy) ? "BLE" : "Classic")
-                              << "device discovered:" << info.name()
-                              << "Address:" << info.address().toString()
-                              << "RSSI:" << info.rssi();
+                                       << "device discovered:" << info.name() << "Address:" << info.address().toString()
+                                       << "RSSI:" << info.rssi();
 }
 
 void BluetoothConfiguration::_onDiscoveryFinished()
@@ -660,7 +666,7 @@ void BluetoothConfiguration::_onDiscoveryFinished()
 void BluetoothConfiguration::_updateDeviceList()
 {
     QVariantList model;
-    for (const QBluetoothDeviceInfo &info : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& info : std::as_const(_deviceList)) {
         QVariantMap device;
         device["name"] = info.name();
         device["address"] = info.address().toString();
@@ -671,7 +677,8 @@ void BluetoothConfiguration::_updateDeviceList()
     }
     if (_devicesModelCache != model) {
         _devicesModelCache = model;
-        qCDebug(BluetoothConfigurationVerboseLog) << "Bluetooth devices model updated. Count:" << _devicesModelCache.size();
+        qCDebug(BluetoothConfigurationVerboseLog)
+            << "Bluetooth devices model updated. Count:" << _devicesModelCache.size();
         emit devicesModelChanged();
     }
 }
@@ -695,18 +702,18 @@ void BluetoothConfiguration::_onHostModeStateChanged(QBluetoothLocalDevice::Host
 
     QString modeString;
     switch (mode) {
-    case QBluetoothLocalDevice::HostPoweredOff:
-        modeString = tr("Powered Off");
-        break;
-    case QBluetoothLocalDevice::HostConnectable:
-        modeString = tr("Connectable");
-        break;
-    case QBluetoothLocalDevice::HostDiscoverable:
-        modeString = tr("Discoverable");
-        break;
-    case QBluetoothLocalDevice::HostDiscoverableLimitedInquiry:
-        modeString = tr("Discoverable (Limited Inquiry)");
-        break;
+        case QBluetoothLocalDevice::HostPoweredOff:
+            modeString = tr("Powered Off");
+            break;
+        case QBluetoothLocalDevice::HostConnectable:
+            modeString = tr("Connectable");
+            break;
+        case QBluetoothLocalDevice::HostDiscoverable:
+            modeString = tr("Discoverable");
+            break;
+        case QBluetoothLocalDevice::HostDiscoverableLimitedInquiry:
+            modeString = tr("Discoverable (Limited Inquiry)");
+            break;
     }
 
     qCDebug(BluetoothConfigurationLog) << "Bluetooth adapter mode changed to:" << modeString;
@@ -716,9 +723,7 @@ void BluetoothConfiguration::_onHostModeStateChanged(QBluetoothLocalDevice::Host
         const QBluetoothLocalDevice::HostMode queuedMode = _queuedHostMode;
         _hasQueuedHostModeRequest = false;
         if (queuedMode != mode) {
-            QTimer::singleShot(0, this, [this, queuedMode]() {
-                _requestHostMode(queuedMode);
-            });
+            QTimer::singleShot(0, this, [this, queuedMode]() { _requestHostMode(queuedMode); });
         }
     }
 
@@ -728,10 +733,10 @@ void BluetoothConfiguration::_onHostModeStateChanged(QBluetoothLocalDevice::Host
     }
 }
 
-void BluetoothConfiguration::_onDeviceConnected(const QBluetoothAddress &address)
+void BluetoothConfiguration::_onDeviceConnected(const QBluetoothAddress& address)
 {
     qCDebug(BluetoothConfigurationLog) << "Device connected to adapter:" << address.toString();
-    for (const QBluetoothDeviceInfo &dev : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& dev : std::as_const(_deviceList)) {
         if (dev.address() == address) {
             qCDebug(BluetoothConfigurationLog) << "Connected device:" << dev.name();
             break;
@@ -739,10 +744,10 @@ void BluetoothConfiguration::_onDeviceConnected(const QBluetoothAddress &address
     }
 }
 
-void BluetoothConfiguration::_onDeviceDisconnected(const QBluetoothAddress &address)
+void BluetoothConfiguration::_onDeviceDisconnected(const QBluetoothAddress& address)
 {
     qCDebug(BluetoothConfigurationLog) << "Device disconnected from adapter:" << address.toString();
-    for (const QBluetoothDeviceInfo &dev : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& dev : std::as_const(_deviceList)) {
         if (dev.address() == address) {
             qCDebug(BluetoothConfigurationLog) << "Disconnected device:" << dev.name();
             break;
@@ -750,25 +755,27 @@ void BluetoothConfiguration::_onDeviceDisconnected(const QBluetoothAddress &addr
     }
 }
 
-void BluetoothConfiguration::_onPairingFinished(const QBluetoothAddress &address, QBluetoothLocalDevice::Pairing pairing)
+void BluetoothConfiguration::_onPairingFinished(const QBluetoothAddress& address,
+                                                QBluetoothLocalDevice::Pairing pairing)
 {
     QString pairingStatus;
     switch (pairing) {
-    case QBluetoothLocalDevice::Unpaired:
-        pairingStatus = tr("Unpaired");
-        break;
-    case QBluetoothLocalDevice::Paired:
-        pairingStatus = tr("Paired");
-        break;
-    case QBluetoothLocalDevice::AuthorizedPaired:
-        pairingStatus = tr("Authorized Paired");
-        break;
+        case QBluetoothLocalDevice::Unpaired:
+            pairingStatus = tr("Unpaired");
+            break;
+        case QBluetoothLocalDevice::Paired:
+            pairingStatus = tr("Paired");
+            break;
+        case QBluetoothLocalDevice::AuthorizedPaired:
+            pairingStatus = tr("Authorized Paired");
+            break;
     }
 
-    qCDebug(BluetoothConfigurationLog) << "Pairing finished for device:" << address.toString() << "Status:" << pairingStatus;
+    qCDebug(BluetoothConfigurationLog) << "Pairing finished for device:" << address.toString()
+                                       << "Status:" << pairingStatus;
 
     QString deviceName;
-    for (const QBluetoothDeviceInfo &dev : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& dev : std::as_const(_deviceList)) {
         if (dev.address() == address) {
             deviceName = dev.name();
             break;
@@ -776,14 +783,13 @@ void BluetoothConfiguration::_onPairingFinished(const QBluetoothAddress &address
     }
 
     if (pairing == QBluetoothLocalDevice::Unpaired) {
-        const QString msg = deviceName.isEmpty()
-            ? tr("Device %1 unpaired").arg(address.toString())
-            : tr("Device %1 (%2) unpaired").arg(deviceName, address.toString());
+        const QString msg = deviceName.isEmpty() ? tr("Device %1 unpaired").arg(address.toString())
+                                                 : tr("Device %1 (%2) unpaired").arg(deviceName, address.toString());
         qCInfo(BluetoothConfigurationLog) << msg;
     } else {
         const QString msg = deviceName.isEmpty()
-            ? tr("Device %1 paired successfully").arg(address.toString())
-            : tr("Device %1 (%2) paired successfully").arg(deviceName, address.toString());
+                                ? tr("Device %1 paired successfully").arg(address.toString())
+                                : tr("Device %1 (%2) paired successfully").arg(deviceName, address.toString());
         qCInfo(BluetoothConfigurationLog) << msg;
     }
 
@@ -795,23 +801,23 @@ void BluetoothConfiguration::_onLocalDeviceErrorOccurred(QBluetoothLocalDevice::
 {
     QString errorString;
     switch (error) {
-    case QBluetoothLocalDevice::PairingError:
-        errorString = tr("Pairing Error");
-        break;
-    case QBluetoothLocalDevice::MissingPermissionsError:
-        errorString = tr("Missing Bluetooth Permissions");
-        break;
-    case QBluetoothLocalDevice::UnknownError:
-    default:
-        errorString = tr("Unknown Bluetooth Adapter Error");
-        break;
+        case QBluetoothLocalDevice::PairingError:
+            errorString = tr("Pairing Error");
+            break;
+        case QBluetoothLocalDevice::MissingPermissionsError:
+            errorString = tr("Missing Bluetooth Permissions");
+            break;
+        case QBluetoothLocalDevice::UnknownError:
+        default:
+            errorString = tr("Unknown Bluetooth Adapter Error");
+            break;
     }
 
     qCWarning(BluetoothConfigurationLog) << "Local Bluetooth device error:" << error << errorString;
     emit errorOccurred(errorString);
 }
 
-void BluetoothConfiguration::requestPairing(const QString &address)
+void BluetoothConfiguration::requestPairing(const QString& address)
 {
     if (!_localDevice || !_localDevice->isValid()) {
         emit errorOccurred(tr("Bluetooth adapter not available"));
@@ -833,7 +839,7 @@ void BluetoothConfiguration::requestPairing(const QString &address)
     _localDevice->requestPairing(addr, QBluetoothLocalDevice::Paired);
 }
 
-void BluetoothConfiguration::removePairing(const QString &address)
+void BluetoothConfiguration::removePairing(const QString& address)
 {
     if (!_localDevice || !_localDevice->isValid()) {
         emit errorOccurred(tr("Bluetooth adapter not available"));
@@ -855,7 +861,7 @@ void BluetoothConfiguration::removePairing(const QString &address)
     _localDevice->requestPairing(addr, QBluetoothLocalDevice::Unpaired);
 }
 
-QString BluetoothConfiguration::getPairingStatus(const QString &address) const
+QString BluetoothConfiguration::getPairingStatus(const QString& address) const
 {
     if (!_localDevice || !_localDevice->isValid()) {
         return tr("Adapter unavailable");
@@ -872,18 +878,18 @@ QString BluetoothConfiguration::getPairingStatus(const QString &address) const
 
     const QBluetoothLocalDevice::Pairing pairingStatus = _localDevice->pairingStatus(addr);
     switch (pairingStatus) {
-    case QBluetoothLocalDevice::Unpaired:
-        return tr("Unpaired");
-    case QBluetoothLocalDevice::Paired:
-        return tr("Paired");
-    case QBluetoothLocalDevice::AuthorizedPaired:
-        return tr("Authorized Paired");
-    default:
-        return tr("Unknown");
+        case QBluetoothLocalDevice::Unpaired:
+            return tr("Unpaired");
+        case QBluetoothLocalDevice::Paired:
+            return tr("Paired");
+        case QBluetoothLocalDevice::AuthorizedPaired:
+            return tr("Authorized Paired");
+        default:
+            return tr("Unknown");
     }
 }
 
-bool BluetoothConfiguration::isPaired(const QString &address) const
+bool BluetoothConfiguration::isPaired(const QString& address) const
 {
     if (!_localDevice || !_localDevice->isValid() || _mode != BluetoothMode::ModeClassic) {
         return false;
@@ -905,7 +911,8 @@ bool BluetoothConfiguration::isDiscoverable() const
     }
 
     const QBluetoothLocalDevice::HostMode mode = _localDevice->hostMode();
-    return (mode == QBluetoothLocalDevice::HostDiscoverable || mode == QBluetoothLocalDevice::HostDiscoverableLimitedInquiry);
+    return (mode == QBluetoothLocalDevice::HostDiscoverable ||
+            mode == QBluetoothLocalDevice::HostDiscoverableLimitedInquiry);
 }
 
 bool BluetoothConfiguration::isAdapterAvailable() const
@@ -947,7 +954,7 @@ QVariantList BluetoothConfiguration::getAllPairedDevices() const
 
     const QList<QBluetoothAddress> connectedAddresses = _localDevice->connectedDevices();
 
-    for (const QBluetoothDeviceInfo &dev : std::as_const(_deviceList)) {
+    for (const QBluetoothDeviceInfo& dev : std::as_const(_deviceList)) {
         const QBluetoothLocalDevice::Pairing pairingStatus = _localDevice->pairingStatus(dev.address());
         if (pairingStatus != QBluetoothLocalDevice::Unpaired) {
             QVariantMap device;
@@ -984,13 +991,13 @@ QVariantList BluetoothConfiguration::getConnectedDevices() const
 
     const QList<QBluetoothAddress> connectedAddresses = _localDevice->connectedDevices();
 
-    for (const QBluetoothAddress &addr : connectedAddresses) {
+    for (const QBluetoothAddress& addr : connectedAddresses) {
         QVariantMap device;
         device["address"] = addr.toString();
         device["connected"] = true;
 
         QString deviceName;
-        for (const QBluetoothDeviceInfo &dev : std::as_const(_deviceList)) {
+        for (const QBluetoothDeviceInfo& dev : std::as_const(_deviceList)) {
             if (dev.address() == addr) {
                 deviceName = dev.name();
                 if (dev.rssi() != 0) {
@@ -1109,7 +1116,7 @@ QVariantList BluetoothConfiguration::getAllAvailableAdapters()
     return _availableAdapters;
 }
 
-void BluetoothConfiguration::selectAdapter(const QString &address)
+void BluetoothConfiguration::selectAdapter(const QString& address)
 {
     const QBluetoothAddress addr(address);
     if (addr.isNull()) {
@@ -1119,7 +1126,7 @@ void BluetoothConfiguration::selectAdapter(const QString &address)
 
     if (!_availableAdapters.isEmpty()) {
         bool found = false;
-        for (const QVariant &entry : std::as_const(_availableAdapters)) {
+        for (const QVariant& entry : std::as_const(_availableAdapters)) {
             const QVariantMap adapter = entry.toMap();
             if (QBluetoothAddress(adapter.value("address").toString()) == addr) {
                 found = true;
@@ -1144,7 +1151,7 @@ void BluetoothConfiguration::selectAdapter(const QString &address)
     }
 
     bool selectionUpdated = false;
-    for (QVariant &entry : _availableAdapters) {
+    for (QVariant& entry : _availableAdapters) {
         QVariantMap adapter = entry.toMap();
         if (adapter.isEmpty()) {
             continue;
@@ -1179,15 +1186,15 @@ QString BluetoothConfiguration::getHostMode() const
     }
 
     switch (_localDevice->hostMode()) {
-    case QBluetoothLocalDevice::HostPoweredOff:
-        return tr("Powered Off");
-    case QBluetoothLocalDevice::HostConnectable:
-        return tr("Connectable");
-    case QBluetoothLocalDevice::HostDiscoverable:
-        return tr("Discoverable");
-    case QBluetoothLocalDevice::HostDiscoverableLimitedInquiry:
-        return tr("Discoverable (Limited)");
-    default:
-        return tr("Unknown");
+        case QBluetoothLocalDevice::HostPoweredOff:
+            return tr("Powered Off");
+        case QBluetoothLocalDevice::HostConnectable:
+            return tr("Connectable");
+        case QBluetoothLocalDevice::HostDiscoverable:
+            return tr("Discoverable");
+        case QBluetoothLocalDevice::HostDiscoverableLimitedInquiry:
+            return tr("Discoverable (Limited)");
+        default:
+            return tr("Unknown");
     }
 }

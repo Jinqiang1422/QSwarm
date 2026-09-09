@@ -13,6 +13,10 @@ private slots:
     void _testBaseSetAutoConnectEmitsSignal();
     void _testBaseSetHighLatencyEmitsSignal();
     void _testBaseDefaults();
+    void _testInvalidCopy_data();
+    void _testInvalidCopy();
+    void _testNullDuplicate();
+    void _testUdpSelfCopy();
     void _testBaseSettingsRoot();
     void _testSuppressAutoReconnectNotPersisted();
     void _testReconnectBackoff();

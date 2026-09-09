@@ -1,13 +1,22 @@
 #include "LinkConfigurationTest.h"
 
+#include "BluetoothConfiguration.h"
 #include "LinkConfiguration.h"
-#include "TCPLink.h"
-#include "UDPLink.h"
-
-#include "Fixtures/RAIIFixtures.h"
-
+#include "LogReplayLink.h"
+#ifndef QGC_NO_SERIAL_LINK
+#include "SerialLink.h"
+#endif
+#ifdef QT_DEBUG
+#include "MockConfiguration.h"
+#endif
+#include <QtCore/QMetaProperty>
 #include <QtCore/QSettings>
 #include <QtTest/QSignalSpy>
+#include <memory>
+
+#include "Fixtures/RAIIFixtures.h"
+#include "TCPLink.h"
+#include "UDPLink.h"
 
 // ============================================================================
 // LinkConfiguration base tests (exercised via TCPConfiguration)
@@ -351,7 +360,7 @@ void LinkConfigurationTest::_testUdpCopyFrom()
     QCOMPARE(dest.targetHosts().size(), 1);
 
     const auto targets = dest.targetHosts();
-    const auto &target = targets.constFirst();
+    const auto& target = targets.constFirst();
     QCOMPARE(target->address.toString(), QStringLiteral("192.168.1.1"));
     QCOMPARE(target->port, quint16(14550));
 }
@@ -455,3 +464,117 @@ void LinkConfigurationTest::_testUdpResolveHostsUpdatesAddress()
 }
 
 UT_REGISTER_TEST(LinkConfigurationTest, TestLabel::Unit, TestLabel::Comms)
+
+void LinkConfigurationTest::_testInvalidCopy_data()
+{
+    QTest::addColumn<int>("type");
+    QTest::addColumn<QString>("category");
+#ifndef QGC_NO_SERIAL_LINK
+    QTest::newRow("serial") << int(LinkConfiguration::TypeSerial) << QStringLiteral("Comms.SerialLink");
+#endif
+    QTest::newRow("tcp") << int(LinkConfiguration::TypeTcp) << QStringLiteral("Comms.TCPLink");
+    QTest::newRow("udp") << int(LinkConfiguration::TypeUdp) << QStringLiteral("Comms.UDPLink");
+    QTest::newRow("bluetooth") << int(LinkConfiguration::TypeBluetooth)
+                               << QStringLiteral("Comms.Bluetooth.BluetoothConfiguration");
+    QTest::newRow("replay") << int(LinkConfiguration::TypeLogReplay) << QStringLiteral("Comms.LogReplayLink");
+#ifdef QT_DEBUG
+    QTest::newRow("mock") << int(LinkConfiguration::TypeMock) << QStringLiteral("Comms.MockLink.MockConfiguration");
+#endif
+}
+
+void LinkConfigurationTest::_testInvalidCopy()
+{
+    QFETCH(int, type);
+    QFETCH(QString, category);
+    if (type == LinkConfiguration::TypeBluetooth) {
+        ignoreLogMessage("default", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("^Cannot find a compatible running Bluez\\.")));
+    }
+    const std::unique_ptr<LinkConfiguration> config(
+        LinkConfiguration::createSettings(type, QStringLiteral("preserved")));
+    QVERIFY(config);
+    config->setDynamic(true);
+    config->setHighLatency(true);
+    const auto snapshot = [](LinkConfiguration* value) {
+        QVariantMap properties;
+        const auto* meta = value->metaObject();
+        for (int i = 0; i < meta->propertyCount(); ++i) {
+            const auto property = meta->property(i);
+            if (property.isReadable())
+                properties.insert(QString::fromLatin1(property.name()), property.read(value));
+        }
+        return properties;
+    };
+    const auto before = snapshot(config.get());
+    expectLogMessage(qPrintable(category), QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Invalid source configuration type")));
+    config->copyFrom(nullptr);
+    verifyExpectedLogMessage();
+    QCOMPARE(snapshot(config.get()), before);
+
+    const auto otherType = type == LinkConfiguration::TypeTcp ? LinkConfiguration::TypeUdp : LinkConfiguration::TypeTcp;
+    const std::unique_ptr<LinkConfiguration> wrongType(
+        LinkConfiguration::createSettings(otherType, QStringLiteral("wrong")));
+    QVERIFY(wrongType);
+    expectLogMessage(qPrintable(category), QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Invalid source configuration type")));
+    config->copyFrom(wrongType.get());
+    verifyExpectedLogMessage();
+    QCOMPARE(snapshot(config.get()), before);
+
+    expectLogMessage("Comms.LinkConfiguration", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Cannot copy a null link configuration")));
+    std::unique_ptr<LinkConfiguration> empty;
+    switch (type) {
+#ifndef QGC_NO_SERIAL_LINK
+        case LinkConfiguration::TypeSerial:
+            empty = std::make_unique<SerialConfiguration>(static_cast<const SerialConfiguration*>(nullptr));
+            break;
+#endif
+        case LinkConfiguration::TypeTcp:
+            empty = std::make_unique<TCPConfiguration>(static_cast<const TCPConfiguration*>(nullptr));
+            break;
+        case LinkConfiguration::TypeUdp:
+            empty = std::make_unique<UDPConfiguration>(static_cast<const UDPConfiguration*>(nullptr));
+            break;
+        case LinkConfiguration::TypeBluetooth:
+            empty = std::make_unique<BluetoothConfiguration>(static_cast<const BluetoothConfiguration*>(nullptr));
+            break;
+        case LinkConfiguration::TypeLogReplay:
+            empty = std::make_unique<LogReplayConfiguration>(static_cast<const LogReplayConfiguration*>(nullptr));
+            break;
+#ifdef QT_DEBUG
+        case LinkConfiguration::TypeMock:
+            empty = std::make_unique<MockConfiguration>(static_cast<const MockConfiguration*>(nullptr));
+            break;
+#endif
+        default:
+            QFAIL("Unhandled link type");
+    }
+    verifyExpectedLogMessage();
+    QVERIFY(empty);
+    QVERIFY(empty->name().isEmpty());
+    QVERIFY(!empty->link());
+    QVERIFY(!empty->isDynamic());
+    QVERIFY(!empty->isHighLatency());
+}
+
+void LinkConfigurationTest::_testNullDuplicate()
+{
+    expectLogMessage("Comms.LinkConfiguration", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Cannot duplicate a null link configuration")));
+    QVERIFY(!LinkConfiguration::duplicateSettings(nullptr));
+    verifyExpectedLogMessage();
+}
+
+void LinkConfigurationTest::_testUdpSelfCopy()
+{
+    UDPConfiguration config(QStringLiteral("self"));
+    config.addHost(QStringLiteral("127.0.0.1"), 14550);
+    config.setLocalPort(14551);
+    const auto hosts = config.hostList();
+    QVERIFY(!hosts.isEmpty());
+    config.copyFrom(&config);
+    QCOMPARE(config.hostList(), hosts);
+    QCOMPARE(config.localPort(), quint16(14551));
+}

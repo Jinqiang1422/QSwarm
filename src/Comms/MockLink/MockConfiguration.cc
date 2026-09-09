@@ -1,43 +1,44 @@
 #include "MockConfiguration.h"
+
 #include "QGCLoggingCategory.h"
 
 QGC_LOGGING_CATEGORY(MockConfigurationLog, "Comms.MockLink.MockConfiguration")
 
-MockConfiguration::MockConfiguration(const QString &name, QObject *parent)
-    : LinkConfiguration(name, parent)
+MockConfiguration::MockConfiguration(const QString& name, QObject* parent) : LinkConfiguration(name, parent)
 {
     qCDebug(MockConfigurationLog) << this;
 }
 
-MockConfiguration::MockConfiguration(const MockConfiguration *copy, QObject *parent)
-    : LinkConfiguration(copy, parent)
-    , _firmwareType(copy->firmwareType())
-    , _vehicleType(copy->vehicleType())
-    , _sendStatusText(copy->sendStatusText())
-    , _enableCamera(copy->enableCamera())
-    , _enableGimbal(copy->enableGimbal())
-    , _enableProximity(copy->enableProximity())
-    , _failureMode(copy->failureMode())
-    , _incrementVehicleId(copy->incrementVehicleId())
-    , _startArmed(copy->startArmed())
-    , _preloadMission(copy->preloadMission())
-    , _cameraCaptureVideo(copy->cameraCaptureVideo())
-    , _cameraCaptureImage(copy->cameraCaptureImage())
-    , _cameraHasModes(copy->cameraHasModes())
-    , _cameraHasVideoStream(copy->cameraHasVideoStream())
-    , _cameraCanCaptureImageInVideoMode(copy->cameraCanCaptureImageInVideoMode())
-    , _cameraCanCaptureVideoInImageMode(copy->cameraCanCaptureVideoInImageMode())
-    , _cameraHasBasicZoom(copy->cameraHasBasicZoom())
-    , _cameraHasTrackingPoint(copy->cameraHasTrackingPoint())
-    , _cameraHasTrackingRectangle(copy->cameraHasTrackingRectangle())
-    , _gimbalHasRollAxis(copy->gimbalHasRollAxis())
-    , _gimbalHasPitchAxis(copy->gimbalHasPitchAxis())
-    , _gimbalHasYawAxis(copy->gimbalHasYawAxis())
-    , _gimbalHasYawFollow(copy->gimbalHasYawFollow())
-    , _gimbalHasYawLock(copy->gimbalHasYawLock())
-    , _gimbalHasRetract(copy->gimbalHasRetract())
-    , _gimbalHasNeutral(copy->gimbalHasNeutral())
+MockConfiguration::MockConfiguration(const MockConfiguration* copy, QObject* parent) : LinkConfiguration(copy, parent)
 {
+    if (copy) {
+        _firmwareType = copy->firmwareType();
+        _vehicleType = copy->vehicleType();
+        _sendStatusText = copy->sendStatusText();
+        _enableCamera = copy->enableCamera();
+        _enableGimbal = copy->enableGimbal();
+        _enableProximity = copy->enableProximity();
+        _failureMode = copy->failureMode();
+        _incrementVehicleId = copy->incrementVehicleId();
+        _startArmed = copy->startArmed();
+        _preloadMission = copy->preloadMission();
+        _cameraCaptureVideo = copy->cameraCaptureVideo();
+        _cameraCaptureImage = copy->cameraCaptureImage();
+        _cameraHasModes = copy->cameraHasModes();
+        _cameraHasVideoStream = copy->cameraHasVideoStream();
+        _cameraCanCaptureImageInVideoMode = copy->cameraCanCaptureImageInVideoMode();
+        _cameraCanCaptureVideoInImageMode = copy->cameraCanCaptureVideoInImageMode();
+        _cameraHasBasicZoom = copy->cameraHasBasicZoom();
+        _cameraHasTrackingPoint = copy->cameraHasTrackingPoint();
+        _cameraHasTrackingRectangle = copy->cameraHasTrackingRectangle();
+        _gimbalHasRollAxis = copy->gimbalHasRollAxis();
+        _gimbalHasPitchAxis = copy->gimbalHasPitchAxis();
+        _gimbalHasYawAxis = copy->gimbalHasYawAxis();
+        _gimbalHasYawFollow = copy->gimbalHasYawFollow();
+        _gimbalHasYawLock = copy->gimbalHasYawLock();
+        _gimbalHasRetract = copy->gimbalHasRetract();
+        _gimbalHasNeutral = copy->gimbalHasNeutral();
+    }
     qCDebug(MockConfigurationLog) << this;
 }
 
@@ -46,11 +47,17 @@ MockConfiguration::~MockConfiguration()
     qCDebug(MockConfigurationLog) << this;
 }
 
-void MockConfiguration::copyFrom(const LinkConfiguration *source)
+void MockConfiguration::copyFrom(const LinkConfiguration* source)
 {
+    if (source == this) {
+        return;
+    }
+    const MockConfiguration* mockLinkSource = qobject_cast<const MockConfiguration*>(source);
+    if (!mockLinkSource) {
+        qCWarning(MockConfigurationLog) << "Invalid source configuration type";
+        return;
+    }
     LinkConfiguration::copyFrom(source);
-
-    const MockConfiguration *mockLinkSource = qobject_cast<const MockConfiguration*>(source);
 
     setFirmwareType(mockLinkSource->firmwareType());
     setVehicleType(mockLinkSource->vehicleType());
@@ -80,12 +87,14 @@ void MockConfiguration::copyFrom(const LinkConfiguration *source)
     setPreloadMission(mockLinkSource->preloadMission());
 }
 
-void MockConfiguration::loadSettings(QSettings &settings, const QString &root)
+void MockConfiguration::loadSettings(QSettings& settings, const QString& root)
 {
     settings.beginGroup(root);
 
-    setFirmwareType(static_cast<MAV_AUTOPILOT>(settings.value(_firmwareTypeKey, static_cast<int>(MAV_AUTOPILOT_PX4)).toInt()));
-    setVehicleType(static_cast<MAV_TYPE>(settings.value(_vehicleTypeKey, static_cast<int>(MAV_TYPE_QUADROTOR)).toInt()));
+    setFirmwareType(
+        static_cast<MAV_AUTOPILOT>(settings.value(_firmwareTypeKey, static_cast<int>(MAV_AUTOPILOT_PX4)).toInt()));
+    setVehicleType(
+        static_cast<MAV_TYPE>(settings.value(_vehicleTypeKey, static_cast<int>(MAV_TYPE_QUADROTOR)).toInt()));
     setSendStatusText(settings.value(_sendStatusTextKey, false).toBool());
     setEnableCamera(settings.value(_enableCameraKey, false).toBool());
     setEnableGimbal(settings.value(_enableGimbalKey, false).toBool());
@@ -112,7 +121,7 @@ void MockConfiguration::loadSettings(QSettings &settings, const QString &root)
     settings.endGroup();
 }
 
-void MockConfiguration::saveSettings(QSettings &settings, const QString &root) const
+void MockConfiguration::saveSettings(QSettings& settings, const QString& root) const
 {
     settings.beginGroup(root);
 
