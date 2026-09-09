@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import _common as _c
-from ._packages import DEBIAN_PACKAGES, get_debian_packages
+from ._packages import get_debian_packages
 
 
 def _just_version() -> str:

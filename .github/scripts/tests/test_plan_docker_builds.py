@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 
+import pytest
 from _helpers import REPO_ROOT
 from plan_docker_builds import build_args_str, load_variants, plan_builds
 
@@ -225,8 +228,47 @@ def test_build_args_str_preserves_order():
     assert build_args_str({"A": "1", "B": "2"}) == "A=1\nB=2"
 
 
-def test_run_docker_sh_has_no_hardcoded_build_args():
-    """Variant build args live only in variants.json, not duplicated in the shell wrapper."""
-    text = (_DOCKER_DIR / "run-docker.sh").read_text()
-    assert "--build-arg" not in text
-    assert json.loads((_DOCKER_DIR / "variants.json").read_text())["variants"]
+@pytest.mark.skipif(
+    os.name != "posix" or shutil.which("bash") is None, reason="Docker wrappers require POSIX bash"
+)
+@pytest.mark.parametrize("proxy_enabled", [False, True])
+@pytest.mark.parametrize("variant", load_variants())
+def test_run_docker_sh_uses_variant_build_args(tmp_path, monkeypatch, variant, proxy_enabled):
+    """Exercise the wrapper while recording commands instead of invoking Docker."""
+    command_log = tmp_path / "docker-commands.jsonl"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['QGC_TEST_DOCKER_LOG'], 'a') as output:\n"
+        "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+    )
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("QGC_TEST_DOCKER_LOG", str(command_log))
+    monkeypatch.setenv("BUILD_DIR", str(tmp_path / "build"))
+    monkeypatch.setenv("JOBS", "1")
+    monkeypatch.delenv("IMAGE_NAME", raising=False)
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    if proxy_enabled:
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:8118")
+    subprocess.run(
+        ["bash", str(_DOCKER_DIR / "run-docker.sh"), variant["id"], "Debug"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    build, run = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert build[0] == "build"
+    assert build[build.index("--target") + 1] == variant["target"]
+    assert build[build.index("-t") + 1] == variant["image"]
+    actual_args = [build[i + 1] for i, arg in enumerate(build) if arg == "--build-arg"]
+    expected_args = [f"{name}={value}" for name, value in variant["build_args"].items()]
+    if proxy_enabled:
+        expected_args += ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"]
+    assert actual_args == expected_args
+    assert ("--network=host" in build) == proxy_enabled
+    assert run[0] == "run"
+    assert run[-2:] == [variant["image"], "Debug"]
+    assert ("--network=host" in run) == proxy_enabled

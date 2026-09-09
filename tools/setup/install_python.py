@@ -98,7 +98,9 @@ def create_venv(venv_path: Path) -> None:
     print(f"Creating virtual environment: {venv_path}")
 
     if has_uv():
-        subprocess.run(["uv", "venv", "--seed", str(venv_path)], check=True)
+        subprocess.run(
+            ["uv", "venv", "--seed", "--python", sys.executable, str(venv_path)], check=True
+        )
     else:
         subprocess.run([sys.executable, "-m", "venv", str(venv_path)], check=True)
 
@@ -143,6 +145,8 @@ def sync_groups_with_uv(venv_path: Path, group_spec: str) -> None:
         "--active",
         "--no-install-project",
         "--frozen",
+        "--python",
+        str(get_python_executable(venv_path)),
     ]
 
     if "all" in groups:
@@ -161,7 +165,10 @@ def sync_groups_with_uv(venv_path: Path, group_spec: str) -> None:
 def list_packages(venv_path: Path) -> None:
     """List installed packages."""
     python = get_python_executable(venv_path)
-    subprocess.run([str(python), "-m", "pip", "list"])
+    if has_uv():
+        subprocess.run(["uv", "pip", "list", "--python", str(python)], check=True)
+    else:
+        subprocess.run([str(python), "-m", "pip", "list"], check=True)
 
 
 def check_installed(packages: list[str]) -> int:

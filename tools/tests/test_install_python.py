@@ -3,11 +3,17 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path  # noqa: TC003
 from unittest.mock import patch
 
 import pytest
-from setup.install_python import get_packages_for_groups, sync_groups_with_uv
+from setup.install_python import (
+    create_venv,
+    get_packages_for_groups,
+    list_packages,
+    sync_groups_with_uv,
+)
 
 
 def test_test_group_contains_pytest() -> None:
@@ -47,11 +53,43 @@ def test_sync_groups_with_uv_uses_locked_active_env(tmp_path: Path) -> None:
     (tmp_path / "tools").mkdir()
     lockfile = tmp_path / "tools" / "uv.lock"
     lockfile.write_text("", encoding="utf-8")
-    with patch("setup.install_python.find_repo_root", return_value=tmp_path), \
-         patch("setup.install_python.subprocess.run") as mock_run:
+    with (
+        patch("setup.install_python.find_repo_root", return_value=tmp_path),
+        patch("setup.install_python.subprocess.run") as mock_run,
+    ):
         sync_groups_with_uv(venv, "scripts,test")
 
     args = mock_run.call_args.args[0]
     assert args[:5] == ["uv", "sync", "--project", str(tmp_path / "tools"), "--active"]
     assert "--frozen" in args
+    python_path = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    assert args[args.index("--python") + 1] == str(python_path)
     assert args.count("--extra") == 2
+
+
+def test_uv_venv_uses_running_interpreter(tmp_path: Path) -> None:
+    """A different python3 on PATH must not select the new environment's Python."""
+    with (
+        patch("setup.install_python.has_uv", return_value=True),
+        patch("setup.install_python.subprocess.run") as run,
+    ):
+        create_venv(tmp_path / ".venv")
+    args = run.call_args.args[0]
+    assert args[args.index("--python") + 1] == sys.executable
+
+
+@pytest.mark.parametrize("uv_available", [True, False])
+def test_list_packages_works_in_managed_environment(tmp_path: Path, uv_available: bool) -> None:
+    with (
+        patch("setup.install_python.has_uv", return_value=uv_available),
+        patch("setup.install_python.subprocess.run") as run,
+    ):
+        list_packages(tmp_path / ".venv")
+    args = run.call_args.args[0]
+    if uv_available:
+        # uv sync does not install pip in the managed environment.
+        assert args[:3] == ["uv", "pip", "list"]
+        assert "--python" in args
+    else:
+        assert args[-3:] == ["-m", "pip", "list"]
+    assert run.call_args.kwargs["check"] is True

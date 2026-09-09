@@ -135,6 +135,8 @@ repos:
     rev: 43.249.6
     hooks:
       - id: renovate-config-validator
+        # Renovate's dependencies require >=22.20; avoid a stale nodeenv "lts" alias.
+        language_version: 22.20.0
         files: ^\.github/renovate\.json$
 
   # Markdown linting (report-only, doesn't auto-fix)
