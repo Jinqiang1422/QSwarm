@@ -5,6 +5,7 @@
 
 #include "AppMessages.h"
 #include "QGCApplication.h"
+#include "QGCLoggingCategory.h"
 
 #ifdef QGC_GST_STREAMING
 #include "Fact.h"
@@ -15,6 +16,8 @@
 #else
 #include "QtMultimediaReceiver.h"
 #endif
+
+QGC_LOGGING_CATEGORY(VideoBackendLog, "VideoManager.VideoBackend")
 
 #ifdef QGC_GST_STREAMING
 namespace {
@@ -54,8 +57,10 @@ VideoReceiver* VideoBackend::createReceiver(QObject* parent)
 
 void* VideoBackend::createSink(QQuickItem* widget, QObject* parent)
 {
-    [[maybe_unused]] const bool onGuiThread = (QThread::currentThread() == qApp->thread());
-    Q_ASSERT(onGuiThread);
+    if (!qApp || QThread::currentThread() != qApp->thread()) {
+        qCWarning(VideoBackendLog) << "Video sinks must be created on the application thread";
+        return nullptr;
+    }
 #ifdef QGC_GST_STREAMING
     Q_UNUSED(widget);
     Q_UNUSED(parent);

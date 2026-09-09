@@ -89,8 +89,8 @@ void CodingStyle::_privateMethod()
     if (_privateVariable1 == -1) {
         _privateVariable1 = 42;
     } else {
-        // Use defensive checks instead of Q_ASSERT in production code
-        // Q_ASSERT is compiled out in release builds
+        // Use defensive runtime checks in production code.
+        // Debug assertions are compiled out in release builds.
         if (_privateVariable1 != 42) {
             qCWarning(CodingStyleLog) << "Unexpected value:" << _privateVariable1;
         }

@@ -7,6 +7,8 @@ target_sources(
     ${CMAKE_PROJECT_NAME}
     PRIVATE MapProviderTest.cc
             MapProviderTest.h
+            MapEngineInitializationTest.cc
+            MapEngineInitializationTest.h
             QGCMapEngineManagerArchiveTest.cc
             QGCMapEngineManagerArchiveTest.h
             QGCCachedTileSetTest.cc
@@ -30,3 +32,5 @@ add_qgc_test(QGCMapEngineManagerArchiveTest LABELS Unit RESOURCE_LOCK TempFiles)
 add_qgc_test(QGCTileCacheDatabaseTest LABELS Unit)
 add_qgc_test(QGCTileSetTest LABELS Unit)
 add_qgc_test(UrlFactoryTest LABELS Unit)
+
+add_qgc_test(MapEngineInitializationTest LABELS Unit RESOURCE_LOCK Settings TempFiles)

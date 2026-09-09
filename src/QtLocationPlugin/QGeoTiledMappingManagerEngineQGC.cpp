@@ -33,6 +33,16 @@ QGeoTiledMappingManagerEngineQGC::QGeoTiledMappingManagerEngineQGC(const QVarian
 {
     qCDebug(QGeoTiledMappingManagerEngineQGCLog) << this;
 
+    if (!m_networkManager || !qgcApp()) {
+        if (error) {
+            *error = QGeoServiceProvider::LoaderError;
+        }
+        if (errorString) {
+            *errorString = tr("Mapping requires an application and network manager");
+        }
+        return;
+    }
+
     setLocale(qgcApp()->getCurrentLanguage());
     (void) connect(qgcApp(), &QGCApplication::languageChanged, this,
                    [this](const QLocale& locale) { setLocale(locale); });
@@ -83,11 +93,14 @@ QGeoTiledMappingManagerEngineQGC::QGeoTiledMappingManagerEngineQGC(const QVarian
                        }
                    });
 
-    Q_ASSERT(m_networkManager);
     QGeoTileFetcherQGC* tileFetcher = new QGeoTileFetcherQGC(m_networkManager, parameters, this);
 
-    *error = QGeoServiceProvider::NoError;
-    errorString->clear();
+    if (error) {
+        *error = QGeoServiceProvider::NoError;
+    }
+    if (errorString) {
+        errorString->clear();
+    }
     setTileFetcher(tileFetcher);  // Calls engineInitialized()
 }
 

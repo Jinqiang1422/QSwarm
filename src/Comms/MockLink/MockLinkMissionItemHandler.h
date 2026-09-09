@@ -68,11 +68,7 @@ public:
     void sendUnexpectedMissionRequest();
 
     /// Reset the state of the MissionItemHandler to no items, no transactions in progress.
-    void reset()
-    {
-        _missionItems.clear();
-        _requestListCounts.clear();
-    }
+    void reset();
 
     /// Test-only: seeds a simple multirotor mission (takeoff, waypoint, RTL) so that a
     /// connecting GCS will download a non-empty mission.
@@ -114,7 +110,7 @@ private:
 
     QTimer _missionItemResponseTimer;
     FailureMode_t _failureMode = FailNone;
-    MAV_MISSION_RESULT _failureAckResult;
+    MAV_MISSION_RESULT _failureAckResult = MAV_MISSION_ERROR;
     bool _sendHomePositionOnEmptyList = false;
     bool _failReadRequestListFirstResponse = true;
     bool _failReadRequest1FirstResponse = true;

@@ -284,7 +284,6 @@ QString AudioOutput::_replaceAbbreviations(const QString& input)
 QString AudioOutput::_replaceNegativeSigns(const QString& input)
 {
     static const QRegularExpression negNumRegex(QStringLiteral("-\\s*(?=\\d)"));
-    Q_ASSERT(negNumRegex.isValid());
 
     QString output = input;
     (void) output.replace(negNumRegex, "negative ");
@@ -294,7 +293,6 @@ QString AudioOutput::_replaceNegativeSigns(const QString& input)
 QString AudioOutput::_replaceDecimalPoints(const QString& input)
 {
     static const QRegularExpression realNumRegex(QStringLiteral("([0-9]+)(\\.)([0-9]+)"));
-    Q_ASSERT(realNumRegex.isValid());
 
     QString output = input;
     QRegularExpressionMatch realNumRegexMatch = realNumRegex.match(output);
@@ -313,7 +311,6 @@ QString AudioOutput::_replaceDecimalPoints(const QString& input)
 QString AudioOutput::_replaceMeters(const QString& input)
 {
     static const QRegularExpression realNumMeterRegex(QStringLiteral("[0-9]*\\.?[0-9]\\s?(m)([^A-Za-z]|$)"));
-    Q_ASSERT(realNumMeterRegex.isValid());
 
     QString output = input;
     QRegularExpressionMatch realNumMeterRegexMatch = realNumMeterRegex.match(output);
@@ -361,7 +358,6 @@ QString AudioOutput::_convertMilliseconds(const QString& input)
 bool AudioOutput::_getMillisecondString(const QString& string, QString& match, int& number)
 {
     static const QRegularExpression msRegex("((?<number>[0-9]+)ms)");
-    Q_ASSERT(msRegex.isValid());
 
     bool result = false;
 

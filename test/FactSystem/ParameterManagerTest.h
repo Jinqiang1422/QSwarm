@@ -9,6 +9,8 @@ class ParameterManagerTest : public VehicleTestManualConnect
 private slots:
     void cleanup() override;
 
+    void _offlineParameterValues_data();
+    void _offlineParameterValues();
     void _noFailure();
     void _requestListNoResponse();
     void _requestListMissingParamSuccess();

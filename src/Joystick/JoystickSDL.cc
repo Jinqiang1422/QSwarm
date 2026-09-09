@@ -173,7 +173,10 @@ void JoystickSDL::shutdown(bool deleteDiscoveryCache)
 
 QMap<QString, Joystick*> JoystickSDL::discover()
 {
-    Q_ASSERT(QThread::isMainThread());
+    if (!QThread::isMainThread()) {
+        qCWarning(JoystickSDLLog) << "Joystick discovery must run on the main thread";
+        return {};
+    }
 
     QMap<QString, Joystick*> current;
 

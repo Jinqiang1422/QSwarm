@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtCore/QtPlugin>
 #include <QtLocation/QGeoServiceProviderFactory>
+#include <QtQml/QQmlEngine>
 
 class QGeoServiceProviderFactoryQGC : public QObject, public QGeoServiceProviderFactory
 {
@@ -29,5 +31,5 @@ public:
     void setQmlEngine(QQmlEngine* engine) final { m_engine = engine; }
 
 private:
-    QQmlEngine* m_engine = nullptr;
+    QPointer<QQmlEngine> m_engine;
 };

@@ -17,7 +17,7 @@ QGC_LOGGING_CATEGORY(FirmwareImageVerboseLog, "Vehicle.VehicleSetup.FirmwareImag
 #include <QtCore/QJsonObject>
 #include <QtCore/QTextStream>
 
-FirmwareImage::FirmwareImage(QObject* parent) : QObject(parent), _imageSize(0) {}
+FirmwareImage::FirmwareImage(QObject* parent) : QObject(parent), _binFormat(false), _boardId(0), _imageSize(0) {}
 
 bool FirmwareImage::load(const QString& imageFilename, uint32_t boardId)
 {

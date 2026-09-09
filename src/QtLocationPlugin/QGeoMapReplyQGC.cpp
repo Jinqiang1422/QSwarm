@@ -199,11 +199,12 @@ void QGeoTiledMapReplyQGC::_cacheReply(QGCCacheTile* tile)
 
 void QGeoTiledMapReplyQGC::_cacheError(QGCMapTask::TaskType type, QStringView errorString)
 {
-    Q_UNUSED(errorString);
+    if (type != QGCMapTask::TaskType::taskFetchTile) {
+        setError(QGeoTiledMapReply::UnknownError, errorString.toString());
+        return;
+    }
 
-    Q_ASSERT(type == QGCMapTask::TaskType::taskFetchTile);
-
-    if (!QGCNetworkHelper::isInternetAvailable()) {
+    if (!_networkManager || !QGCNetworkHelper::isInternetAvailable()) {
         setError(QGeoTiledMapReply::CommunicationError, tr("Network Not Available"));
         return;
     }

@@ -27,6 +27,7 @@ class MockLink : public LinkInterface
 {
     Q_OBJECT
     friend class MockLinkFTP;
+    friend class MockLinkProtocolTest;
 
 public:
     explicit MockLink(SharedLinkConfigurationPtr& config, QObject* parent = nullptr);

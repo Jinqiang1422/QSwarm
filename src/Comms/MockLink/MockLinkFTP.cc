@@ -120,10 +120,6 @@ void MockLinkFTP::_openCommand(uint8_t senderSystemId, uint8_t senderComponentId
 
     const uint16_t outgoingSeqNumber = _nextSeqNumber(seqNumber);
 
-    const size_t cchPath = strnlen(reinterpret_cast<char*>(request->data), sizeof(request->data));
-    Q_ASSERT(cchPath != sizeof(request->data));
-    Q_UNUSED(cchPath);  // Fix initialized-but-not-referenced warning on release builds
-
     _currentFile.close();
 
     QString tmpFilename;
@@ -231,7 +227,7 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
     MavlinkFTP::Request response{};
     const uint16_t outgoingSeqNumber = _nextSeqNumber(seqNumber);
 
-    if (request->hdr.session != _sessionId) {
+    if (request->hdr.session != _sessionId || !_currentFile.isOpen()) {
         _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrInvalidSession, outgoingSeqNumber,
                  MavlinkFTP::kCmdReadFile);
         return;
@@ -260,12 +256,11 @@ void MockLinkFTP::_readCommand(uint8_t senderSystemId, uint8_t senderComponentId
 
     const uint8_t cBytesToRead =
         static_cast<uint8_t>(qMin(static_cast<qint64>(sizeof(response.data)), _currentFile.size() - readOffset));
-    (void) _currentFile.seek(readOffset);
-    const QByteArray bytes = _currentFile.read(cBytesToRead);
-    (void) memcpy(response.data, bytes.constData(), cBytesToRead);
-
-    // We should always have written something, otherwise there is something wrong with the code above
-    Q_ASSERT(cBytesToRead);
+    if (!_currentFile.seek(readOffset) ||
+        _currentFile.read(reinterpret_cast<char*>(response.data), cBytesToRead) != cBytesToRead) {
+        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber, MavlinkFTP::kCmdReadFile);
+        return;
+    }
 
     response.hdr.session = _sessionId;
     response.hdr.size = cBytesToRead;
@@ -282,8 +277,8 @@ void MockLinkFTP::_burstReadCommand(uint8_t senderSystemId, uint8_t senderCompon
     MavlinkFTP::Request response{};
     uint16_t outgoingSeqNumber = _nextSeqNumber(seqNumber);
 
-    if (request->hdr.session != _sessionId) {
-        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber,
+    if (request->hdr.session != _sessionId || !_currentFile.isOpen()) {
+        _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrInvalidSession, outgoingSeqNumber,
                  MavlinkFTP::kCmdBurstReadFile);
         return;
     }
@@ -293,15 +288,14 @@ void MockLinkFTP::_burstReadCommand(uint8_t senderSystemId, uint8_t senderCompon
     uint32_t burstOffset = request->hdr.offset;
 
     while ((burstOffset < _currentFile.size()) && (burstCount++ < burstMax)) {
-        _currentFile.seek(burstOffset);
-
         const uint8_t cBytes =
             static_cast<uint8_t>(qMin(static_cast<qint64>(sizeof(response.data)), _currentFile.size() - burstOffset));
-        const QByteArray bytes = _currentFile.read(cBytes);
-        Q_ASSERT(
-            cBytes);  // We should always have written something, otherwise there is something wrong with the code above
-
-        (void) memcpy(response.data, bytes.constData(), cBytes);
+        if (!_currentFile.seek(burstOffset) ||
+            _currentFile.read(reinterpret_cast<char*>(response.data), cBytes) != cBytes) {
+            _sendNak(senderSystemId, senderComponentId, MavlinkFTP::kErrFail, outgoingSeqNumber,
+                     MavlinkFTP::kCmdBurstReadFile);
+            return;
+        }
 
         response.hdr.session = _sessionId;
         response.hdr.size = cBytes;
@@ -434,7 +428,8 @@ void MockLinkFTP::mavlinkMessageReceived(const mavlink_message_t& message)
     mavlink_file_transfer_protocol_t requestFTP{};
     mavlink_msg_file_transfer_protocol_decode(&message, &requestFTP);
 
-    if (requestFTP.target_system != _systemIdServer) {
+    if (!_mockLink || requestFTP.target_system != _systemIdServer ||
+        (requestFTP.target_component != MAV_COMP_ID_ALL && requestFTP.target_component != _componentIdServer)) {
         return;
     }
 

@@ -312,9 +312,10 @@ void MockLink::sendStatusTextMessages()
 bool MockLink::_allocateMavlinkChannel()
 {
     // should only be called by the LinkManager during setup
-    Q_ASSERT(!_incomingMavlinkChannelIsSet());
-    Q_ASSERT(!_outgoingMavlinkChannelIsSet());
-    Q_ASSERT(!mavlinkChannelIsSet());
+    if (_incomingMavlinkChannelIsSet() || _outgoingMavlinkChannelIsSet() || mavlinkChannelIsSet()) {
+        qCWarning(MockLinkLog) << "MockLink channels are already allocated";
+        return false;
+    }
 
     if (!LinkInterface::_allocateMavlinkChannel()) {
         qCWarning(MockLinkLog) << "LinkInterface::_allocateMavlinkChannel failed";
@@ -331,8 +332,7 @@ bool MockLink::_allocateMavlinkChannel()
     _outgoingMavlinkChannel = LinkManager::instance()->allocateMavlinkChannel();
     if (!_outgoingMavlinkChannelIsSet()) {
         qCWarning(MockLinkLog) << "_allocateMavlinkChannel vehicle failed";
-        LinkManager::instance()->freeMavlinkChannel(_incomingMavlinkChannel);
-        LinkInterface::_freeMavlinkChannel();
+        _freeMavlinkChannel();
         return false;
     }
 
@@ -345,21 +345,17 @@ void MockLink::_freeMavlinkChannel()
 {
     qCDebug(MockLinkLog) << "_freeMavlinkChannel aux:" << _incomingMavlinkChannel
                          << "vehicle:" << _outgoingMavlinkChannel;
-    if (!_incomingMavlinkChannelIsSet()) {
-        Q_ASSERT(!_outgoingMavlinkChannelIsSet());
-        Q_ASSERT(!mavlinkChannelIsSet());
-        return;
-    }
-
     if (_outgoingMavlinkChannelIsSet()) {
         // Detach our _mockSigning before the channel is freed; the bytes back this struct in MockLink memory.
         mavlink_reset_channel_status(_outgoingMavlinkChannel);
         LinkManager::instance()->freeMavlinkChannel(_outgoingMavlinkChannel);
         _outgoingMavlinkChannel = LinkManager::invalidMavlinkChannel();
     }
-    mavlink_reset_channel_status(_incomingMavlinkChannel);
-    LinkManager::instance()->freeMavlinkChannel(_incomingMavlinkChannel);
-    _incomingMavlinkChannel = LinkManager::invalidMavlinkChannel();
+    if (_incomingMavlinkChannelIsSet()) {
+        mavlink_reset_channel_status(_incomingMavlinkChannel);
+        LinkManager::instance()->freeMavlinkChannel(_incomingMavlinkChannel);
+        _incomingMavlinkChannel = LinkManager::invalidMavlinkChannel();
+    }
     LinkInterface::_freeMavlinkChannel();
 }
 
@@ -390,56 +386,43 @@ void MockLink::_loadParams()
         paramFile.setFileName(":/MockLink/PX4MockLink.params");
     }
 
-    const bool success = paramFile.open(QFile::ReadOnly);
-    Q_UNUSED(success);
-    Q_ASSERT(success);
+    if (!paramFile.open(QFile::ReadOnly)) {
+        qCWarning(MockLinkLog) << "Unable to open mock parameters" << paramFile.fileName();
+        return;
+    }
 
     QTextStream paramStream(&paramFile);
     while (!paramStream.atEnd()) {
         const QString line = paramStream.readLine();
 
-        if (line.startsWith("#")) {
+        if (line.trimmed().isEmpty() || line.startsWith("#")) {
+            continue;
+        }
+        const QStringList paramData = line.split("\t");
+        if (paramData.count() != 5) {
+            qCWarning(MockLinkLog) << "Invalid mock parameter row";
             continue;
         }
 
-        const QStringList paramData = line.split("\t");
-        Q_ASSERT(paramData.count() == 5);
-
-        const int compId = paramData.at(1).toInt();
+        bool componentOk = false;
+        bool typeOk = false;
+        const int compId = paramData.at(1).toInt(&componentOk);
         const QString paramName = paramData.at(2);
-        const QString valStr = paramData.at(3);
-        const uint paramType = paramData.at(4).toUInt();
-
-        QVariant paramValue;
-        switch (paramType) {
-            case MAV_PARAM_TYPE_REAL32:
-                paramValue = QVariant(valStr.toFloat());
-                break;
-            case MAV_PARAM_TYPE_UINT32:
-                paramValue = QVariant(valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT32:
-                paramValue = QVariant(valStr.toInt());
-                break;
-            case MAV_PARAM_TYPE_UINT16:
-                paramValue = QVariant((quint16) valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT16:
-                paramValue = QVariant((qint16) valStr.toInt());
-                break;
-            case MAV_PARAM_TYPE_UINT8:
-                paramValue = QVariant((quint8) valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT8:
-                paramValue = QVariant((qint8) valStr.toUInt());
-                break;
-            default:
-                qCCritical(MockLinkVerboseLog) << "Unknown type" << paramType;
-                paramValue = QVariant(valStr.toInt());
-                break;
+        const uint paramType = paramData.at(4).toUInt(&typeOk);
+        if (!componentOk || compId <= 0 || compId > 255 || paramName.isEmpty() ||
+            paramName.toUtf8().size() > MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN || !typeOk ||
+            !((paramType >= MAV_PARAM_TYPE_UINT8 && paramType <= MAV_PARAM_TYPE_INT32) ||
+              paramType == MAV_PARAM_TYPE_REAL32)) {
+            qCWarning(MockLinkLog) << "Invalid mock parameter component, name or type" << paramName;
+            continue;
         }
-
-        qCDebug(MockLinkVerboseLog) << "Loading param" << paramName << paramValue;
+        const FactMetaData typeMetadata(ParameterManager::mavTypeToFactType(static_cast<MAV_PARAM_TYPE>(paramType)));
+        QVariant paramValue;
+        QString error;
+        if (!typeMetadata.convertAndValidateRaw(paramData.at(3), false, paramValue, error)) {
+            qCWarning(MockLinkLog) << "Invalid mock parameter value" << paramName << error;
+            continue;
+        }
 
         _mapParamName2Value[compId][paramName] = paramValue;
         _mapParamName2MavParamType[compId][paramName] = static_cast<MAV_PARAM_TYPE>(paramType);
@@ -1011,7 +994,9 @@ void MockLink::_handleSetMode(const mavlink_message_t& msg)
     mavlink_set_mode_t request{};
     mavlink_msg_set_mode_decode(&msg, &request);
 
-    Q_ASSERT(request.target_system == _vehicleSystemId);
+    if (request.target_system != _vehicleSystemId) {
+        return;
+    }
 
     _mavBaseMode = request.base_mode;
     _mavCustomMode = request.custom_mode;
@@ -1141,9 +1126,11 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t& msg)
 
 void MockLink::_setParamFloatUnionIntoMap(int componentId, const QString& paramName, float paramFloat)
 {
-    Q_ASSERT(_mapParamName2Value.contains(componentId));
-    Q_ASSERT(_mapParamName2Value[componentId].contains(paramName));
-    Q_ASSERT(_mapParamName2MavParamType[componentId].contains(paramName));
+    if (!_mapParamName2Value.value(componentId).contains(paramName) ||
+        !_mapParamName2MavParamType.value(componentId).contains(paramName)) {
+        qCWarning(MockLinkLog) << "Unknown mock parameter" << componentId << paramName;
+        return;
+    }
 
     const MAV_PARAM_TYPE paramType = _mapParamName2MavParamType[componentId][paramName];
     QVariant paramVariant;
@@ -1190,9 +1177,11 @@ void MockLink::setMockParamValue(int componentId, const QString& paramName, floa
 
 float MockLink::_floatUnionForParam(int componentId, const QString& paramName)
 {
-    Q_ASSERT(_mapParamName2Value.contains(componentId));
-    Q_ASSERT(_mapParamName2Value[componentId].contains(paramName));
-    Q_ASSERT(_mapParamName2MavParamType[componentId].contains(paramName));
+    if (!_mapParamName2Value.value(componentId).contains(paramName) ||
+        !_mapParamName2MavParamType.value(componentId).contains(paramName)) {
+        qCWarning(MockLinkLog) << "Unknown mock parameter" << componentId << paramName;
+        return 0.0f;
+    }
 
     const MAV_PARAM_TYPE paramType = _mapParamName2MavParamType[componentId][paramName];
     const QVariant paramVar = _mapParamName2Value[componentId][paramName];
@@ -1311,13 +1300,18 @@ void MockLink::_handleParamRequestList(const mavlink_message_t& msg)
     mavlink_param_request_list_t request{};
     mavlink_msg_param_request_list_decode(&msg, &request);
 
-    Q_ASSERT(request.target_system == _vehicleSystemId);
-    Q_ASSERT(request.target_component == MAV_COMP_ID_ALL);
+    if (request.target_system != _vehicleSystemId) {
+        return;
+    }
+    if (request.target_component != MAV_COMP_ID_ALL && !_mapParamName2Value.contains(request.target_component)) {
+        return;
+    }
 
     // Cache component IDs and first component's param names to avoid repeated keys() calls in worker
     // Thread safety: Lock mutex before modifying shared state accessed by worker thread
     QMutexLocker locker(&_paramRequestListMutex);
-    _paramRequestListComponentIds = _mapParamName2Value.keys();
+    _paramRequestListComponentIds =
+        request.target_component == MAV_COMP_ID_ALL ? _mapParamName2Value.keys() : QList<int>{request.target_component};
     if (!_paramRequestListComponentIds.isEmpty()) {
         _paramRequestListParamNames = _mapParamName2Value[_paramRequestListComponentIds.first()].keys();
     }
@@ -1330,13 +1324,11 @@ void MockLink::_handleParamRequestList(const mavlink_message_t& msg)
 
 void MockLink::_paramRequestListWorker()
 {
+    // Protect the completion check as well as the streamed state from main-thread updates.
+    QMutexLocker locker(&_paramRequestListMutex);
     if (_currentParamRequestListComponentIndex == -1) {
-        // Initial request complete
         return;
     }
-
-    // Thread safety: Lock mutex before accessing shared state modified by main thread
-    QMutexLocker locker(&_paramRequestListMutex);
 
     // Use cached lists instead of calling keys() on every iteration (500Hz)
     if (_currentParamRequestListComponentIndex >= _paramRequestListComponentIds.count()) {
@@ -1358,8 +1350,8 @@ void MockLink::_paramRequestListWorker()
             valueUnion.type = MAV_PARAM_TYPE_UINT32;
             valueUnion.param_uint32 = _computeParamHash(componentId);
 
-            char paramId[MAVLINK_MSG_ID_PARAM_VALUE_LEN]{};
-            (void) strncpy(paramId, "_HASH_CHECK", MAVLINK_MSG_ID_PARAM_VALUE_LEN);
+            char paramId[MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN + 1]{};
+            (void) strncpy(paramId, "_HASH_CHECK", MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN);
 
             qCDebug(MockLinkLog) << "Sending _HASH_CHECK in PARAM_REQUEST_LIST stream" << componentId
                                  << "hash:" << valueUnion.param_uint32;
@@ -1397,16 +1389,19 @@ void MockLink::_paramRequestListWorker()
         (paramName == _failParam)) {
         qCDebug(MockLinkLog) << "Skipping param send:" << paramName;
     } else {
-        char paramId[MAVLINK_MSG_ID_PARAM_VALUE_LEN]{};
+        char paramId[MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN + 1]{};
         mavlink_message_t responseMsg{};
 
-        Q_ASSERT(_mapParamName2Value[componentId].contains(paramName));
-        Q_ASSERT(_mapParamName2MavParamType[componentId].contains(paramName));
-
+        const QByteArray nameBytes = paramName.toUtf8();
+        if (!_mapParamName2Value.value(componentId).contains(paramName) ||
+            !_mapParamName2MavParamType.value(componentId).contains(paramName) ||
+            nameBytes.size() > MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN) {
+            qCWarning(MockLinkLog) << "Invalid streamed mock parameter" << componentId << paramName;
+            ++_currentParamRequestListParamIndex;
+            return;
+        }
         const MAV_PARAM_TYPE paramType = _mapParamName2MavParamType[componentId][paramName];
-
-        Q_ASSERT(paramName.length() <= MAVLINK_MSG_ID_PARAM_VALUE_LEN);
-        (void) strncpy(paramId, paramName.toLocal8Bit().constData(), MAVLINK_MSG_ID_PARAM_VALUE_LEN);
+        memcpy(paramId, nameBytes.constData(), nameBytes.size());
 
         qCDebug(MockLinkLog) << "Sending msg_param_value" << componentId << paramId << paramType
                              << _mapParamName2Value[componentId][paramId];
@@ -1433,8 +1428,13 @@ void MockLink::_handleParamSet(const mavlink_message_t& msg)
     mavlink_param_set_t request{};
     mavlink_msg_param_set_decode(&msg, &request);
 
-    Q_ASSERT(request.target_system == _vehicleSystemId);
+    if (request.target_system != _vehicleSystemId) {
+        return;
+    }
     const int componentId = request.target_component;
+    if (!_mapParamName2Value.contains(componentId)) {
+        return;
+    }
 
     // Param may not be null terminated if exactly fits
     char paramId[MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN + 1]{};
@@ -1456,10 +1456,11 @@ void MockLink::_handleParamSet(const mavlink_message_t& msg)
         return;
     }
 
-    Q_ASSERT(_mapParamName2Value.contains(componentId));
-    Q_ASSERT(_mapParamName2MavParamType.contains(componentId));
-    Q_ASSERT(_mapParamName2Value[componentId].contains(paramId));
-    Q_ASSERT(request.param_type == _mapParamName2MavParamType[componentId][paramId]);
+    if (!_mapParamName2Value.value(componentId).contains(paramId) ||
+        !_mapParamName2MavParamType.value(componentId).contains(paramId) ||
+        request.param_type != _mapParamName2MavParamType.value(componentId).value(paramId)) {
+        return;
+    }
 
     // Apply failure behaviors before committing change.
     if (_paramSetFailureMode == FailParamSetFirstAttemptNoAck && _paramSetFailureFirstAttemptPending) {
@@ -1508,6 +1509,9 @@ void MockLink::_handleParamRequestRead(const mavlink_message_t& msg)
         request.param_id,
         static_cast<int>(strnlen(request.param_id, MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN))));
     const int componentId = request.target_component;
+    if (request.target_system != _vehicleSystemId || !_mapParamName2Value.contains(componentId)) {
+        return;
+    }
 
     // special case for magic _HASH_CHECK value (PX4 only)
     if ((_firmwareType == MAV_AUTOPILOT_PX4) && (paramName == "_HASH_CHECK")) {
@@ -1530,27 +1534,32 @@ void MockLink::_handleParamRequestRead(const mavlink_message_t& msg)
         return;
     }
 
-    Q_ASSERT(_mapParamName2Value.contains(componentId));
-
     char paramId[MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN + 1]{};
     paramId[0] = 0;
 
-    Q_ASSERT(request.target_system == _vehicleSystemId);
+    if (request.target_system != _vehicleSystemId) {
+        return;
+    }
 
     if (request.param_index == -1) {
         // Request is by param name. Param may not be null terminated if exactly fits
         (void) strncpy(paramId, request.param_id, MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN);
     } else {
         // Request is by index
-        Q_ASSERT(request.param_index >= 0 && request.param_index < _mapParamName2Value[componentId].count());
-
-        const QString key = _mapParamName2Value[componentId].keys().at(request.param_index);
-        Q_ASSERT(key.length() <= MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN);
-        strcpy(paramId, key.toLocal8Bit().constData());
+        if (request.param_index < 0 || request.param_index >= _mapParamName2Value[componentId].count()) {
+            return;
+        }
+        const QByteArray key = _mapParamName2Value[componentId].keys().at(request.param_index).toUtf8();
+        if (key.size() > MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN) {
+            return;
+        }
+        memcpy(paramId, key.constData(), key.size());
     }
 
-    Q_ASSERT(_mapParamName2Value[componentId].contains(paramId));
-    Q_ASSERT(_mapParamName2MavParamType[componentId].contains(paramId));
+    if (!_mapParamName2Value.value(componentId).contains(paramId) ||
+        !_mapParamName2MavParamType.value(componentId).contains(paramId)) {
+        return;
+    }
 
     if ((_failureMode == MockConfiguration::FailMissingParamOnAllRequests) && (strcmp(paramId, _failParam) == 0)) {
         qCDebug(MockLinkLog) << "Ignoring request read for " << _failParam;
@@ -2367,6 +2376,10 @@ void MockLink::_handleLogRequestData(const mavlink_message_t& msg)
 {
     mavlink_log_request_data_t request{};
     mavlink_msg_log_request_data_decode(&msg, &request);
+    if (request.target_system != _vehicleSystemId ||
+        (request.target_component != MAV_COMP_ID_ALL && request.target_component != _vehicleComponentId)) {
+        return;
+    }
 
 #ifdef QGC_UNITTEST_BUILD
     if (_logDownloadFilename.isEmpty()) {
@@ -2379,7 +2392,7 @@ void MockLink::_handleLogRequestData(const mavlink_message_t& msg)
         return;
     }
 
-    if (request.ofs > (_logDownloadFileSize - 1)) {
+    if (request.ofs >= _logDownloadFileSize) {
         qCWarning(MockLinkLog) << "_handleLogRequestData offset past end of file request.ofs:size" << request.ofs
                                << _logDownloadFileSize;
         return;
@@ -2390,10 +2403,7 @@ void MockLink::_handleLogRequestData(const mavlink_message_t& msg)
     // worker reading inconsistent offset/count or using stale values while downloading.
     QMutexLocker locker(&_logDownloadMutex);
     _logDownloadCurrentOffset = request.ofs;
-    if (request.ofs + request.count > _logDownloadFileSize) {
-        request.count = _logDownloadFileSize - request.ofs;
-    }
-    _logDownloadBytesRemaining = request.count;
+    _logDownloadBytesRemaining = qMin(request.count, _logDownloadFileSize - request.ofs);
 }
 
 void MockLink::_logDownloadWorker()
@@ -2408,14 +2418,19 @@ void MockLink::_logDownloadWorker()
     QFile file(_logDownloadFilename);
     if (!file.open(QIODevice::ReadOnly)) {
         qCWarning(MockLinkLog) << "_logDownloadWorker open failed" << file.errorString();
+        _logDownloadBytesRemaining = 0;
         return;
     }
 
     uint8_t buffer[MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN]{};
 
     const qint64 bytesToRead = qMin(_logDownloadBytesRemaining, (uint32_t) MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN);
-    Q_ASSERT(file.seek(_logDownloadCurrentOffset));
-    Q_ASSERT(file.read(reinterpret_cast<char*>(buffer), bytesToRead) == bytesToRead);
+    if (!file.seek(_logDownloadCurrentOffset) ||
+        file.read(reinterpret_cast<char*>(buffer), bytesToRead) != bytesToRead) {
+        qCWarning(MockLinkLog) << "_logDownloadWorker unable to read requested log data" << file.errorString();
+        _logDownloadBytesRemaining = 0;
+        return;
+    }
 
     qCDebug(MockLinkLog) << "_logDownloadWorker" << _logDownloadCurrentOffset << _logDownloadBytesRemaining;
 

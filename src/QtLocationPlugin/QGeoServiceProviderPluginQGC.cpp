@@ -44,8 +44,16 @@ QGeoMappingManagerEngine* QGeoServiceProviderFactoryQGC::createMappingManagerEng
         *errorString = "";
     }
 
-    Q_ASSERT(m_engine);
-    Q_ASSERT(m_engine->thread() == QThread::currentThread());
+    if (!m_engine || m_engine->thread() != QThread::currentThread()) {
+        if (error) {
+            *error = QGeoServiceProvider::LoaderError;
+        }
+        if (errorString) {
+            *errorString = tr("A QML engine on the current thread is required for mapping");
+        }
+        qCWarning(QGeoServiceProviderFactoryQGCLog) << "Mapping requested without a QML engine on the current thread";
+        return nullptr;
+    }
 
     QNetworkAccessManager* networkManager = m_engine->networkAccessManager();
 

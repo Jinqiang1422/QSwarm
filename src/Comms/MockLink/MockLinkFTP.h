@@ -15,6 +15,7 @@ class MockLink;
 class MockLinkFTP : public QObject
 {
     Q_OBJECT
+    friend class MockLinkProtocolTest;
 
 public:
     MockLinkFTP(uint8_t systemIdServer, uint8_t componentIdServer, MockLink* mockLink);

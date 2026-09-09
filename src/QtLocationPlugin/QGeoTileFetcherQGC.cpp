@@ -25,8 +25,6 @@ QGeoTileFetcherQGC::QGeoTileFetcherQGC(QNetworkAccessManager* networkManager, co
                                        QGeoTiledMappingManagerEngineQGC* parent)
     : QGeoTileFetcher(parent), m_networkManager(networkManager)
 {
-    Q_ASSERT(networkManager);
-
     qCDebug(QGeoTileFetcherQGCLog) << this;
 
     // TODO: Allow useragent override again
@@ -42,6 +40,9 @@ QGeoTileFetcherQGC::~QGeoTileFetcherQGC()
 
 QGeoTiledMapReply* QGeoTileFetcherQGC::getTileImage(const QGeoTileSpec& spec)
 {
+    if (!m_networkManager) {
+        return nullptr;
+    }
     const SharedMapProvider provider = UrlFactory::getMapProviderFromQtMapId(spec.mapId());
     if (!provider) {
         return nullptr;

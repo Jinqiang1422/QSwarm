@@ -206,8 +206,6 @@ bool QGCSerialPortInfo::getBoardInfo(QGCSerialPortInfo::BoardType_t& boardType, 
         }
     }
 
-    Q_ASSERT(boardType == BoardTypeUnknown);
-
     for (const BoardRegExpFallback_t& boardFallback : _boardDescriptionFallbackList) {
         if (description().contains(boardFallback.regExp)) {
 #ifndef Q_OS_ANDROID

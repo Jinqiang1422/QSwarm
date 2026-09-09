@@ -1579,11 +1579,9 @@ GstPadProbeReturn GstVideoReceiver::_videoSinkProbe(GstPad* pad, GstPadProbeInfo
 GstPadProbeReturn GstVideoReceiver::_eosProbe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
     Q_UNUSED(pad);
-    Q_ASSERT(user_data);
-
-    if (info) {
+    if (info && user_data) {
         const GstEvent* event = gst_pad_probe_info_get_event(info);
-        if (GST_EVENT_TYPE(event) == GST_EVENT_EOS) {
+        if (event && GST_EVENT_TYPE(event) == GST_EVENT_EOS) {
             GstVideoReceiver* pThis = static_cast<GstVideoReceiver*>(user_data);
             pThis->_noteEndOfStream();
         }

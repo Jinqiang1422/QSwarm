@@ -3,6 +3,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QThread>
+#include <limits>
 
 #include "FirmwareImage.h"
 #include "QGCLoggingCategory.h"
@@ -185,6 +186,10 @@ bool Bootloader::erase(void)
 
 bool Bootloader::program(const FirmwareImage* image)
 {
+    if (!image || image->imageSize() == 0) {
+        _errorString = tr("Firmware image is empty or unavailable");
+        return false;
+    }
     if (image->imageIsBinFormat()) {
         return _binProgram(image);
     } else {
@@ -353,13 +358,18 @@ bool Bootloader::_binProgram(const FirmwareImage* image)
         _errorString = tr("Unable to open firmware file %1: %2").arg(image->binFilename(), firmwareFile.errorString());
         return false;
     }
-    uint32_t imageSize = (uint32_t) firmwareFile.size();
+    const qint64 fileSize = firmwareFile.size();
+    if (fileSize <= 0 || fileSize > std::numeric_limits<int>::max() || fileSize % 4 != 0) {
+        _errorString = tr("Invalid binary firmware size: %1 (must be positive and aligned to 4 bytes)").arg(fileSize);
+        return false;
+    }
+    const uint32_t imageSize = static_cast<uint32_t>(fileSize);
 
     uint8_t imageBuf[PROG_MULTI_MAX];
     uint32_t bytesSent = 0;
     _imageCRC = 0;
 
-    Q_ASSERT(PROG_MULTI_MAX <= 0x8F);
+    static_assert(PROG_MULTI_MAX > 0 && PROG_MULTI_MAX <= 0x8F && PROG_MULTI_MAX % 4 == 0);
 
     while (bytesSent < imageSize) {
         int bytesToSend = imageSize - bytesSent;
@@ -367,15 +377,11 @@ bool Bootloader::_binProgram(const FirmwareImage* image)
             bytesToSend = (int) sizeof(imageBuf);
         }
 
-        Q_ASSERT((bytesToSend % 4) == 0);
-
         int bytesRead = firmwareFile.read((char*) imageBuf, bytesToSend);
         if (bytesRead == -1 || bytesRead != bytesToSend) {
             _errorString = tr("Firmware file read failed: %1").arg(firmwareFile.errorString());
             return false;
         }
-
-        Q_ASSERT(bytesToSend <= 0x8F);
 
         bool failed = true;
         if (_write(PROTO_PROG_MULTI) && _write((uint8_t) bytesToSend) && _write(imageBuf, bytesToSend) &&
@@ -486,6 +492,10 @@ bool Bootloader::_ihxProgram(const FirmwareImage* image)
 
 bool Bootloader::verify(const FirmwareImage* image)
 {
+    if (!image || image->imageSize() == 0) {
+        _errorString = tr("Firmware image is empty or unavailable");
+        return false;
+    }
     bool ret;
 
     if (!image->imageIsBinFormat() || _bootloaderVersion <= 2) {
@@ -494,7 +504,9 @@ bool Bootloader::verify(const FirmwareImage* image)
         ret = _verifyCRC();
     }
 
-    reboot();
+    if (ret) {
+        reboot();
+    }
 
     return ret;
 }
@@ -511,14 +523,17 @@ bool Bootloader::_verifyBytes(const FirmwareImage* image)
 
 bool Bootloader::_binVerifyBytes(const FirmwareImage* image)
 {
-    Q_ASSERT(image->imageIsBinFormat());
-
     QFile firmwareFile(image->binFilename());
     if (!firmwareFile.open(QIODevice::ReadOnly)) {
         _errorString = tr("Unable to open firmware file %1: %2").arg(image->binFilename(), firmwareFile.errorString());
         return false;
     }
-    uint32_t imageSize = (uint32_t) firmwareFile.size();
+    const qint64 fileSize = firmwareFile.size();
+    if (fileSize <= 0 || fileSize > std::numeric_limits<int>::max() || fileSize % 4 != 0) {
+        _errorString = tr("Invalid binary firmware size: %1 (must be positive and aligned to 4 bytes)").arg(fileSize);
+        return false;
+    }
+    const uint32_t imageSize = static_cast<uint32_t>(fileSize);
 
     if (!_sendCommand(PROTO_CHIP_VERIFY)) {
         return false;
@@ -528,7 +543,7 @@ bool Bootloader::_binVerifyBytes(const FirmwareImage* image)
     uint8_t readBuf[READ_MULTI_MAX];
     uint32_t bytesVerified = 0;
 
-    Q_ASSERT(PROG_MULTI_MAX <= 0x8F);
+    static_assert(READ_MULTI_MAX > 0 && READ_MULTI_MAX <= 0x8F && READ_MULTI_MAX % 4 == 0);
 
     while (bytesVerified < imageSize) {
         int bytesToRead = imageSize - bytesVerified;
@@ -536,15 +551,11 @@ bool Bootloader::_binVerifyBytes(const FirmwareImage* image)
             bytesToRead = (int) sizeof(readBuf);
         }
 
-        Q_ASSERT((bytesToRead % 4) == 0);
-
         int bytesRead = firmwareFile.read((char*) fileBuf, bytesToRead);
         if (bytesRead == -1 || bytesRead != bytesToRead) {
             _errorString = tr("Firmware file read failed: %1").arg(firmwareFile.errorString());
             return false;
         }
-
-        Q_ASSERT(bytesToRead <= 0x8F);
 
         bool failed = true;
         if (_write(PROTO_READ_MULTI) && _write((uint8_t) bytesToRead) && _write(PROTO_EOC)) {
@@ -583,8 +594,6 @@ bool Bootloader::_binVerifyBytes(const FirmwareImage* image)
 
 bool Bootloader::_ihxVerifyBytes(const FirmwareImage* image)
 {
-    Q_ASSERT(!image->imageIsBinFormat());
-
     uint32_t imageSize = image->imageSize();
     uint32_t bytesVerified = 0;
 

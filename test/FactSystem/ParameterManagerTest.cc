@@ -1,17 +1,71 @@
 #include "ParameterManagerTest.h"
 
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QTextStream>
 #include <QtTest/QSignalSpy>
 #include <cmath>
 #include <limits>
 
 #include "BulkRefreshJob.h"
+#include "FirmwarePlugin.h"
 #include "MockLinkFTP.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
 #include "QGCMath.h"
 #include "Vehicle.h"
+
+void ParameterManagerTest::_offlineParameterValues_data()
+{
+    QTest::addColumn<int>("firmware");
+    QTest::addColumn<int>("vehicleType");
+    QTest::newRow("PX4") << int(MAV_AUTOPILOT_PX4) << int(MAV_TYPE_QUADROTOR);
+    QTest::newRow("Copter") << int(MAV_AUTOPILOT_ARDUPILOTMEGA) << int(MAV_TYPE_QUADROTOR);
+    QTest::newRow("Plane") << int(MAV_AUTOPILOT_ARDUPILOTMEGA) << int(MAV_TYPE_FIXED_WING);
+    QTest::newRow("Rover") << int(MAV_AUTOPILOT_ARDUPILOTMEGA) << int(MAV_TYPE_GROUND_ROVER);
+    QTest::newRow("Sub") << int(MAV_AUTOPILOT_ARDUPILOTMEGA) << int(MAV_TYPE_SUBMARINE);
+}
+
+void ParameterManagerTest::_offlineParameterValues()
+{
+    QFETCH(int, firmware);
+    QFETCH(int, vehicleType);
+    // The bundled ArduPilot metadata advertises zero below RTL_CONE_SLOPE's minimum of 0.5.
+    // Keep this known fixture warning visible, as in the mission and QML integration tests.
+    ignoreLogMessage(
+        "FirmwarePlugin.ParameterMetaData", QtWarningMsg,
+        QRegularExpression(QStringLiteral("Skipping invalid enum value for \"RTL_CONE_SLOPE\" code: \"0\"")));
+    Vehicle vehicle(static_cast<MAV_AUTOPILOT>(firmware), static_cast<MAV_TYPE>(vehicleType));
+    ParameterManager* manager = vehicle.parameterManager();
+    QVERIFY(manager);
+    QVERIFY(manager->parametersReady());
+    QFile file(vehicle.firmwarePlugin()->offlineEditingParamFile(&vehicle));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QTextStream stream(&file);
+    int nonZeroValues = 0;
+    while (!stream.atEnd()) {
+        const QString line = stream.readLine();
+        if (line.startsWith('#') || line.trimmed().isEmpty()) {
+            continue;
+        }
+        const QStringList fields = line.split('\t');
+        QCOMPARE(fields.size(), 5);
+        const int component = fields[1].toInt();
+        const QString name = fields[2];
+        QVERIFY2(manager->parameterExists(component, name), qPrintable(name));
+        Fact* fact = manager->getParameter(component, name);
+        QVERIFY(fact);
+        QCOMPARE(fact, manager->getParameter(ParameterManager::defaultComponentId, name));
+        if (fields[4].toInt() == MAV_PARAM_TYPE_REAL32) {
+            QCOMPARE(fact->rawValue().toFloat(), fields[3].toFloat());
+        } else {
+            QCOMPARE(fact->rawValue().toLongLong(), fields[3].toLongLong());
+        }
+        nonZeroValues += fields[3].toDouble() != 0.0;
+    }
+    QVERIFY(nonZeroValues > 0);
+}
 
 void ParameterManagerTest::cleanup()
 {

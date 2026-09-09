@@ -5,7 +5,46 @@
 #include <QtCore/QTextStream>
 #include <QtTest/QSignalSpy>
 
+#include "Bootloader.h"
+#include "FirmwareImage.h"
 #include "FirmwareUpgradeController.h"
+
+void FirmwareUpgradeControllerTest::_invalidBootloaderImage_data()
+{
+    QTest::addColumn<int>("size");
+    QTest::addColumn<bool>("verify");
+    for (int size : {0, 1, 3, 5, 65}) {
+        QTest::addRow("program-%d", size) << size << false;
+        QTest::addRow("verify-%d", size) << size << true;
+    }
+}
+
+void FirmwareUpgradeControllerTest::_invalidBootloaderImage()
+{
+    QFETCH(int, size);
+    QFETCH(bool, verify);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile file(directory.filePath(QStringLiteral("firmware.bin")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(size, 'x')), size);
+    file.close();
+    FirmwareImage image;
+    QVERIFY(image.load(file.fileName(), 0));
+    Bootloader bootloader(false);
+    QVERIFY(!(verify ? bootloader.verify(&image) : bootloader.program(&image)));
+    QVERIFY(bootloader.errorString().contains(size == 0 ? QStringLiteral("empty") : QStringLiteral("size")));
+}
+
+void FirmwareUpgradeControllerTest::_missingBootloaderImage()
+{
+    Bootloader bootloader(false);
+    QVERIFY(!bootloader.program(nullptr));
+    QVERIFY(!bootloader.verify(nullptr));
+    FirmwareImage unloadedImage;
+    QVERIFY(!bootloader.program(&unloadedImage));
+    QVERIFY(!bootloader.verify(&unloadedImage));
+}
 
 void FirmwareUpgradeControllerTest::_manifestCompleteErrorClearsDownloadingState()
 {

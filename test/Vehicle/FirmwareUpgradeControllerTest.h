@@ -7,6 +7,9 @@ class FirmwareUpgradeControllerTest : public UnitTest
     Q_OBJECT
 
 private slots:
+    void _invalidBootloaderImage_data();
+    void _invalidBootloaderImage();
+    void _missingBootloaderImage();
     void _manifestCompleteErrorClearsDownloadingState();
     void _manifestCompleteBadJsonClearsDownloadingState();
     void _manifestCompleteValidJsonPopulatesManifestInfo();

@@ -9,6 +9,8 @@ target_sources(
             LinkConfigurationTest.h
             LinkManagerTest.cc
             LinkManagerTest.h
+            MockLinkProtocolTest.cc
+            MockLinkProtocolTest.h
             LogReplayLinkControllerTest.cc
             LogReplayLinkControllerTest.h
             QGCSerialPortInfoTest.cc
@@ -31,3 +33,14 @@ add_qgc_test(
 add_qgc_test(LinkManagerTest LABELS Integration Comms SERIAL)
 add_qgc_test(LogReplayLinkControllerTest LABELS Unit Comms)
 add_qgc_test(QGCSerialPortInfoTest LABELS Unit Comms)
+
+add_qgc_test(
+    MockLinkProtocolTest
+    LABELS
+    Unit
+    Comms
+    RESOURCE_LOCK
+    Settings
+    TempFiles
+    SERIAL
+)

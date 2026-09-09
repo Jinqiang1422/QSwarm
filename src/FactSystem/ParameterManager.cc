@@ -1506,60 +1506,57 @@ void ParameterManager::_loadOfflineEditingParams()
     QFile paramFile(paramFilename);
     if (!paramFile.open(QFile::ReadOnly)) {
         qCWarning(ParameterManagerLog) << "Unable to open offline editing params file" << paramFilename;
+        return;
     }
 
     QTextStream paramStream(&paramFile);
     while (!paramStream.atEnd()) {
         const QString line = paramStream.readLine();
-        if (line.startsWith("#")) {
+        if (line.trimmed().isEmpty() || line.startsWith("#")) {
             continue;
         }
 
         const QStringList paramData = line.split("\t");
-        Q_ASSERT(paramData.count() == 5);
-
-        const int offlineDefaultComponentId = paramData.at(1).toInt();
-        _vehicle->setOfflineEditingDefaultComponentId(offlineDefaultComponentId);
-        const QString paramName = paramData.at(2);
-        const QString valStr = paramData.at(3);
-        const MAV_PARAM_TYPE paramType = static_cast<MAV_PARAM_TYPE>(paramData.at(4).toUInt());
-
-        QVariant paramValue;
-        switch (paramType) {
-            case MAV_PARAM_TYPE_REAL32:
-                paramValue = QVariant(valStr.toFloat());
-                break;
-            case MAV_PARAM_TYPE_UINT32:
-                paramValue = QVariant(valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_UINT16:
-                paramValue = QVariant((quint16) valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT16:
-                paramValue = QVariant((qint16) valStr.toInt());
-                break;
-            case MAV_PARAM_TYPE_UINT8:
-                paramValue = QVariant((quint8) valStr.toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT8:
-                paramValue = QVariant((qint8) valStr.toUInt());
-                break;
-            default:
-                qCCritical(ParameterManagerLog) << "Unknown type" << paramType;
-                [[fallthrough]];
-            case MAV_PARAM_TYPE_INT32:
-                paramValue = QVariant(valStr.toInt());
-                break;
+        if (paramData.count() != 5) {
+            qCWarning(ParameterManagerLog) << "Invalid offline parameter row in" << paramFilename;
+            continue;
         }
 
+        bool componentOk = false;
+        bool typeOk = false;
+        const int offlineDefaultComponentId = paramData.at(1).toInt(&componentOk);
+        const QString paramName = paramData.at(2);
+        const uint typeId = paramData.at(4).toUInt(&typeOk);
+        if (!componentOk || offlineDefaultComponentId <= 0 || offlineDefaultComponentId > 255 || paramName.isEmpty() ||
+            paramName.toUtf8().size() > MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN || !typeOk ||
+            !((typeId >= MAV_PARAM_TYPE_UINT8 && typeId <= MAV_PARAM_TYPE_INT32) || typeId == MAV_PARAM_TYPE_REAL32)) {
+            qCWarning(ParameterManagerLog) << "Invalid offline parameter component, name or type" << paramName;
+            continue;
+        }
+
+        const auto paramType = static_cast<MAV_PARAM_TYPE>(typeId);
+        const FactMetaData typeMetadata(mavTypeToFactType(paramType));
+        QVariant paramValue;
+        QString error;
+        if (!typeMetadata.convertAndValidateRaw(paramData.at(3), false, paramValue, error)) {
+            qCWarning(ParameterManagerLog) << "Invalid offline parameter value" << paramName << error;
+            continue;
+        }
+        if (_mapCompId2FactMap.value(offlineDefaultComponentId).contains(paramName)) {
+            qCWarning(ParameterManagerLog) << "Duplicate offline parameter" << paramName;
+            continue;
+        }
+
+        _vehicle->setOfflineEditingDefaultComponentId(offlineDefaultComponentId);
         Fact* const fact = new Fact(offlineDefaultComponentId, paramName, mavTypeToFactType(paramType), this);
 
         FactMetaData* const factMetaData = _vehicle->compInfoManager()
                                                ->compInfoParam(offlineDefaultComponentId)
                                                ->factMetaDataForName(paramName, fact->type());
         fact->setMetaData(factMetaData);
+        fact->setRawValue(paramValue);
 
-        _mapCompId2FactMap[defaultComponentId][paramName] = fact;
+        _mapCompId2FactMap[offlineDefaultComponentId][paramName] = fact;
     }
 
     _parametersReady = true;
