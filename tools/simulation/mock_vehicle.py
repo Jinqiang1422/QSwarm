@@ -75,7 +75,7 @@ class VehicleState:
     airspeed: float = 0.0
     climb_rate: float = 0.0
     battery_voltage: float = 12.6
-    battery_remaining: int = 100
+    battery_remaining: float = 100.0
     armed: bool = False
     mode: str = "STABILIZE"
     gps_fix: int = 3  # 3D fix
@@ -90,7 +90,7 @@ class MockVehicle:
         self.component_id = component_id
         self.state = VehicleState()
         self.running = False
-        self.connection = None
+        self.connection: mavutil.mavfile | None = None
         self.start_time = time.time()
 
         # Mode mapping
@@ -105,23 +105,30 @@ class MockVehicle:
             "LAND": 9,
         }
 
+    def _require_connection(self) -> mavutil.mavfile:
+        if self.connection is None:
+            raise RuntimeError("Connect the mock vehicle before sending or receiving messages")
+        return self.connection
+
     def connect_udp(self, host="127.0.0.1", port=14550):
         """Connect via UDP."""
-        self.connection = mavutil.mavlink_connection(
-            f"udpout:{host}:{port}",
-            source_system=self.system_id,
-            source_component=self.component_id,
-        )
+        self._connect(f"udpout:{host}:{port}")
         print(f"UDP connection to {host}:{port}")
 
     def connect_tcp(self, host="127.0.0.1", port=5760):
         """Connect via TCP (SITL-style)."""
-        self.connection = mavutil.mavlink_connection(
-            f"tcp:{host}:{port}",
+        self._connect(f"tcp:{host}:{port}")
+        print(f"TCP connection on {host}:{port}")
+
+    def _connect(self, endpoint: str) -> None:
+        connection = mavutil.mavlink_connection(
+            endpoint,
             source_system=self.system_id,
             source_component=self.component_id,
         )
-        print(f"TCP connection on {host}:{port}")
+        if not isinstance(connection, mavutil.mavfile):
+            raise RuntimeError(f"Unsupported MAVLink connection for {endpoint}")
+        self.connection = connection
 
     def send_heartbeat(self):
         """Send heartbeat message."""
@@ -131,7 +138,7 @@ class MockVehicle:
 
         custom_mode = self.modes.get(self.state.mode, 0)
 
-        self.connection.mav.heartbeat_send(
+        self._require_connection().mav.heartbeat_send(
             mavlink.MAV_TYPE_QUADROTOR,
             mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
             base_mode,
@@ -142,14 +149,14 @@ class MockVehicle:
     def send_sys_status(self):
         """Send system status."""
         voltage = int(self.state.battery_voltage * 1000)
-        self.connection.mav.sys_status_send(
+        self._require_connection().mav.sys_status_send(
             0xFFFFFFFF,  # sensors present
             0xFFFFFFFF,  # sensors enabled
             0xFFFFFFFF,  # sensors health
             500,  # load (50%)
             voltage,  # voltage_battery (mV)
             -1,  # current_battery
-            self.state.battery_remaining,
+            int(self.state.battery_remaining),
             0,
             0,
             0,
@@ -164,7 +171,7 @@ class MockVehicle:
         lon = int(self.state.lon * 1e7)
         alt = int(self.state.alt * 1000)
 
-        self.connection.mav.gps_raw_int_send(
+        self._require_connection().mav.gps_raw_int_send(
             int((time.time() - self.start_time) * 1e6),
             self.state.gps_fix,
             lat,
@@ -184,7 +191,7 @@ class MockVehicle:
         alt = int(self.state.alt * 1000)
         relative_alt = int(self.state.alt * 1000)
 
-        self.connection.mav.global_position_int_send(
+        self._require_connection().mav.global_position_int_send(
             int((time.time() - self.start_time) * 1000),
             lat,
             lon,
@@ -198,7 +205,7 @@ class MockVehicle:
 
     def send_attitude(self):
         """Send attitude."""
-        self.connection.mav.attitude_send(
+        self._require_connection().mav.attitude_send(
             int((time.time() - self.start_time) * 1000),
             math.radians(self.state.roll),
             math.radians(self.state.pitch),
@@ -210,7 +217,7 @@ class MockVehicle:
 
     def send_vfr_hud(self):
         """Send VFR HUD data."""
-        self.connection.mav.vfr_hud_send(
+        self._require_connection().mav.vfr_hud_send(
             self.state.airspeed,
             self.state.groundspeed,
             int(self.state.heading),
@@ -222,7 +229,7 @@ class MockVehicle:
     def send_battery_status(self):
         """Send battery status."""
         voltages = [int(self.state.battery_voltage * 1000)] + [65535] * 9
-        self.connection.mav.battery_status_send(
+        self._require_connection().mav.battery_status_send(
             0,  # id
             mavlink.MAV_BATTERY_FUNCTION_ALL,
             mavlink.MAV_BATTERY_TYPE_LIPO,
@@ -231,7 +238,7 @@ class MockVehicle:
             -1,  # current
             -1,  # current consumed
             -1,  # energy consumed
-            self.state.battery_remaining,
+            int(self.state.battery_remaining),
         )
 
     def send_home_position(self):
@@ -239,7 +246,7 @@ class MockVehicle:
         lat = int(self.state.lat * 1e7)
         lon = int(self.state.lon * 1e7)
 
-        self.connection.mav.home_position_send(
+        self._require_connection().mav.home_position_send(
             lat,
             lon,
             0,  # home position
@@ -254,6 +261,8 @@ class MockVehicle:
 
     def update_simulation(self, dt):
         """Update simulated vehicle state."""
+        if not math.isfinite(dt) or dt < 0:
+            raise ValueError("Simulation timestep must be finite and nonnegative")
         # Simulate slow position drift
         if self.state.armed:
             self.state.heading = (self.state.heading + 1) % 360
@@ -265,12 +274,12 @@ class MockVehicle:
 
         # Battery drain
         if self.state.armed:
-            self.state.battery_remaining = max(0, self.state.battery_remaining - 0.01)
+            self.state.battery_remaining = max(0.0, self.state.battery_remaining - 0.1 * dt)
             self.state.battery_voltage = 10.5 + (self.state.battery_remaining / 100) * 2.1
 
     def handle_commands(self):
         """Handle incoming MAVLink commands."""
-        msg = self.connection.recv_match(blocking=False)
+        msg = self._require_connection().recv_match(blocking=False)
         if msg is None:
             return
 
@@ -311,11 +320,11 @@ class MockVehicle:
 
     def send_command_ack(self, command, result):
         """Send command acknowledgment."""
-        self.connection.mav.command_ack_send(command, result)
+        self._require_connection().mav.command_ack_send(command, result)
 
     def send_autopilot_version(self):
         """Send autopilot version info."""
-        self.connection.mav.autopilot_version_send(
+        self._require_connection().mav.autopilot_version_send(
             mavlink.MAV_PROTOCOL_CAPABILITY_MISSION_FLOAT
             | mavlink.MAV_PROTOCOL_CAPABILITY_PARAM_FLOAT
             | mavlink.MAV_PROTOCOL_CAPABILITY_COMMAND_INT,
@@ -341,7 +350,7 @@ class MockVehicle:
         ]
 
         for i, (name, value) in enumerate(params):
-            self.connection.mav.param_value_send(
+            self._require_connection().mav.param_value_send(
                 name.encode("utf-8"),
                 float(value),
                 mavlink.MAV_PARAM_TYPE_REAL32,
@@ -349,8 +358,11 @@ class MockVehicle:
                 i,
             )
 
-    def run(self, rate=10):
+    def run(self, rate: float = 10):
         """Main loop."""
+        if not math.isfinite(rate) or rate <= 0:
+            raise ValueError("Telemetry rate must be finite and positive")
+        self._require_connection()
         self.running = True
         dt = 1.0 / rate
         last_heartbeat = 0

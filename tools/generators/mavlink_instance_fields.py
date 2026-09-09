@@ -25,8 +25,15 @@ def resolve_includes(xml_dir: Path, dialect: str, visited: set | None = None) ->
     result = []
     tree = ET.parse(xml_path)
     root = tree.getroot()
+    if root is None or root.tag != "mavlink":
+        raise ValueError(f"{xml_path}: expected a mavlink root element")
     for include_elem in root.findall("include"):
-        included_dialect = include_elem.text.replace(".xml", "")
+        include_name = (include_elem.text or "").strip()
+        if not include_name:
+            raise ValueError(f"{xml_path}: empty include element")
+        included_dialect = include_name.removesuffix(".xml")
+        if not (xml_dir / f"{included_dialect}.xml").is_file():
+            raise ValueError(f"{xml_path}: included dialect {include_name} does not exist")
         result.extend(resolve_includes(xml_dir, included_dialect, visited))
     result.append(xml_path)
     return result
@@ -41,12 +48,21 @@ def extract_instance_fields(xml_paths: list[Path]) -> dict[int, tuple[str, str]]
     for xml_path in xml_paths:
         tree = ET.parse(xml_path)
         root = tree.getroot()
+        if root is None or root.tag != "mavlink":
+            raise ValueError(f"{xml_path}: expected a mavlink root element")
         for message in root.iter("message"):
-            msg_id = int(message.get("id"))
+            raw_id = message.get("id", "")
             msg_name = message.get("name")
+            if not raw_id.isdecimal() or not msg_name:
+                raise ValueError(f"{xml_path}: message requires a numeric id and a name")
+            msg_id = int(raw_id)
             for field in message.findall("field"):
                 if field.get("instance") == "true":
                     field_name = field.get("name")
+                    if not field_name:
+                        raise ValueError(
+                            f"{xml_path}: instance field in {msg_name} requires a name"
+                        )
                     if msg_id not in instance_fields:
                         instance_fields[msg_id] = (msg_name, field_name)
                     break  # Only one instance field per message
@@ -77,12 +93,14 @@ def generate_header(instance_fields: dict[int, tuple[str, str]]) -> str:
         msg_name, field_name = instance_fields[msg_id]
         lines.append(f'        {{{msg_id}, QStringLiteral("{field_name}")}},  // {msg_name}')
 
-    lines.extend([
-        "    };",
-        "    return fields;",
-        "}",
-        "",
-    ])
+    lines.extend(
+        [
+            "    };",
+            "    return fields;",
+            "}",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

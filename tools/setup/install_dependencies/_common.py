@@ -278,7 +278,7 @@ def _set_env_var_ci(name: str, value: str) -> None:
 
 def _set_env_var_local(name: str, value: str) -> None:
     """Set a machine-level environment variable via Windows registry."""
-    if not is_windows():
+    if sys.platform != "win32":
         raise RuntimeError("Local env var persistence is only supported on Windows")
     import winreg
 
@@ -303,7 +303,7 @@ def add_to_path(path_entry: str) -> None:
             with open(github_path, "a", encoding="utf-8") as f:
                 f.write(f"{path_entry}\n")
     else:
-        if not is_windows():
+        if sys.platform != "win32":
             raise RuntimeError("Local PATH persistence is only supported on Windows")
         import winreg
 

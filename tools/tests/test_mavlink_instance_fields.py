@@ -15,7 +15,8 @@ from generators.mavlink_instance_fields import (
 def xml_dir(tmp_path):
     """Create a minimal MAVLink XML structure for testing."""
     # minimal.xml - no instance fields
-    (tmp_path / "minimal.xml").write_text(textwrap.dedent("""\
+    (tmp_path / "minimal.xml").write_text(
+        textwrap.dedent("""\
         <?xml version="1.0"?>
         <mavlink>
           <messages>
@@ -24,10 +25,12 @@ def xml_dir(tmp_path):
             </message>
           </messages>
         </mavlink>
-    """))
+    """)
+    )
 
     # common.xml - includes minimal, has instance fields
-    (tmp_path / "common.xml").write_text(textwrap.dedent("""\
+    (tmp_path / "common.xml").write_text(
+        textwrap.dedent("""\
         <?xml version="1.0"?>
         <mavlink>
           <include>minimal.xml</include>
@@ -49,15 +52,18 @@ def xml_dir(tmp_path):
             </message>
           </messages>
         </mavlink>
-    """))
+    """)
+    )
 
     # all.xml - includes common
-    (tmp_path / "all.xml").write_text(textwrap.dedent("""\
+    (tmp_path / "all.xml").write_text(
+        textwrap.dedent("""\
         <?xml version="1.0"?>
         <mavlink>
           <include>common.xml</include>
         </mavlink>
-    """))
+    """)
+    )
 
     return tmp_path
 
@@ -87,16 +93,33 @@ class TestResolveIncludes:
         paths = resolve_includes(xml_dir, "nonexistent")
         assert paths == []
 
+    @pytest.mark.parametrize("include", ["", "missing.xml"])
+    def test_rejects_invalid_include(self, xml_dir, include):
+        (xml_dir / "broken.xml").write_text(f"<mavlink><include>{include}</include></mavlink>")
+        with pytest.raises(ValueError, match="include"):
+            resolve_includes(xml_dir, "broken")
+
+    def test_trims_include_whitespace(self, xml_dir):
+        (xml_dir / "spaced.xml").write_text("<mavlink><include> minimal.xml\n</include></mavlink>")
+        assert [p.name for p in resolve_includes(xml_dir, "spaced")] == [
+            "minimal.xml",
+            "spaced.xml",
+        ]
+
     def test_no_circular(self, xml_dir):
         """Circular includes don't infinite loop."""
-        (xml_dir / "a.xml").write_text(textwrap.dedent("""\
+        (xml_dir / "a.xml").write_text(
+            textwrap.dedent("""\
             <?xml version="1.0"?>
             <mavlink><include>b.xml</include></mavlink>
-        """))
-        (xml_dir / "b.xml").write_text(textwrap.dedent("""\
+        """)
+        )
+        (xml_dir / "b.xml").write_text(
+            textwrap.dedent("""\
             <?xml version="1.0"?>
             <mavlink><include>a.xml</include></mavlink>
-        """))
+        """)
+        )
         paths = resolve_includes(xml_dir, "a")
         assert len(paths) == 2
 
@@ -124,9 +147,31 @@ class TestExtractInstanceFields:
         assert 100 not in fields
         assert 0 not in fields
 
+    @pytest.mark.parametrize("attributes", ['name="TEST"', 'id="1"', 'id="bad" name="TEST"'])
+    def test_rejects_invalid_message(self, xml_dir, attributes):
+        path = xml_dir / "broken.xml"
+        path.write_text(f"<mavlink><messages><message {attributes}/></messages></mavlink>")
+        with pytest.raises(ValueError, match="numeric id and a name"):
+            extract_instance_fields([path])
+
+    def test_rejects_unnamed_instance(self, xml_dir):
+        path = xml_dir / "broken.xml"
+        path.write_text(
+            '<mavlink><message id="1" name="TEST"><field instance="true"/></message></mavlink>'
+        )
+        with pytest.raises(ValueError, match=r"instance field.*requires a name"):
+            extract_instance_fields([path])
+
+    def test_rejects_wrong_root(self, xml_dir):
+        path = xml_dir / "broken.xml"
+        path.write_text("<wrong/>")
+        with pytest.raises(ValueError, match="mavlink root"):
+            extract_instance_fields([path])
+
     def test_deduplicates_by_msg_id(self, xml_dir):
         """If same message appears in multiple XMLs, keep first occurrence."""
-        (xml_dir / "extra.xml").write_text(textwrap.dedent("""\
+        (xml_dir / "extra.xml").write_text(
+            textwrap.dedent("""\
             <?xml version="1.0"?>
             <mavlink>
               <include>common.xml</include>
@@ -136,7 +181,8 @@ class TestExtractInstanceFields:
                 </message>
               </messages>
             </mavlink>
-        """))
+        """)
+        )
         paths = resolve_includes(xml_dir, "extra")
         fields = extract_instance_fields(paths)
         # First occurrence wins (from common.xml)

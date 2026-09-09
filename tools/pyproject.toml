@@ -15,6 +15,7 @@ precommit = [
 ]
 test = [
   "pytest",
+  "pymavlink",
   "jinja2",
   "pyyaml",
   "tomli>=2.0; python_version < '3.11'",
