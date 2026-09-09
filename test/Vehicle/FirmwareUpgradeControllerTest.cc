@@ -1,11 +1,11 @@
 #include "FirmwareUpgradeControllerTest.h"
 
 #include <QtCore/QFile>
+#include <QtCore/QTemporaryDir>
 #include <QtCore/QTextStream>
 #include <QtTest/QSignalSpy>
 
 #include "FirmwareUpgradeController.h"
-#include <QtCore/QTemporaryDir>
 
 void FirmwareUpgradeControllerTest::_manifestCompleteErrorClearsDownloadingState()
 {
@@ -14,7 +14,8 @@ void FirmwareUpgradeControllerTest::_manifestCompleteErrorClearsDownloadingState
     QVERIFY(spy.isValid());
 
     controller._downloadingFirmwareList = true;
-    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg, QRegularExpression("ArduPilot Manifest download failed"));
+    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg,
+                     QRegularExpression("ArduPilot Manifest download failed"));
     controller._ardupilotManifestDownloadComplete(false, QString(), QStringLiteral("simulated error"));
     verifyExpectedLogMessage();
 
@@ -33,7 +34,8 @@ void FirmwareUpgradeControllerTest::_manifestCompleteBadJsonClearsDownloadingSta
     const QString missingFile = tempDir.filePath(QStringLiteral("missing_manifest.json"));
 
     controller._downloadingFirmwareList = true;
-    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg, QRegularExpression("Json file read failed"));
+    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg,
+                     QRegularExpression("Json file read failed"));
     controller._ardupilotManifestDownloadComplete(true, missingFile, QString());
     verifyExpectedLogMessage();
 
@@ -137,7 +139,8 @@ void FirmwareUpgradeControllerTest::_px4ReleasesCompleteBadJsonKeepsPreviousVers
     out << "{ invalid json\n";
     releasesFile.close();
 
-    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg, QRegularExpression("Unable to open px4 releases json document"));
+    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg,
+                     QRegularExpression("Unable to open px4 releases json document"));
     controller._px4ReleasesGithubDownloadComplete(true, releasesPath, QString());
     verifyExpectedLogMessage();
 
@@ -159,7 +162,8 @@ void FirmwareUpgradeControllerTest::_px4ReleasesCompleteNonArrayJsonKeepsPreviou
     out << "{ \"name\": \"v1.15.2\", \"prerelease\": false }\n";
     releasesFile.close();
 
-    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg, QRegularExpression("px4 releases json document is not an array"));
+    expectLogMessage("Vehicle.VehicleSetup.FirmwareUpgradeController", QtWarningMsg,
+                     QRegularExpression("px4 releases json document is not an array"));
     controller._px4ReleasesGithubDownloadComplete(true, releasesPath, QString());
     verifyExpectedLogMessage();
 

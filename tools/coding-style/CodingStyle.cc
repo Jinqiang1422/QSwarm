@@ -8,7 +8,6 @@
 
 #include <QtCore/QDebug>
 #include <QtCore/QFile>
-
 #include <algorithm>
 #include <cmath>
 #include <ranges>
@@ -222,9 +221,7 @@ T clampValue(T value, T min, T max)
 // repeat the function name in the message (the logging formatter already adds it).
 void exampleMultiValueLogging(uint8_t fromCompId, const QString& fromURI, const QString& toDir, const QString& fileName)
 {
-    qCDebug(CodingStyleLog) << "fromCompId:" << fromCompId
-                            << "fromURI:" << fromURI
-                            << "toDir:" << toDir
+    qCDebug(CodingStyleLog) << "fromCompId:" << fromCompId << "fromURI:" << fromURI << "toDir:" << toDir
                             << "fileName:" << fileName;
 }
 }  // anonymous namespace

@@ -1,17 +1,17 @@
 #include "VideoBackend.h"
 
-#include "AppMessages.h"
-#include "QGCApplication.h"
-
 #include <QtCore/QThread>
 #include <QtQuick/QQuickWindow>
 
+#include "AppMessages.h"
+#include "QGCApplication.h"
+
 #ifdef QGC_GST_STREAMING
+#include "Fact.h"
 #include "GStreamer.h"
 #include "GStreamerHelpers.h"
 #include "SettingsManager.h"
 #include "VideoSettings.h"
-#include "Fact.h"
 #else
 #include "QtMultimediaReceiver.h"
 #endif
@@ -43,7 +43,7 @@ bool VideoBackend::gpuZeroCopyAllowedForCurrentGraphicsApi(bool forceCpuVideoPat
 #endif
 }
 
-VideoReceiver *VideoBackend::createReceiver(QObject *parent)
+VideoReceiver* VideoBackend::createReceiver(QObject* parent)
 {
 #ifdef QGC_GST_STREAMING
     return GStreamer::createVideoReceiver(parent);
@@ -52,14 +52,14 @@ VideoReceiver *VideoBackend::createReceiver(QObject *parent)
 #endif
 }
 
-void *VideoBackend::createSink(QQuickItem *widget, QObject *parent)
+void* VideoBackend::createSink(QQuickItem* widget, QObject* parent)
 {
     [[maybe_unused]] const bool onGuiThread = (QThread::currentThread() == qApp->thread());
     Q_ASSERT(onGuiThread);
 #ifdef QGC_GST_STREAMING
     Q_UNUSED(widget);
     Q_UNUSED(parent);
-    VideoSettings *const vs = SettingsManager::instance()->videoSettings();
+    VideoSettings* const vs = SettingsManager::instance()->videoSettings();
     GStreamer::VideoSinkConfig config;
     config.conversionElement = vs->videoConversionElement()->rawValue().toString().toUtf8();
     config.disablePixelAspectRatio = vs->disablePixelAspectRatio()->rawValue().toBool();
@@ -72,7 +72,7 @@ void *VideoBackend::createSink(QQuickItem *widget, QObject *parent)
 #endif
 }
 
-void VideoBackend::releaseSink(void *sink)
+void VideoBackend::releaseSink(void* sink)
 {
 #ifdef QGC_GST_STREAMING
     GStreamer::releaseVideoSink(sink);
@@ -90,16 +90,16 @@ VideoBackend::EnvPrepResult VideoBackend::prepareEnvironment()
 {
 #ifdef QGC_GST_STREAMING
     const GStreamer::Environment::ValidationResult r = GStreamer::prepareEnvironment();
-    return { r.ok, r.error };
+    return {r.ok, r.error};
 #else
     return {};
 #endif
 }
 
-bool VideoBackend::initialize(const QStringList &arguments, const EnvPrepResult &envResult)
+bool VideoBackend::initialize(const QStringList& arguments, const EnvPrepResult& envResult)
 {
 #ifdef QGC_GST_STREAMING
-    return GStreamer::initialize(arguments, { envResult.ok, envResult.error });
+    return GStreamer::initialize(arguments, {envResult.ok, envResult.error});
 #else
     Q_UNUSED(arguments);
     Q_UNUSED(envResult);
@@ -116,7 +116,7 @@ void VideoBackend::applyDecoderPriorities(int rawOption)
 #endif
 }
 
-void VideoBackend::onMainWindowReady(QQuickWindow *window)
+void VideoBackend::onMainWindowReady(QQuickWindow* window)
 {
 #ifdef QGC_GST_STREAMING
     GStreamer::onMainWindowReady(window);
@@ -125,7 +125,7 @@ void VideoBackend::onMainWindowReady(QQuickWindow *window)
 #endif
 }
 
-void VideoBackend::bindDebugLevelFact(Fact *fact, QObject *context)
+void VideoBackend::bindDebugLevelFact(Fact* fact, QObject* context)
 {
 #ifdef QGC_GST_STREAMING
     GStreamer::bindDebugLevelFact(fact, context);
@@ -135,7 +135,7 @@ void VideoBackend::bindDebugLevelFact(Fact *fact, QObject *context)
 #endif
 }
 
-void VideoBackend::attachSink(QObject *receiver, void *sink, QQuickItem *widget)
+void VideoBackend::attachSink(QObject* receiver, void* sink, QQuickItem* widget)
 {
 #ifdef QGC_GST_STREAMING
     GStreamer::attachAppSink(receiver, sink, widget);

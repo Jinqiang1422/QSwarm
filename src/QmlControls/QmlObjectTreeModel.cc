@@ -25,7 +25,8 @@ QMetaMethod childDirtyChangedSlot()
 {
     const QMetaObject* metaObject = &QmlObjectTreeModel::staticMetaObject;
     const int slotIndex = metaObject->indexOfSlot(kChildDirtyChangedSlotSignature);
-    Q_ASSERT_X(slotIndex >= 0, "childDirtyChangedSlot", "slot signature mismatch — update kChildDirtyChangedSlotSignature");
+    Q_ASSERT_X(slotIndex >= 0, "childDirtyChangedSlot",
+               "slot signature mismatch — update kChildDirtyChangedSlotSignature");
     return (slotIndex >= 0) ? metaObject->method(slotIndex) : QMetaMethod();
 }
 
@@ -39,7 +40,7 @@ QMetaMethod dirtyChangedSignal(const QObject* object)
     return (signalIndex >= 0) ? object->metaObject()->method(signalIndex) : QMetaMethod();
 }
 
-} // namespace
+}  // namespace
 
 //-----------------------------------------------------------------------------
 // TreeNode
@@ -57,10 +58,7 @@ int QmlObjectTreeModel::TreeNode::row() const
 // Construction / Destruction
 //-----------------------------------------------------------------------------
 
-QmlObjectTreeModel::QmlObjectTreeModel(QObject* parent)
-    : ObjectItemModelBase(parent)
-{
-}
+QmlObjectTreeModel::QmlObjectTreeModel(QObject* parent) : ObjectItemModelBase(parent) {}
 
 QmlObjectTreeModel::~QmlObjectTreeModel()
 {
@@ -131,24 +129,24 @@ QVariant QmlObjectTreeModel::data(const QModelIndex& index, int role) const
     }
 
     switch (role) {
-    case ObjectRole:
-        return node->object ? QVariant::fromValue(node->object) : QVariant{};
-    case TextRole:
-        return node->object ? QVariant::fromValue(node->object->objectName()) : QVariant{};
-    case NodeTypeRole:
-        return QVariant::fromValue(node->nodeType);
-    case SeparatorRole: {
-        if (!node->children.isEmpty()) {
-            return false;
+        case ObjectRole:
+            return node->object ? QVariant::fromValue(node->object) : QVariant{};
+        case TextRole:
+            return node->object ? QVariant::fromValue(node->object->objectName()) : QVariant{};
+        case NodeTypeRole:
+            return QVariant::fromValue(node->nodeType);
+        case SeparatorRole: {
+            if (!node->children.isEmpty()) {
+                return false;
+            }
+            const TreeNode* parentNode = node->parentNode;
+            if (!parentNode) {
+                return false;
+            }
+            return node->row() < parentNode->children.size() - 1;
         }
-        const TreeNode* parentNode = node->parentNode;
-        if (!parentNode) {
-            return false;
-        }
-        return node->row() < parentNode->children.size() - 1;
-    }
-    default:
-        return {};
+        default:
+            return {};
     }
 }
 
@@ -193,7 +191,7 @@ bool QmlObjectTreeModel::removeRows(int /*row*/, int /*count*/, const QModelInde
 QHash<int, QByteArray> QmlObjectTreeModel::roleNames() const
 {
     auto roles = ObjectItemModelBase::roleNames();
-    roles[NodeTypeRole]  = "nodeType";
+    roles[NodeTypeRole] = "nodeType";
     roles[SeparatorRole] = "separator";
     return roles;
 }
@@ -245,7 +243,8 @@ QModelIndex QmlObjectTreeModel::insertItem(int row, QObject* object, const QMode
     return insertItem(row, object, parentIndex, QString());
 }
 
-QModelIndex QmlObjectTreeModel::insertItem(int row, QObject* object, const QModelIndex& parentIndex, const QString& nodeType)
+QModelIndex QmlObjectTreeModel::insertItem(int row, QObject* object, const QModelIndex& parentIndex,
+                                           const QString& nodeType)
 {
     TreeNode* parentNode = parentIndex.isValid() ? _nodeFromIndex(parentIndex) : &_rootNode;
     if (!parentNode) {
@@ -254,7 +253,8 @@ QModelIndex QmlObjectTreeModel::insertItem(int row, QObject* object, const QMode
     }
 
     if (row < 0 || row > parentNode->children.count()) {
-        qCWarning(QmlObjectTreeModelLog) << "insertItem: invalid row" << row << "count:" << parentNode->children.count();
+        qCWarning(QmlObjectTreeModelLog) << "insertItem: invalid row" << row
+                                         << "count:" << parentNode->children.count();
         return {};
     }
 

@@ -1,19 +1,18 @@
 #include "JoystickSDL.h"
-#include "JoystickManager.h"
-#include "SDLJoystick.h"
-#include "QGCLoggingCategory.h"
 
 #include <QtCore/QMetaObject>
 #include <QtCore/QThread>
-
+#include <SDL3/SDL.h>
 #include <array>
 
-#include <SDL3/SDL.h>
+#include "JoystickManager.h"
+#include "QGCLoggingCategory.h"
+#include "SDLJoystick.h"
 
-// This is used for testing manual control extensions which require additional axes but all you have is a gamepad/joystick with limited axes.
-// Only available on debug builds.
+// This is used for testing manual control extensions which require additional axes but all you have is a
+// gamepad/joystick with limited axes. Only available on debug builds.
 #ifdef QT_DEBUG
-//#define TEST_WITH_VIRTUAL_AXES
+// #define TEST_WITH_VIRTUAL_AXES
 #endif
 
 QGC_LOGGING_CATEGORY(JoystickSDLLog, "Joystick.JoystickSDL")
@@ -22,96 +21,93 @@ QGC_LOGGING_CATEGORY(JoystickSDLLog, "Joystick.JoystickSDL")
 static QMap<QString, Joystick*> s_discoveryCache;
 
 /// SDL event watcher - uses Qt::QueuedConnection for thread safety
-static bool sdlEventWatcher(void *userdata, SDL_Event *event)
+static bool sdlEventWatcher(void* userdata, SDL_Event* event)
 {
     Q_UNUSED(userdata);
 
-    JoystickManager *manager = JoystickManager::instance();
+    JoystickManager* manager = JoystickManager::instance();
     if (!manager) {
         return true;
     }
 
     switch (event->type) {
-    case SDL_EVENT_JOYSTICK_ADDED:
-        qCInfo(JoystickSDLLog) << "SDL event: Joystick added, instance ID:" << event->jdevice.which;
-        QMetaObject::invokeMethod(manager, "_checkForAddedOrRemovedJoysticks", Qt::QueuedConnection);
-        break;
-    case SDL_EVENT_JOYSTICK_REMOVED:
-        qCInfo(JoystickSDLLog) << "SDL event: Joystick removed, instance ID:" << event->jdevice.which;
-        QMetaObject::invokeMethod(manager, "_checkForAddedOrRemovedJoysticks", Qt::QueuedConnection);
-        break;
-    // Gamepad events ignored - SDL fires both joystick and gamepad events for gamepads
-    case SDL_EVENT_GAMEPAD_ADDED:
-        qCDebug(JoystickSDLLog) << "SDL event: Gamepad added (ignored, handled via joystick event), instance ID:" << event->gdevice.which;
-        break;
-    case SDL_EVENT_GAMEPAD_REMOVED:
-        qCDebug(JoystickSDLLog) << "SDL event: Gamepad removed (ignored, handled via joystick event), instance ID:" << event->gdevice.which;
-        break;
+        case SDL_EVENT_JOYSTICK_ADDED:
+            qCInfo(JoystickSDLLog) << "SDL event: Joystick added, instance ID:" << event->jdevice.which;
+            QMetaObject::invokeMethod(manager, "_checkForAddedOrRemovedJoysticks", Qt::QueuedConnection);
+            break;
+        case SDL_EVENT_JOYSTICK_REMOVED:
+            qCInfo(JoystickSDLLog) << "SDL event: Joystick removed, instance ID:" << event->jdevice.which;
+            QMetaObject::invokeMethod(manager, "_checkForAddedOrRemovedJoysticks", Qt::QueuedConnection);
+            break;
+        // Gamepad events ignored - SDL fires both joystick and gamepad events for gamepads
+        case SDL_EVENT_GAMEPAD_ADDED:
+            qCDebug(JoystickSDLLog) << "SDL event: Gamepad added (ignored, handled via joystick event), instance ID:"
+                                    << event->gdevice.which;
+            break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            qCDebug(JoystickSDLLog) << "SDL event: Gamepad removed (ignored, handled via joystick event), instance ID:"
+                                    << event->gdevice.which;
+            break;
 
-    case SDL_EVENT_JOYSTICK_BATTERY_UPDATED:
-        qCDebug(JoystickSDLLog) << "Battery updated for joystick" << event->jbattery.which
-                                << "state:" << event->jbattery.state
-                                << "percent:" << event->jbattery.percent;
-        QMetaObject::invokeMethod(manager, "_handleBatteryUpdated",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, static_cast<int>(event->jbattery.which)));
-        break;
+        case SDL_EVENT_JOYSTICK_BATTERY_UPDATED:
+            qCDebug(JoystickSDLLog) << "Battery updated for joystick" << event->jbattery.which
+                                    << "state:" << event->jbattery.state << "percent:" << event->jbattery.percent;
+            QMetaObject::invokeMethod(manager, "_handleBatteryUpdated", Qt::QueuedConnection,
+                                      Q_ARG(int, static_cast<int>(event->jbattery.which)));
+            break;
 
-    case SDL_EVENT_GAMEPAD_REMAPPED:
-        qCDebug(JoystickSDLLog) << "Gamepad remapped:" << event->gdevice.which;
-        QMetaObject::invokeMethod(manager, "_handleGamepadRemapped",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, static_cast<int>(event->gdevice.which)));
-        break;
+        case SDL_EVENT_GAMEPAD_REMAPPED:
+            qCDebug(JoystickSDLLog) << "Gamepad remapped:" << event->gdevice.which;
+            QMetaObject::invokeMethod(manager, "_handleGamepadRemapped", Qt::QueuedConnection,
+                                      Q_ARG(int, static_cast<int>(event->gdevice.which)));
+            break;
 
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
-    case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
-        QMetaObject::invokeMethod(manager, "_handleTouchpadEvent",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, static_cast<int>(event->gtouchpad.which)),
-                                  Q_ARG(int, event->gtouchpad.touchpad),
-                                  Q_ARG(int, event->gtouchpad.finger),
-                                  Q_ARG(bool, event->type != SDL_EVENT_GAMEPAD_TOUCHPAD_UP),
-                                  Q_ARG(float, event->gtouchpad.x),
-                                  Q_ARG(float, event->gtouchpad.y),
-                                  Q_ARG(float, event->gtouchpad.pressure));
-        break;
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
+        case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+            QMetaObject::invokeMethod(manager, "_handleTouchpadEvent", Qt::QueuedConnection,
+                                      Q_ARG(int, static_cast<int>(event->gtouchpad.which)),
+                                      Q_ARG(int, event->gtouchpad.touchpad), Q_ARG(int, event->gtouchpad.finger),
+                                      Q_ARG(bool, event->type != SDL_EVENT_GAMEPAD_TOUCHPAD_UP),
+                                      Q_ARG(float, event->gtouchpad.x), Q_ARG(float, event->gtouchpad.y),
+                                      Q_ARG(float, event->gtouchpad.pressure));
+            break;
 
-    case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
-        QMetaObject::invokeMethod(manager, "_handleSensorUpdate",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, static_cast<int>(event->gsensor.which)),
-                                  Q_ARG(int, event->gsensor.sensor),
-                                  Q_ARG(float, event->gsensor.data[0]),
-                                  Q_ARG(float, event->gsensor.data[1]),
-                                  Q_ARG(float, event->gsensor.data[2]));
-        break;
+        case SDL_EVENT_GAMEPAD_SENSOR_UPDATE:
+            QMetaObject::invokeMethod(manager, "_handleSensorUpdate", Qt::QueuedConnection,
+                                      Q_ARG(int, static_cast<int>(event->gsensor.which)),
+                                      Q_ARG(int, event->gsensor.sensor), Q_ARG(float, event->gsensor.data[0]),
+                                      Q_ARG(float, event->gsensor.data[1]), Q_ARG(float, event->gsensor.data[2]));
+            break;
 
-    case SDL_EVENT_JOYSTICK_UPDATE_COMPLETE:
-    case SDL_EVENT_GAMEPAD_UPDATE_COMPLETE:
-        QMetaObject::invokeMethod(manager, "_handleUpdateComplete",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, static_cast<int>(event->common.type == SDL_EVENT_GAMEPAD_UPDATE_COMPLETE
-                                                              ? event->gdevice.which : event->jdevice.which)));
-        break;
+        case SDL_EVENT_JOYSTICK_UPDATE_COMPLETE:
+        case SDL_EVENT_GAMEPAD_UPDATE_COMPLETE:
+            QMetaObject::invokeMethod(
+                manager, "_handleUpdateComplete", Qt::QueuedConnection,
+                Q_ARG(int, static_cast<int>(event->common.type == SDL_EVENT_GAMEPAD_UPDATE_COMPLETE
+                                                ? event->gdevice.which
+                                                : event->jdevice.which)));
+            break;
 
-    default:
-        break;
+        default:
+            break;
     }
 
     return true;
 }
 
-JoystickSDL::JoystickSDL(const QString &name, const QList<int> &gamepadAxes, const QList<int> &nonGamepadAxes, int buttonCount, int hatCount, int instanceId, QObject *parent)
-    : Joystick(name, gamepadAxes.length() + nonGamepadAxes.length()
+JoystickSDL::JoystickSDL(const QString& name, const QList<int>& gamepadAxes, const QList<int>& nonGamepadAxes,
+                         int buttonCount, int hatCount, int instanceId, QObject* parent)
+    : Joystick(name,
+               gamepadAxes.length() + nonGamepadAxes.length()
 #ifdef TEST_WITH_VIRTUAL_AXES
-               + 2  // Add 2 virtual axes for testing
+                   + 2  // Add 2 virtual axes for testing
 #endif
-               , buttonCount, hatCount, parent)
-    , _gamepadAxes(gamepadAxes)
-    , _nonGamepadAxes(nonGamepadAxes)
-    , _instanceId(instanceId)
+               ,
+               buttonCount, hatCount, parent),
+      _gamepadAxes(gamepadAxes),
+      _nonGamepadAxes(nonGamepadAxes),
+      _instanceId(instanceId)
 {
     qCDebug(JoystickSDLLog) << this;
 }
@@ -132,7 +128,7 @@ quint64 JoystickSDL::_getProperties() const
     return 0;
 }
 
-bool JoystickSDL::_checkVirtualJoystick(const char *methodName) const
+bool JoystickSDL::_checkVirtualJoystick(const char* methodName) const
 {
     if (!_sdlJoystick) {
         qCWarning(JoystickSDLLog) << methodName << "called with null joystick";
@@ -145,7 +141,7 @@ bool JoystickSDL::_checkVirtualJoystick(const char *methodName) const
     return true;
 }
 
-bool JoystickSDL::_hasGamepadCapability(const char *propertyName) const
+bool JoystickSDL::_hasGamepadCapability(const char* propertyName) const
 {
     if (_sdlGamepad) {
         SDL_PropertiesID props = SDL_GetGamepadProperties(_sdlGamepad);
@@ -189,7 +185,7 @@ QMap<QString, Joystick*> JoystickSDL::discover()
     SDLJoystick::JoystickLock lock;
 
     int count = 0;
-    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+    SDL_JoystickID* ids = SDL_GetJoysticks(&count);
     if (!ids) {
         qCWarning(JoystickSDLLog) << "SDL_GetJoysticks failed:" << SDL_GetError();
         return current;
@@ -198,8 +194,7 @@ QMap<QString, Joystick*> JoystickSDL::discover()
     qCDebug(JoystickSDLLog) << "SDL_GetJoysticks returned" << count << "joysticks";
     for (int n = 0; n < count; ++n) {
         const QString joystickName = SDLJoystick::getNameForInstanceId(ids[n]);
-        qCDebug(JoystickSDLLog) << "  [" << n << "] ID:" << ids[n]
-                                << "Name:" << joystickName
+        qCDebug(JoystickSDLLog) << "  [" << n << "] ID:" << ids[n] << "Name:" << joystickName
                                 << "IsGamepad:" << SDL_IsGamepad(ids[n]);
     }
 
@@ -214,7 +209,7 @@ QMap<QString, Joystick*> JoystickSDL::discover()
         // Check cache by instance ID (reconnection of same device)
         bool foundInCache = false;
         for (auto it = s_discoveryCache.begin(); it != s_discoveryCache.end(); ++it) {
-            auto *cachedJs = static_cast<JoystickSDL*>(it.value());
+            auto* cachedJs = static_cast<JoystickSDL*>(it.value());
             if (static_cast<SDL_JoystickID>(cachedJs->instanceId()) == jid) {
                 if (cachedJs->name() == baseName) {
                     name = it.key();
@@ -237,7 +232,7 @@ QMap<QString, Joystick*> JoystickSDL::discover()
         // Check cache by name (for joysticks that were disconnected and reconnected)
         if (s_discoveryCache.contains(name) && !current.contains(name)) {
             current[name] = s_discoveryCache[name];
-            auto *js = static_cast<JoystickSDL*>(current[name]);
+            auto* js = static_cast<JoystickSDL*>(current[name]);
             js->setInstanceId(jid);
             (void) s_discoveryCache.remove(name);
             continue;
@@ -270,11 +265,12 @@ QMap<QString, Joystick*> JoystickSDL::discover()
             // by both the sdlJoystick interface and the sdlGamepad interface. If this is the case,
             // We'll only show the sdlGamepad interface version of the axis to the user.
             int bindingCount = 0;
-            SDL_GamepadBinding **bindings = SDL_GetGamepadBindings(tmpGamepad, &bindingCount);
+            SDL_GamepadBinding** bindings = SDL_GetGamepadBindings(tmpGamepad, &bindingCount);
             if (bindings) {
                 for (int i = 0; i < bindingCount; ++i) {
-                    SDL_GamepadBinding *binding = bindings[i];
-                    if (binding && binding->input_type == SDL_GAMEPAD_BINDTYPE_AXIS && binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS) {
+                    SDL_GamepadBinding* binding = bindings[i];
+                    if (binding && binding->input_type == SDL_GAMEPAD_BINDTYPE_AXIS &&
+                        binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS) {
                         joyAxesMappedToGamepad.insert(binding->input.axis.axis);
                     }
                 }
@@ -286,7 +282,7 @@ QMap<QString, Joystick*> JoystickSDL::discover()
             SDL_CloseGamepad(tmpGamepad);
         }
 
-        SDL_Joystick *tmpJoy = SDL_OpenJoystick(jid);
+        SDL_Joystick* tmpJoy = SDL_OpenJoystick(jid);
         if (!tmpJoy) {
             qCWarning(JoystickSDLLog) << "Failed to open joystick" << jid << SDL_GetError();
             continue;
@@ -306,23 +302,19 @@ QMap<QString, Joystick*> JoystickSDL::discover()
 
         qCDebug(JoystickSDLLog) << "Creating JoystickSDL for" << name << "jid:" << jid;
 
-        current[name] = new JoystickSDL(name,
-                                        gamepadAxes,
-                                        nonGamepadAxes,
-                                        qMax(0, buttonCount),
-                                        qMax(0, hatCount),
-                                        jid);
+        current[name] =
+            new JoystickSDL(name, gamepadAxes, nonGamepadAxes, qMax(0, buttonCount), qMax(0, hatCount), jid);
     }
 
     SDL_free(ids);
 
     qCDebug(JoystickSDLLog) << "Discovered" << current.size() << "joysticks:";
     for (auto it = current.begin(); it != current.end(); ++it) {
-        auto *js = static_cast<JoystickSDL*>(it.value());
+        auto* js = static_cast<JoystickSDL*>(it.value());
         qCDebug(JoystickSDLLog) << "  " << it.key() << "instanceId:" << js->instanceId();
     }
 
-    for (auto *joystick : std::as_const(s_discoveryCache)) {
+    for (auto* joystick : std::as_const(s_discoveryCache)) {
         joystick->deleteLater();
     }
 
@@ -545,7 +537,7 @@ void JoystickSDL::setLED(quint8 red, quint8 green, quint8 blue)
     }
 }
 
-bool JoystickSDL::sendEffect(const QByteArray &data)
+bool JoystickSDL::sendEffect(const QByteArray& data)
 {
     if (_sdlGamepad && !data.isEmpty()) {
         if (!SDL_SendGamepadEffect(_sdlGamepad, data.constData(), static_cast<int>(data.size()))) {
@@ -591,7 +583,7 @@ quint16 JoystickSDL::productId() const
 QString JoystickSDL::serial() const
 {
     if (_sdlJoystick) {
-        const char *serialStr = SDL_GetJoystickSerial(_sdlJoystick);
+        const char* serialStr = SDL_GetJoystickSerial(_sdlJoystick);
         if (serialStr) {
             return QString::fromUtf8(serialStr);
         }
@@ -604,26 +596,26 @@ QString JoystickSDL::deviceType() const
     if (_sdlJoystick) {
         SDL_JoystickType type = SDL_GetJoystickType(_sdlJoystick);
         switch (type) {
-        case SDL_JOYSTICK_TYPE_GAMEPAD:
-            return QStringLiteral("Gamepad");
-        case SDL_JOYSTICK_TYPE_WHEEL:
-            return QStringLiteral("Wheel");
-        case SDL_JOYSTICK_TYPE_ARCADE_STICK:
-            return QStringLiteral("Arcade Stick");
-        case SDL_JOYSTICK_TYPE_FLIGHT_STICK:
-            return QStringLiteral("Flight Stick");
-        case SDL_JOYSTICK_TYPE_DANCE_PAD:
-            return QStringLiteral("Dance Pad");
-        case SDL_JOYSTICK_TYPE_GUITAR:
-            return QStringLiteral("Guitar");
-        case SDL_JOYSTICK_TYPE_DRUM_KIT:
-            return QStringLiteral("Drum Kit");
-        case SDL_JOYSTICK_TYPE_ARCADE_PAD:
-            return QStringLiteral("Arcade Pad");
-        case SDL_JOYSTICK_TYPE_THROTTLE:
-            return QStringLiteral("Throttle");
-        default:
-            return QStringLiteral("Unknown");
+            case SDL_JOYSTICK_TYPE_GAMEPAD:
+                return QStringLiteral("Gamepad");
+            case SDL_JOYSTICK_TYPE_WHEEL:
+                return QStringLiteral("Wheel");
+            case SDL_JOYSTICK_TYPE_ARCADE_STICK:
+                return QStringLiteral("Arcade Stick");
+            case SDL_JOYSTICK_TYPE_FLIGHT_STICK:
+                return QStringLiteral("Flight Stick");
+            case SDL_JOYSTICK_TYPE_DANCE_PAD:
+                return QStringLiteral("Dance Pad");
+            case SDL_JOYSTICK_TYPE_GUITAR:
+                return QStringLiteral("Guitar");
+            case SDL_JOYSTICK_TYPE_DRUM_KIT:
+                return QStringLiteral("Drum Kit");
+            case SDL_JOYSTICK_TYPE_ARCADE_PAD:
+                return QStringLiteral("Arcade Pad");
+            case SDL_JOYSTICK_TYPE_THROTTLE:
+                return QStringLiteral("Throttle");
+            default:
+                return QStringLiteral("Unknown");
         }
     }
     return QString();
@@ -632,7 +624,7 @@ QString JoystickSDL::deviceType() const
 QString JoystickSDL::path() const
 {
     if (_sdlJoystick) {
-        const char *devicePath = SDL_GetJoystickPath(_sdlJoystick);
+        const char* devicePath = SDL_GetJoystickPath(_sdlJoystick);
         if (devicePath) {
             return QString::fromUtf8(devicePath);
         }
@@ -716,20 +708,20 @@ QString JoystickSDL::powerState() const
     }
 
     switch (SDL_GetJoystickPowerInfo(_sdlJoystick, nullptr)) {
-    case SDL_POWERSTATE_ERROR:
-        return QStringLiteral("Error");
-    case SDL_POWERSTATE_UNKNOWN:
-        return QStringLiteral("Unknown");
-    case SDL_POWERSTATE_ON_BATTERY:
-        return QStringLiteral("On Battery");
-    case SDL_POWERSTATE_NO_BATTERY:
-        return QStringLiteral("No Battery");
-    case SDL_POWERSTATE_CHARGING:
-        return QStringLiteral("Charging");
-    case SDL_POWERSTATE_CHARGED:
-        return QStringLiteral("Charged");
-    default:
-        return QString();
+        case SDL_POWERSTATE_ERROR:
+            return QStringLiteral("Error");
+        case SDL_POWERSTATE_UNKNOWN:
+            return QStringLiteral("Unknown");
+        case SDL_POWERSTATE_ON_BATTERY:
+            return QStringLiteral("On Battery");
+        case SDL_POWERSTATE_NO_BATTERY:
+            return QStringLiteral("No Battery");
+        case SDL_POWERSTATE_CHARGING:
+            return QStringLiteral("Charging");
+        case SDL_POWERSTATE_CHARGED:
+            return QStringLiteral("Charged");
+        default:
+            return QString();
     }
 }
 
@@ -762,7 +754,7 @@ QString JoystickSDL::axisLabel(int axis) const
 
     // Check gamepad axes first
     if (_sdlGamepad && axis < _gamepadAxes.length()) {
-        const char *label = SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(_gamepadAxes[axis]));
+        const char* label = SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(_gamepadAxes[axis]));
         if (label) {
             return QString::fromUtf8(label);
         }
@@ -781,7 +773,7 @@ QString JoystickSDL::axisLabel(int axis) const
 QString JoystickSDL::buttonLabel(int button) const
 {
     if (_sdlGamepad && button >= 0 && button < SDL_GAMEPAD_BUTTON_COUNT) {
-        const char *label = SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(button));
+        const char* label = SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(button));
         if (label) {
             return QString::fromUtf8(label);
         }
@@ -796,7 +788,7 @@ QString JoystickSDL::buttonLabel(int button) const
 QString JoystickSDL::getMapping() const
 {
     if (_sdlGamepad) {
-        char *mapping = SDL_GetGamepadMapping(_sdlGamepad);
+        char* mapping = SDL_GetGamepadMapping(_sdlGamepad);
         if (mapping) {
             QString result = QString::fromUtf8(mapping);
             SDL_free(mapping);
@@ -806,7 +798,7 @@ QString JoystickSDL::getMapping() const
     return QString();
 }
 
-bool JoystickSDL::addMapping(const QString &mapping)
+bool JoystickSDL::addMapping(const QString& mapping)
 {
     if (mapping.isEmpty()) {
         return false;
@@ -834,9 +826,8 @@ QVariantMap JoystickSDL::getAxisBinding(int axis) const
     // Gamepad axes have bindings
     if (_sdlGamepad && axis < _gamepadAxes.length()) {
         const SDL_GamepadAxis gamepadAxis = static_cast<SDL_GamepadAxis>(_gamepadAxes[axis]);
-        return SDLJoystick::findBinding(_sdlGamepad, [gamepadAxis](const SDL_GamepadBinding *binding) {
-            return binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS &&
-                   binding->output.axis.axis == gamepadAxis;
+        return SDLJoystick::findBinding(_sdlGamepad, [gamepadAxis](const SDL_GamepadBinding* binding) {
+            return binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS && binding->output.axis.axis == gamepadAxis;
         });
     }
 
@@ -864,9 +855,8 @@ QVariantMap JoystickSDL::getButtonBinding(int button) const
     }
 
     const SDL_GamepadButton gamepadButton = static_cast<SDL_GamepadButton>(button);
-    return SDLJoystick::findBinding(_sdlGamepad, [gamepadButton](const SDL_GamepadBinding *binding) {
-        return binding->output_type == SDL_GAMEPAD_BINDTYPE_BUTTON &&
-               binding->output.button == gamepadButton;
+    return SDLJoystick::findBinding(_sdlGamepad, [gamepadButton](const SDL_GamepadBinding* binding) {
+        return binding->output_type == SDL_GAMEPAD_BINDTYPE_BUTTON && binding->output.button == gamepadButton;
     });
 }
 
@@ -894,7 +884,8 @@ bool JoystickSDL::setGyroscopeEnabled(bool enabled)
 {
     if (_sdlGamepad && hasGyroscope()) {
         if (!SDL_SetGamepadSensorEnabled(_sdlGamepad, SDL_SENSOR_GYRO, enabled)) {
-            qCWarning(JoystickSDLLog) << "Failed to" << (enabled ? "enable" : "disable") << "gyroscope:" << SDL_GetError();
+            qCWarning(JoystickSDLLog) << "Failed to" << (enabled ? "enable" : "disable")
+                                      << "gyroscope:" << SDL_GetError();
             return false;
         }
         return true;
@@ -906,7 +897,8 @@ bool JoystickSDL::setAccelerometerEnabled(bool enabled)
 {
     if (_sdlGamepad && hasAccelerometer()) {
         if (!SDL_SetGamepadSensorEnabled(_sdlGamepad, SDL_SENSOR_ACCEL, enabled)) {
-            qCWarning(JoystickSDLLog) << "Failed to" << (enabled ? "enable" : "disable") << "accelerometer:" << SDL_GetError();
+            qCWarning(JoystickSDLLog) << "Failed to" << (enabled ? "enable" : "disable")
+                                      << "accelerometer:" << SDL_GetError();
             return false;
         }
         return true;
@@ -1062,9 +1054,9 @@ bool JoystickSDL::hasAxis(int axis) const
     if (_sdlJoystick) {
         const int totalAxes = _gamepadAxes.length() + _nonGamepadAxes.length()
 #ifdef TEST_WITH_VIRTUAL_AXES
-                            + 2  // Add 2 virtual axes for testing
+                              + 2  // Add 2 virtual axes for testing
 #endif
-                            ;
+            ;
         return axis >= 0 && axis < totalAxes;
     }
     return false;
@@ -1088,24 +1080,24 @@ QString JoystickSDL::buttonLabelForType(int button) const
         SDL_GamepadType type = SDL_GetGamepadType(_sdlGamepad);
         SDL_GamepadButtonLabel label = SDL_GetGamepadButtonLabelForType(type, static_cast<SDL_GamepadButton>(button));
         switch (label) {
-        case SDL_GAMEPAD_BUTTON_LABEL_A:
-            return QStringLiteral("A");
-        case SDL_GAMEPAD_BUTTON_LABEL_B:
-            return QStringLiteral("B");
-        case SDL_GAMEPAD_BUTTON_LABEL_X:
-            return QStringLiteral("X");
-        case SDL_GAMEPAD_BUTTON_LABEL_Y:
-            return QStringLiteral("Y");
-        case SDL_GAMEPAD_BUTTON_LABEL_CROSS:
-            return QStringLiteral("Cross");
-        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE:
-            return QStringLiteral("Circle");
-        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE:
-            return QStringLiteral("Square");
-        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE:
-            return QStringLiteral("Triangle");
-        default:
-            break;
+            case SDL_GAMEPAD_BUTTON_LABEL_A:
+                return QStringLiteral("A");
+            case SDL_GAMEPAD_BUTTON_LABEL_B:
+                return QStringLiteral("B");
+            case SDL_GAMEPAD_BUTTON_LABEL_X:
+                return QStringLiteral("X");
+            case SDL_GAMEPAD_BUTTON_LABEL_Y:
+                return QStringLiteral("Y");
+            case SDL_GAMEPAD_BUTTON_LABEL_CROSS:
+                return QStringLiteral("Cross");
+            case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE:
+                return QStringLiteral("Circle");
+            case SDL_GAMEPAD_BUTTON_LABEL_SQUARE:
+                return QStringLiteral("Square");
+            case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE:
+                return QStringLiteral("Triangle");
+            default:
+                break;
         }
     }
     return buttonLabel(button);
@@ -1193,14 +1185,14 @@ void JoystickSDL::hapticRumbleStop()
 // Mapping Utilities
 //-----------------------------------------------------------------------------
 
-QString JoystickSDL::getMappingForGUID(const QString &guid) const
+QString JoystickSDL::getMappingForGUID(const QString& guid) const
 {
     if (guid.isEmpty()) {
         return QString();
     }
 
     SDL_GUID sdlGuid = SDL_StringToGUID(qPrintable(guid));
-    char *mapping = SDL_GetGamepadMappingForGUID(sdlGuid);
+    char* mapping = SDL_GetGamepadMappingForGUID(sdlGuid);
     if (mapping) {
         QString result = QString::fromUtf8(mapping);
         SDL_free(mapping);
@@ -1306,7 +1298,7 @@ QVariantMap JoystickSDL::getAxisInitialState(int axis) const
 // Per-Device Custom Mapping
 //-----------------------------------------------------------------------------
 
-bool JoystickSDL::setMapping(const QString &mapping)
+bool JoystickSDL::setMapping(const QString& mapping)
 {
     if (!_sdlGamepad || mapping.isEmpty()) {
         return false;
@@ -1348,13 +1340,13 @@ bool JoystickSDL::setVirtualTouchpad(int touchpad, int finger, bool down, float 
     const float clampedPressure = qBound(0.0f, pressure, 1.0f);
 
     if (x != clampedX || y != clampedY || pressure != clampedPressure) {
-        qCDebug(JoystickSDLLog) << "Virtual touchpad coordinates clamped: x" << x << "->" << clampedX
-                                << "y" << y << "->" << clampedY
-                                << "pressure" << pressure << "->" << clampedPressure;
+        qCDebug(JoystickSDLLog) << "Virtual touchpad coordinates clamped: x" << x << "->" << clampedX << "y" << y
+                                << "->" << clampedY << "pressure" << pressure << "->" << clampedPressure;
     }
 
     if (!SDL_SetJoystickVirtualTouchpad(_sdlJoystick, touchpad, finger, down, clampedX, clampedY, clampedPressure)) {
-        qCDebug(JoystickSDLLog) << "Failed to set virtual touchpad" << touchpad << "finger" << finger << ":" << SDL_GetError();
+        qCDebug(JoystickSDLLog) << "Failed to set virtual touchpad" << touchpad << "finger" << finger << ":"
+                                << SDL_GetError();
         return false;
     }
     return true;
@@ -1367,7 +1359,8 @@ bool JoystickSDL::sendVirtualSensorData(int sensorType, float x, float y, float 
     }
 
     const float data[3] = {x, y, z};
-    if (!SDL_SendJoystickVirtualSensorData(_sdlJoystick, static_cast<SDL_SensorType>(sensorType), SDL_GetTicksNS(), data, 3)) {
+    if (!SDL_SendJoystickVirtualSensorData(_sdlJoystick, static_cast<SDL_SensorType>(sensorType), SDL_GetTicksNS(),
+                                           data, 3)) {
         qCDebug(JoystickSDLLog) << "Failed to send virtual sensor data:" << SDL_GetError();
         return false;
     }
@@ -1378,14 +1371,14 @@ bool JoystickSDL::sendVirtualSensorData(int sensorType, float x, float y, float 
 // Cached Sensor Data (Event-Driven Updates)
 //-----------------------------------------------------------------------------
 
-void JoystickSDL::updateCachedGyroData(const QVector3D &data)
+void JoystickSDL::updateCachedGyroData(const QVector3D& data)
 {
     _cachedGyroData = data;
     _gyroDataCached = true;
     emit gyroscopeDataUpdated(data);
 }
 
-void JoystickSDL::updateCachedAccelData(const QVector3D &data)
+void JoystickSDL::updateCachedAccelData(const QVector3D& data)
 {
     _cachedAccelData = data;
     _accelDataCached = true;

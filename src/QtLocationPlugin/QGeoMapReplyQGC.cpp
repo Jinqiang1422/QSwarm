@@ -20,10 +20,9 @@ QGC_LOGGING_CATEGORY(QGeoTiledMapReplyQGCLog, "QtLocationPlugin.QGeoTiledMapRepl
 QByteArray QGeoTiledMapReplyQGC::_bingNoTileImage;
 QByteArray QGeoTiledMapReplyQGC::_badTile;
 
-QGeoTiledMapReplyQGC::QGeoTiledMapReplyQGC(QNetworkAccessManager *networkManager, const QNetworkRequest &request, const QGeoTileSpec &spec, QObject *parent)
-    : QGeoTiledMapReply(spec, parent)
-    , _networkManager(networkManager)
-    , _request(request)
+QGeoTiledMapReplyQGC::QGeoTiledMapReplyQGC(QNetworkAccessManager* networkManager, const QNetworkRequest& request,
+                                           const QGeoTileSpec& spec, QObject* parent)
+    : QGeoTiledMapReply(spec, parent), _networkManager(networkManager), _request(request)
 {
     qCDebug(QGeoTiledMapReplyQGCLog) << this;
 }
@@ -43,14 +42,18 @@ bool QGeoTiledMapReplyQGC::init()
 
     _initDataFromResources();
 
-    (void) connect(this, &QGeoTiledMapReplyQGC::errorOccurred, this, [this](QGeoTiledMapReply::Error error, const QString &errorString) {
-        qCWarning(QGeoTiledMapReplyQGCLog) << error << errorString;
-        setMapImageData(_badTile);
-        setMapImageFormat(QStringLiteral("png"));
-        setCached(false);
-    }, Qt::AutoConnection);
+    (void) connect(
+        this, &QGeoTiledMapReplyQGC::errorOccurred, this,
+        [this](QGeoTiledMapReply::Error error, const QString& errorString) {
+            qCWarning(QGeoTiledMapReplyQGCLog) << error << errorString;
+            setMapImageData(_badTile);
+            setMapImageFormat(QStringLiteral("png"));
+            setCached(false);
+        },
+        Qt::AutoConnection);
 
-    QGCFetchTileTask *task = QGeoFileTileCacheQGC::createFetchTileTask(UrlFactory::getProviderTypeFromQtMapId(tileSpec().mapId()), tileSpec().x(), tileSpec().y(), tileSpec().zoom());
+    QGCFetchTileTask* task = QGeoFileTileCacheQGC::createFetchTileTask(
+        UrlFactory::getProviderTypeFromQtMapId(tileSpec().mapId()), tileSpec().x(), tileSpec().y(), tileSpec().zoom());
     if (!task) {
         qCWarning(QGeoTiledMapReplyQGCLog) << "Failed to create fetch tile task";
         m_initialized = false;
@@ -106,7 +109,8 @@ void QGeoTiledMapReplyQGC::_networkReplyFinished()
 
     const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (!QGCNetworkHelper::isHttpSuccess(statusCode)) {
-        setError(QGeoTiledMapReply::CommunicationError, reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString());
+        setError(QGeoTiledMapReply::CommunicationError,
+                 reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString());
         return;
     }
 
@@ -128,7 +132,8 @@ void QGeoTiledMapReplyQGC::_networkReplyFinished()
     }
 
     if (mapProvider->isElevationProvider()) {
-        const SharedElevationProvider elevationProvider = std::dynamic_pointer_cast<const ElevationProvider>(mapProvider);
+        const SharedElevationProvider elevationProvider =
+            std::dynamic_pointer_cast<const ElevationProvider>(mapProvider);
         image = elevationProvider->serialize(image);
         if (image.isEmpty()) {
             setError(QGeoTiledMapReply::ParseError, tr("Failed to Serialize Terrain Tile"));
@@ -144,7 +149,8 @@ void QGeoTiledMapReplyQGC::_networkReplyFinished()
     }
     setMapImageFormat(format);
 
-    QGeoFileTileCacheQGC::cacheTile(mapProvider->getMapName(), tileSpec().x(), tileSpec().y(), tileSpec().zoom(), image, format);
+    QGeoFileTileCacheQGC::cacheTile(mapProvider->getMapName(), tileSpec().x(), tileSpec().y(), tileSpec().zoom(), image,
+                                    format);
 
     setFinished(true);
 }
@@ -163,10 +169,10 @@ void QGeoTiledMapReplyQGC::_networkReplyError(QNetworkReply::NetworkError error)
     }
 }
 
-void QGeoTiledMapReplyQGC::_networkReplySslErrors(const QList<QSslError> &errors)
+void QGeoTiledMapReplyQGC::_networkReplySslErrors(const QList<QSslError>& errors)
 {
     QString errorString;
-    for (const QSslError &error : errors) {
+    for (const QSslError& error : errors) {
         if (!errorString.isEmpty()) {
             (void) errorString.append('\n');
         }
@@ -178,7 +184,7 @@ void QGeoTiledMapReplyQGC::_networkReplySslErrors(const QList<QSslError> &errors
     }
 }
 
-void QGeoTiledMapReplyQGC::_cacheReply(QGCCacheTile *tile)
+void QGeoTiledMapReplyQGC::_cacheReply(QGCCacheTile* tile)
 {
     if (tile) {
         setMapImageData(tile->img);

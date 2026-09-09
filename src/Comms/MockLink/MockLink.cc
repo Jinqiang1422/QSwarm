@@ -1,33 +1,33 @@
 #include "MockLink.h"
-#include "MAVLinkLib.h"
-#include "LinkManager.h"
-#include "MAVLinkProtocol.h"
-#include "MAVLinkSigning.h"
-#include "SecureMemory.h"
-#include "MockLinkCamera.h"
-#include "MockLinkFTP.h"
-#include "MockLinkGimbal.h"
-#include "MockLinkWorker.h"
-#include "QGCLoggingCategory.h"
-#include "FirmwarePlugin.h"
-#include "FactMetaData.h"
-#include "ParameterManager.h"
-#include "AppMessages.h"
-#include "QGCMath.h"
 
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QMutexLocker>
-#include <QtCore/QSet>
 #include <QtCore/QRandomGenerator>
+#include <QtCore/QSet>
 #include <QtCore/QTemporaryFile>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
-
 #include <cmath>
 #include <cstring>
+
+#include "AppMessages.h"
+#include "FactMetaData.h"
+#include "FirmwarePlugin.h"
+#include "LinkManager.h"
+#include "MAVLinkLib.h"
+#include "MAVLinkProtocol.h"
+#include "MAVLinkSigning.h"
+#include "MockLinkCamera.h"
+#include "MockLinkFTP.h"
+#include "MockLinkGimbal.h"
+#include "MockLinkWorker.h"
+#include "ParameterManager.h"
+#include "QGCLoggingCategory.h"
+#include "QGCMath.h"
+#include "SecureMemory.h"
 
 QGC_LOGGING_CATEGORY(MockLinkLog, "Comms.MockLink.MockLink")
 QGC_LOGGING_CATEGORY(MockLinkVerboseLog, "Comms.MockLink.MockLink:verbose")
@@ -36,63 +36,60 @@ std::atomic<int> MockLink::_nextVehicleSystemId{128};
 
 QList<MockLink::FlightMode_t> MockLink::_availableFlightModes = {
     // Mode Name                Standard Mode               Custom Mode                         CanBeSet    adv
-    { "Manual",                 0,                          PX4CustomMode::MANUAL,              true,       true },
-    { "Stabilized",             0,                          PX4CustomMode::STABILIZED,          true,       true },
-    { "Acro",                   0,                          PX4CustomMode::ACRO,                true,       true },
-    { "Altitude",               0,                          PX4CustomMode::ALTCTL,              true,       false},
-    { "Offboard",               0,                          PX4CustomMode::OFFBOARD,            true,       true },
-    { "Position",               0,                          PX4CustomMode::POSCTL_POSCTL,       true,       false},
-    { "Orbit",                  0,                          PX4CustomMode::POSCTL_ORBIT,        false,      true },
-    { "Hold",                   0,                          PX4CustomMode::AUTO_LOITER,         true,       true },
-    { "Mission",                0,                          PX4CustomMode::AUTO_MISSION,        true,       true },
-    { "Return",                 0,                          PX4CustomMode::AUTO_RTL,            true,       true },
-    { "Land",                   MAV_STANDARD_MODE_LAND,     PX4CustomMode::AUTO_LAND,           false,      true },
-    { "Precision Landing",      0,                          PX4CustomMode::AUTO_PRECLAND,       true,       true },
-    { "Takeoff",                MAV_STANDARD_MODE_TAKEOFF,  PX4CustomMode::AUTO_TAKEOFF,        false,      false},
-    { "MockLink Mode",          0,                          PX4CustomMode::RATTITUDE,           true,       false},
+    {"Manual", 0, PX4CustomMode::MANUAL, true, true},
+    {"Stabilized", 0, PX4CustomMode::STABILIZED, true, true},
+    {"Acro", 0, PX4CustomMode::ACRO, true, true},
+    {"Altitude", 0, PX4CustomMode::ALTCTL, true, false},
+    {"Offboard", 0, PX4CustomMode::OFFBOARD, true, true},
+    {"Position", 0, PX4CustomMode::POSCTL_POSCTL, true, false},
+    {"Orbit", 0, PX4CustomMode::POSCTL_ORBIT, false, true},
+    {"Hold", 0, PX4CustomMode::AUTO_LOITER, true, true},
+    {"Mission", 0, PX4CustomMode::AUTO_MISSION, true, true},
+    {"Return", 0, PX4CustomMode::AUTO_RTL, true, true},
+    {"Land", MAV_STANDARD_MODE_LAND, PX4CustomMode::AUTO_LAND, false, true},
+    {"Precision Landing", 0, PX4CustomMode::AUTO_PRECLAND, true, true},
+    {"Takeoff", MAV_STANDARD_MODE_TAKEOFF, PX4CustomMode::AUTO_TAKEOFF, false, false},
+    {"MockLink Mode", 0, PX4CustomMode::RATTITUDE, true, false},
     // Deliberately uses the reserved (deleted RTGS) AUTO sub-mode so QGC has no name for it
-    { "(Mode not available)",   0,                          static_cast<uint32_t>(PX4_CUSTOM_MAIN_MODE_AUTO << 16 | (PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE << 24)), false, false},
-    { "MockLink Mode (delayed)",0,                          PX4CustomMode::AUTO_FOLLOW_TARGET,  true,       false},
+    {"(Mode not available)", 0,
+     static_cast<uint32_t>(PX4_CUSTOM_MAIN_MODE_AUTO << 16 | (PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE << 24)),
+     false, false},
+    {"MockLink Mode (delayed)", 0, PX4CustomMode::AUTO_FOLLOW_TARGET, true, false},
 };
 
-MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
-    : LinkInterface(config, parent)
-    , _mockConfig(qobject_cast<const MockConfiguration*>(_config.get()))
-    , _firmwareType(_mockConfig->firmwareType())
-    , _vehicleType(_mockConfig->vehicleType())
-    , _sendStatusText(_mockConfig->sendStatusText())
-    , _enableCamera(_mockConfig->enableCamera())
-    , _enableGimbal(_mockConfig->enableGimbal())
-    , _enableProximity(_mockConfig->enableProximity())
-    , _failureMode(_mockConfig->failureMode())
-    , _vehicleSystemId(_mockConfig->incrementVehicleId() ? _nextVehicleSystemId++ : static_cast<int>(_nextVehicleSystemId))
-    , _vehicleLatitude(_defaultVehicleLatitude + ((_vehicleSystemId - 128) * 0.0001))
-    , _vehicleLongitude(_defaultVehicleLongitude + ((_vehicleSystemId - 128) * 0.0001))
-    , _boardVendorId(_mockConfig->boardVendorId())
-    , _boardProductId(_mockConfig->boardProductId())
-    , _missionItemHandler(new MockLinkMissionItemHandler(this))
-    , _mockLinkCamera(_enableCamera ? new MockLinkCamera(this,
-                                                         _mockConfig->cameraCaptureVideo(),
-                                                         _mockConfig->cameraCaptureImage(),
-                                                         _mockConfig->cameraHasModes(),
-                                                         _mockConfig->cameraHasVideoStream(),
-                                                         _mockConfig->cameraCanCaptureImageInVideoMode(),
-                                                         _mockConfig->cameraCanCaptureVideoInImageMode(),
-                                                         _mockConfig->cameraHasBasicZoom(),
-                                                         _mockConfig->cameraHasTrackingPoint(),
-                                                         _mockConfig->cameraHasTrackingRectangle())
-                                    : nullptr)
-    , _mockLinkGimbal(_enableGimbal ? new MockLinkGimbal(this,
-                                                        _mockConfig->gimbalHasRollAxis(),
-                                                        _mockConfig->gimbalHasPitchAxis(),
-                                                        _mockConfig->gimbalHasYawAxis(),
-                                                        _mockConfig->gimbalHasYawFollow(),
-                                                        _mockConfig->gimbalHasYawLock(),
-                                                        _mockConfig->gimbalHasRetract(),
-                                                        _mockConfig->gimbalHasNeutral())
-                                    : nullptr)
-    , _mockLinkPX4Calibration(new MockLinkPX4Calibration(this))
-    , _mockLinkFTP(new MockLinkFTP(_vehicleSystemId, _vehicleComponentId, this))
+MockLink::MockLink(SharedLinkConfigurationPtr& config, QObject* parent)
+    : LinkInterface(config, parent),
+      _mockConfig(qobject_cast<const MockConfiguration*>(_config.get())),
+      _firmwareType(_mockConfig->firmwareType()),
+      _vehicleType(_mockConfig->vehicleType()),
+      _sendStatusText(_mockConfig->sendStatusText()),
+      _enableCamera(_mockConfig->enableCamera()),
+      _enableGimbal(_mockConfig->enableGimbal()),
+      _enableProximity(_mockConfig->enableProximity()),
+      _failureMode(_mockConfig->failureMode()),
+      _vehicleSystemId(_mockConfig->incrementVehicleId() ? _nextVehicleSystemId++
+                                                         : static_cast<int>(_nextVehicleSystemId)),
+      _vehicleLatitude(_defaultVehicleLatitude + ((_vehicleSystemId - 128) * 0.0001)),
+      _vehicleLongitude(_defaultVehicleLongitude + ((_vehicleSystemId - 128) * 0.0001)),
+      _boardVendorId(_mockConfig->boardVendorId()),
+      _boardProductId(_mockConfig->boardProductId()),
+      _missionItemHandler(new MockLinkMissionItemHandler(this)),
+      _mockLinkCamera(
+          _enableCamera
+              ? new MockLinkCamera(this, _mockConfig->cameraCaptureVideo(), _mockConfig->cameraCaptureImage(),
+                                   _mockConfig->cameraHasModes(), _mockConfig->cameraHasVideoStream(),
+                                   _mockConfig->cameraCanCaptureImageInVideoMode(),
+                                   _mockConfig->cameraCanCaptureVideoInImageMode(), _mockConfig->cameraHasBasicZoom(),
+                                   _mockConfig->cameraHasTrackingPoint(), _mockConfig->cameraHasTrackingRectangle())
+              : nullptr),
+      _mockLinkGimbal(_enableGimbal
+                          ? new MockLinkGimbal(this, _mockConfig->gimbalHasRollAxis(),
+                                               _mockConfig->gimbalHasPitchAxis(), _mockConfig->gimbalHasYawAxis(),
+                                               _mockConfig->gimbalHasYawFollow(), _mockConfig->gimbalHasYawLock(),
+                                               _mockConfig->gimbalHasRetract(), _mockConfig->gimbalHasNeutral())
+                          : nullptr),
+      _mockLinkPX4Calibration(new MockLinkPX4Calibration(this)),
+      _mockLinkFTP(new MockLinkFTP(_vehicleSystemId, _vehicleComponentId, this))
 {
     qCDebug(MockLinkLog) << this;
 
@@ -108,7 +105,7 @@ MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
     _adsbVehicles.reserve(_numberOfVehicles);
     for (int i = 0; i < _numberOfVehicles; ++i) {
         ADSBVehicle vehicle{};
-        vehicle.angle = i * 72.0; // Different starting directions (angles 0, 72, 144, 216, 288)
+        vehicle.angle = i * 72.0;  // Different starting directions (angles 0, 72, 144, 216, 288)
 
         // Set initial coordinates slightly offset from the default coordinates
         const double latOffset = 0.001 * i;
@@ -121,7 +118,8 @@ MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
         _adsbVehicles.append(vehicle);
     }
 
-    (void) QObject::connect(this, &MockLink::writeBytesQueuedSignal, this, &MockLink::_writeBytesQueued, Qt::QueuedConnection);
+    (void) QObject::connect(this, &MockLink::writeBytesQueuedSignal, this, &MockLink::_writeBytesQueued,
+                            Qt::QueuedConnection);
 
     _loadParams();
     _runningTime.start();
@@ -160,9 +158,9 @@ bool MockLink::_connect()
     if (!_connected) {
         _connected = true;
         _disconnectedEmitted = false;
-        mavlink_status_t *const outgoingStatus = mavlink_get_channel_status(_outgoingMavlinkChannel);
+        mavlink_status_t* const outgoingStatus = mavlink_get_channel_status(_outgoingMavlinkChannel);
         outgoingStatus->flags &= ~MAVLINK_STATUS_FLAG_OUT_MAVLINK1;
-        mavlink_status_t *const incomingStatus = mavlink_get_channel_status(_incomingMavlinkChannel);
+        mavlink_status_t* const incomingStatus = mavlink_get_channel_status(_incomingMavlinkChannel);
         incomingStatus->flags &= ~MAVLINK_STATUS_FLAG_OUT_MAVLINK1;
         emit connected();
     }
@@ -338,13 +336,15 @@ bool MockLink::_allocateMavlinkChannel()
         return false;
     }
 
-    qCDebug(MockLinkLog) << "_allocateMavlinkChannel aux:" << _incomingMavlinkChannel << "vehicle:" << _outgoingMavlinkChannel;
+    qCDebug(MockLinkLog) << "_allocateMavlinkChannel aux:" << _incomingMavlinkChannel
+                         << "vehicle:" << _outgoingMavlinkChannel;
     return true;
 }
 
 void MockLink::_freeMavlinkChannel()
 {
-    qCDebug(MockLinkLog) << "_freeMavlinkChannel aux:" << _incomingMavlinkChannel << "vehicle:" << _outgoingMavlinkChannel;
+    qCDebug(MockLinkLog) << "_freeMavlinkChannel aux:" << _incomingMavlinkChannel
+                         << "vehicle:" << _outgoingMavlinkChannel;
     if (!_incomingMavlinkChannelIsSet()) {
         Q_ASSERT(!_outgoingMavlinkChannelIsSet());
         Q_ASSERT(!mavlinkChannelIsSet());
@@ -379,9 +379,9 @@ void MockLink::_loadParams()
     if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
         if (_vehicleType == MAV_TYPE_FIXED_WING) {
             paramFile.setFileName(":/FirmwarePlugin/APM/Plane.OfflineEditing.params");
-        } else if (_vehicleType == MAV_TYPE_SUBMARINE ) {
+        } else if (_vehicleType == MAV_TYPE_SUBMARINE) {
             paramFile.setFileName(":/FirmwarePlugin/APM/Sub.OfflineEditing.params");
-        } else if (_vehicleType == MAV_TYPE_GROUND_ROVER ) {
+        } else if (_vehicleType == MAV_TYPE_GROUND_ROVER) {
             paramFile.setFileName(":/FirmwarePlugin/APM/Rover.OfflineEditing.params");
         } else {
             paramFile.setFileName(":/FirmwarePlugin/APM/Copter.OfflineEditing.params");
@@ -412,31 +412,31 @@ void MockLink::_loadParams()
 
         QVariant paramValue;
         switch (paramType) {
-        case MAV_PARAM_TYPE_REAL32:
-            paramValue = QVariant(valStr.toFloat());
-            break;
-        case MAV_PARAM_TYPE_UINT32:
-            paramValue = QVariant(valStr.toUInt());
-            break;
-        case MAV_PARAM_TYPE_INT32:
-            paramValue = QVariant(valStr.toInt());
-            break;
-        case MAV_PARAM_TYPE_UINT16:
-            paramValue = QVariant((quint16)valStr.toUInt());
-            break;
-        case MAV_PARAM_TYPE_INT16:
-            paramValue = QVariant((qint16)valStr.toInt());
-            break;
-        case MAV_PARAM_TYPE_UINT8:
-            paramValue = QVariant((quint8)valStr.toUInt());
-            break;
-        case MAV_PARAM_TYPE_INT8:
-            paramValue = QVariant((qint8)valStr.toUInt());
-            break;
-        default:
-            qCCritical(MockLinkVerboseLog) << "Unknown type" << paramType;
-            paramValue = QVariant(valStr.toInt());
-            break;
+            case MAV_PARAM_TYPE_REAL32:
+                paramValue = QVariant(valStr.toFloat());
+                break;
+            case MAV_PARAM_TYPE_UINT32:
+                paramValue = QVariant(valStr.toUInt());
+                break;
+            case MAV_PARAM_TYPE_INT32:
+                paramValue = QVariant(valStr.toInt());
+                break;
+            case MAV_PARAM_TYPE_UINT16:
+                paramValue = QVariant((quint16) valStr.toUInt());
+                break;
+            case MAV_PARAM_TYPE_INT16:
+                paramValue = QVariant((qint16) valStr.toInt());
+                break;
+            case MAV_PARAM_TYPE_UINT8:
+                paramValue = QVariant((quint8) valStr.toUInt());
+                break;
+            case MAV_PARAM_TYPE_INT8:
+                paramValue = QVariant((qint8) valStr.toUInt());
+                break;
+            default:
+                qCCritical(MockLinkVerboseLog) << "Unknown type" << paramType;
+                paramValue = QVariant(valStr.toInt());
+                break;
         }
 
         qCDebug(MockLinkVerboseLog) << "Loading param" << paramName << paramValue;
@@ -492,17 +492,18 @@ void MockLink::_resetParamsToDefaults()
 
     QHash<QString, QVariant> defaults;
     const QJsonArray parameters = doc.object().value(QStringLiteral("parameters")).toArray();
-    for (const QJsonValue &parameter : parameters) {
+    for (const QJsonValue& parameter : parameters) {
         const QJsonObject paramObject = parameter.toObject();
         if (paramObject.contains(QStringLiteral("default"))) {
-            defaults[paramObject.value(QStringLiteral("name")).toString()] = paramObject.value(QStringLiteral("default")).toVariant();
+            defaults[paramObject.value(QStringLiteral("name")).toString()] =
+                paramObject.value(QStringLiteral("default")).toVariant();
         }
     }
 
     for (auto compIt = _mapParamName2Value.begin(); compIt != _mapParamName2Value.end(); ++compIt) {
         const int compId = compIt.key();
         for (auto paramIt = compIt.value().begin(); paramIt != compIt.value().end(); ++paramIt) {
-            const QString &paramName = paramIt.key();
+            const QString& paramName = paramIt.key();
             if (!_resetSysAutostartOnParamReset && (paramName == QLatin1String("SYS_AUTOSTART"))) {
                 continue;
             }
@@ -511,30 +512,31 @@ void MockLink::_resetParamsToDefaults()
                 continue;
             }
             switch (_mapParamName2MavParamType[compId][paramName]) {
-            case MAV_PARAM_TYPE_REAL32:
-                paramIt.value() = QVariant(defaultIt->toFloat());
-                break;
-            case MAV_PARAM_TYPE_UINT32:
-                paramIt.value() = QVariant(defaultIt->toUInt());
-                break;
-            case MAV_PARAM_TYPE_INT32:
-                paramIt.value() = QVariant(defaultIt->toInt());
-                break;
-            case MAV_PARAM_TYPE_UINT16:
-                paramIt.value() = QVariant(static_cast<quint16>(defaultIt->toUInt()));
-                break;
-            case MAV_PARAM_TYPE_INT16:
-                paramIt.value() = QVariant(static_cast<qint16>(defaultIt->toInt()));
-                break;
-            case MAV_PARAM_TYPE_UINT8:
-                paramIt.value() = QVariant(static_cast<quint8>(defaultIt->toUInt()));
-                break;
-            case MAV_PARAM_TYPE_INT8:
-                paramIt.value() = QVariant(static_cast<qint8>(defaultIt->toInt()));
-                break;
-            default:
-                qCWarning(MockLinkLog) << "Param reset skipped unhandled type" << _mapParamName2MavParamType[compId][paramName] << paramName;
-                break;
+                case MAV_PARAM_TYPE_REAL32:
+                    paramIt.value() = QVariant(defaultIt->toFloat());
+                    break;
+                case MAV_PARAM_TYPE_UINT32:
+                    paramIt.value() = QVariant(defaultIt->toUInt());
+                    break;
+                case MAV_PARAM_TYPE_INT32:
+                    paramIt.value() = QVariant(defaultIt->toInt());
+                    break;
+                case MAV_PARAM_TYPE_UINT16:
+                    paramIt.value() = QVariant(static_cast<quint16>(defaultIt->toUInt()));
+                    break;
+                case MAV_PARAM_TYPE_INT16:
+                    paramIt.value() = QVariant(static_cast<qint16>(defaultIt->toInt()));
+                    break;
+                case MAV_PARAM_TYPE_UINT8:
+                    paramIt.value() = QVariant(static_cast<quint8>(defaultIt->toUInt()));
+                    break;
+                case MAV_PARAM_TYPE_INT8:
+                    paramIt.value() = QVariant(static_cast<qint8>(defaultIt->toInt()));
+                    break;
+                default:
+                    qCWarning(MockLinkLog) << "Param reset skipped unhandled type"
+                                           << _mapParamName2MavParamType[compId][paramName] << paramName;
+                    break;
             }
         }
     }
@@ -543,16 +545,12 @@ void MockLink::_resetParamsToDefaults()
 void MockLink::_sendHeartBeat()
 {
     mavlink_message_t msg{};
-    (void) mavlink_msg_heartbeat_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        _vehicleType,       // MAV_TYPE
-        _firmwareType,      // MAV_AUTOPILOT
-        _mavBaseMode,       // MAV_MODE
-        _mavCustomMode,     // custom mode
-        _mavState           // MAV_STATE
+    (void) mavlink_msg_heartbeat_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                           _vehicleType,    // MAV_TYPE
+                                           _firmwareType,   // MAV_AUTOPILOT
+                                           _mavBaseMode,    // MAV_MODE
+                                           _mavCustomMode,  // custom mode
+                                           _mavState        // MAV_STATE
     );
     respondWithMavlinkMessage(msg);
 }
@@ -565,36 +563,32 @@ void MockLink::_sendHighLatency2()
     px4_cm.data = _mavCustomMode;
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_high_latency2_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        0,                          // timestamp
-        _vehicleType,               // MAV_TYPE
-        _firmwareType,              // MAV_AUTOPILOT
-        px4_cm.custom_mode_hl,      // custom_mode
-        static_cast<int32_t>(_vehicleLatitude * 1E7),
-        static_cast<int32_t>(_vehicleLongitude * 1E7),
-        static_cast<int16_t>(_vehicleAltitudeAMSL),
-        static_cast<int16_t>(_vehicleAltitudeAMSL),  // target_altitude,
-        0,                          // heading
-        0,                          // target_heading
-        0,                          // target_distance
-        0,                          // throttle
-        0,                          // airspeed
-        0,                          // airspeed_sp
-        0,                          // groundspeed
-        0,                          // windspeed,
-        0,                          // wind_heading
-        UINT8_MAX,                  // eph not known
-        UINT8_MAX,                  // epv not known
-        0,                          // temperature_air
-        0,                          // climb_rate
-        -1,                         // battery, do not use?
-        0,                          // wp_num
-        0,                          // failure_flags
-        0, 0, 0                     // custom0, custom1, custom2
+    (void) mavlink_msg_high_latency2_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                               0,                      // timestamp
+                                               _vehicleType,           // MAV_TYPE
+                                               _firmwareType,          // MAV_AUTOPILOT
+                                               px4_cm.custom_mode_hl,  // custom_mode
+                                               static_cast<int32_t>(_vehicleLatitude * 1E7),
+                                               static_cast<int32_t>(_vehicleLongitude * 1E7),
+                                               static_cast<int16_t>(_vehicleAltitudeAMSL),
+                                               static_cast<int16_t>(_vehicleAltitudeAMSL),  // target_altitude,
+                                               0,                                           // heading
+                                               0,                                           // target_heading
+                                               0,                                           // target_distance
+                                               0,                                           // throttle
+                                               0,                                           // airspeed
+                                               0,                                           // airspeed_sp
+                                               0,                                           // groundspeed
+                                               0,                                           // windspeed,
+                                               0,                                           // wind_heading
+                                               UINT8_MAX,                                   // eph not known
+                                               UINT8_MAX,                                   // epv not known
+                                               0,                                           // temperature_air
+                                               0,                                           // climb_rate
+                                               -1,                                          // battery, do not use?
+                                               0,                                           // wp_num
+                                               0,                                           // failure_flags
+                                               0, 0, 0                                      // custom0, custom1, custom2
     );
     respondWithMavlinkMessage(msg);
 }
@@ -602,20 +596,15 @@ void MockLink::_sendHighLatency2()
 void MockLink::_sendSysStatus()
 {
     mavlink_message_t msg{};
-    (void) mavlink_msg_sys_status_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        MAV_SYS_STATUS_SENSOR_GPS,  // onboard_control_sensors_present
-        0,                          // onboard_control_sensors_enabled
-        0,                          // onboard_control_sensors_health
-        250,                        // load
-        4200 * 4,                   // voltage_battery
-        8000,                       // current_battery
-        _battery1PctRemaining,      // battery_remaining
-        0,0,0,0,0,0,0,0,0
-    );
+    (void) mavlink_msg_sys_status_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                            MAV_SYS_STATUS_SENSOR_GPS,  // onboard_control_sensors_present
+                                            0,                          // onboard_control_sensors_enabled
+                                            0,                          // onboard_control_sensors_health
+                                            250,                        // load
+                                            4200 * 4,                   // voltage_battery
+                                            8000,                       // current_battery
+                                            _battery1PctRemaining,      // battery_remaining
+                                            0, 0, 0, 0, 0, 0, 0, 0, 0);
     respondWithMavlinkMessage(msg);
 }
 
@@ -623,7 +612,8 @@ void MockLink::_sendBatteryStatus()
 {
     if (_battery1PctRemaining > 1) {
         _battery1PctRemaining = static_cast<int8_t>(100 - (_runningTime.elapsed() / 1000));
-        _battery1TimeRemaining = static_cast<double>(_batteryMaxTimeRemaining) * (static_cast<double>(_battery1PctRemaining) / 100.0);
+        _battery1TimeRemaining =
+            static_cast<double>(_batteryMaxTimeRemaining) * (static_cast<double>(_battery1PctRemaining) / 100.0);
         if (_battery1PctRemaining > 50) {
             _battery1ChargeState = MAV_BATTERY_CHARGE_STATE_OK;
         } else if (_battery1PctRemaining > 30) {
@@ -637,7 +627,8 @@ void MockLink::_sendBatteryStatus()
 
     if (_battery2PctRemaining > 1) {
         _battery2PctRemaining = static_cast<int8_t>(100 - ((_runningTime.elapsed() / 1000) / 2));
-        _battery2TimeRemaining = static_cast<double>(_batteryMaxTimeRemaining) * (static_cast<double>(_battery2PctRemaining) / 100.0);
+        _battery2TimeRemaining =
+            static_cast<double>(_batteryMaxTimeRemaining) * (static_cast<double>(_battery2PctRemaining) / 100.0);
         if (_battery2PctRemaining > 50) {
             _battery2ChargeState = MAV_BATTERY_CHARGE_STATE_OK;
         } else if (_battery2PctRemaining > 30) {
@@ -660,47 +651,33 @@ void MockLink::_sendBatteryStatus()
     }
     rgVoltages[0] = rgVoltages[1] = rgVoltages[2] = 4200;
 
-    (void) mavlink_msg_battery_status_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        1,                          // battery id
-        MAV_BATTERY_FUNCTION_ALL,
-        MAV_BATTERY_TYPE_LIPO,
-        2100,                       // temp cdegC
-        rgVoltages,
-        600,                        // battery cA
-        100,                        // current consumed mAh
-        -1,                         // energy consumed not supported
-        _battery1PctRemaining,
-        _battery1TimeRemaining,
-        _battery1ChargeState,
-        rgVoltagesExtNone,
-        0, // MAV_BATTERY_MODE
-        0  // MAV_BATTERY_FAULT
+    (void) mavlink_msg_battery_status_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                1,     // battery id
+                                                MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO,
+                                                2100,  // temp cdegC
+                                                rgVoltages,
+                                                600,   // battery cA
+                                                100,   // current consumed mAh
+                                                -1,    // energy consumed not supported
+                                                _battery1PctRemaining, _battery1TimeRemaining, _battery1ChargeState,
+                                                rgVoltagesExtNone,
+                                                0,  // MAV_BATTERY_MODE
+                                                0   // MAV_BATTERY_FAULT
     );
     respondWithMavlinkMessage(msg);
 
-    (void) mavlink_msg_battery_status_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        2,                          // battery id
-        MAV_BATTERY_FUNCTION_ALL,
-        MAV_BATTERY_TYPE_LIPO,
-        INT16_MAX,                  // temp cdegC
-        rgVoltagesNone,
-        600,                        // battery cA
-        100,                        // current consumed mAh
-        -1,                         // energy consumed not supported
-        _battery2PctRemaining,
-        _battery2TimeRemaining,
-        _battery2ChargeState,
-        rgVoltagesExtNone,
-        0, // MAV_BATTERY_MODE
-        0  // MAV_BATTERY_FAULT
+    (void) mavlink_msg_battery_status_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                2,          // battery id
+                                                MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO,
+                                                INT16_MAX,  // temp cdegC
+                                                rgVoltagesNone,
+                                                600,        // battery cA
+                                                100,        // current consumed mAh
+                                                -1,         // energy consumed not supported
+                                                _battery2PctRemaining, _battery2TimeRemaining, _battery2ChargeState,
+                                                rgVoltagesExtNone,
+                                                0,  // MAV_BATTERY_MODE
+                                                0   // MAV_BATTERY_FAULT
     );
     respondWithMavlinkMessage(msg);
 }
@@ -718,44 +695,26 @@ void MockLink::_sendNamedValueFloats()
     static constexpr char kCosName[10] = "cos_wave";
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_named_value_float_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        kSinName,
-        sinVal
-    );
+    (void) mavlink_msg_named_value_float_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                   timeBootMs, kSinName, sinVal);
     respondWithMavlinkMessage(msg);
 
-    (void) mavlink_msg_named_value_float_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        kCosName,
-        cosVal
-    );
+    (void) mavlink_msg_named_value_float_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                   timeBootMs, kCosName, cosVal);
     respondWithMavlinkMessage(msg);
 }
 
 void MockLink::_sendVibration()
 {
     mavlink_message_t msg{};
-    (void) mavlink_msg_vibration_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        0,       // time_usec
-        50.5,    // vibration_x,
-        10.5,    // vibration_y,
-        60.0,    // vibration_z,
-        1,       // clipping_0
-        2,       // clipping_0
-        3        // clipping_0
+    (void) mavlink_msg_vibration_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                           0,     // time_usec
+                                           50.5,  // vibration_x,
+                                           10.5,  // vibration_y,
+                                           60.0,  // vibration_z,
+                                           1,     // clipping_0
+                                           2,     // clipping_0
+                                           3      // clipping_0
     );
     respondWithMavlinkMessage(msg);
 }
@@ -765,12 +724,8 @@ void MockLink::_sendDistanceSensors()
     // Simulated proximity sensor ring: one DISTANCE_SENSOR message per yaw orientation.
     // Two orientations are deliberately never sent so the UI shows sectors with no data.
     static constexpr MAV_SENSOR_ORIENTATION rgOrientations[] = {
-        MAV_SENSOR_ROTATION_NONE,
-        MAV_SENSOR_ROTATION_YAW_45,
-        MAV_SENSOR_ROTATION_YAW_90,
-        MAV_SENSOR_ROTATION_YAW_180,
-        MAV_SENSOR_ROTATION_YAW_270,
-        MAV_SENSOR_ROTATION_YAW_315,
+        MAV_SENSOR_ROTATION_NONE,    MAV_SENSOR_ROTATION_YAW_45,  MAV_SENSOR_ROTATION_YAW_90,
+        MAV_SENSOR_ROTATION_YAW_180, MAV_SENSOR_ROTATION_YAW_270, MAV_SENSOR_ROTATION_YAW_315,
     };
 
     static constexpr uint16_t minDistanceCm = 20;
@@ -785,29 +740,22 @@ void MockLink::_sendDistanceSensors()
         const uint16_t currentDistanceCm = static_cast<uint16_t>(2000 + (1500 * sweep));
 
         mavlink_message_t msg{};
-        (void) mavlink_msg_distance_sensor_pack_chan(
-            _vehicleSystemId,
-            _vehicleComponentId,
-            _outgoingMavlinkChannel,
-            &msg,
-            timeBootMs,
-            minDistanceCm,
-            maxDistanceCm,
-            currentDistanceCm,
-            MAV_DISTANCE_SENSOR_LASER,
-            static_cast<uint8_t>(i),        // id
-            rgOrientations[i],
-            255,                            // covariance - unknown
-            0.0f,                           // horizontal_fov - unknown
-            0.0f,                           // vertical_fov - unknown
-            quaternion,                     // valid only for MAV_SENSOR_ROTATION_CUSTOM
-            0                               // signal_quality - unknown
+        (void) mavlink_msg_distance_sensor_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                     &msg, timeBootMs, minDistanceCm, maxDistanceCm, currentDistanceCm,
+                                                     MAV_DISTANCE_SENSOR_LASER,
+                                                     static_cast<uint8_t>(i),  // id
+                                                     rgOrientations[i],
+                                                     255,                      // covariance - unknown
+                                                     0.0f,                     // horizontal_fov - unknown
+                                                     0.0f,                     // vertical_fov - unknown
+                                                     quaternion,  // valid only for MAV_SENSOR_ROTATION_CUSTOM
+                                                     0            // signal_quality - unknown
         );
         respondWithMavlinkMessage(msg);
     }
 }
 
-void MockLink::respondWithMavlinkMessage(const mavlink_message_t &msg)
+void MockLink::respondWithMavlinkMessage(const mavlink_message_t& msg)
 {
     if (!_commLost) {
         uint8_t buffer[MAVLINK_MAX_PACKET_LEN]{};
@@ -817,13 +765,13 @@ void MockLink::respondWithMavlinkMessage(const mavlink_message_t &msg)
     }
 }
 
-void MockLink::_writeBytes(const QByteArray &bytes)
+void MockLink::_writeBytes(const QByteArray& bytes)
 {
     // This prevents the responses to mavlink messages from being sent until the _writeBytes returns.
     emit writeBytesQueuedSignal(bytes);
 }
 
-void MockLink::_writeBytesQueued(const QByteArray &bytes)
+void MockLink::_writeBytesQueued(const QByteArray& bytes)
 {
     if (!_connected || !mavlinkChannelIsSet()) {
         qCDebug(MockLinkLog) << "Dropping queued bytes on disconnected/uninitialized mock link";
@@ -843,13 +791,13 @@ void MockLink::_writeBytesQueued(const QByteArray &bytes)
     _handleIncomingMavlinkBytes(reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.length());
 }
 
-void MockLink::_handleIncomingNSHBytes(const char *bytes, int cBytes)
+void MockLink::_handleIncomingNSHBytes(const char* bytes, int cBytes)
 {
     Q_UNUSED(cBytes);
 
     // Drop back out of NSH
     if ((cBytes == 4) && (bytes[0] == '\r') && (bytes[1] == '\r') && (bytes[2] == '\r')) {
-        _inNSH  = false;
+        _inNSH = false;
         return;
     }
 
@@ -865,7 +813,7 @@ void MockLink::_handleIncomingNSHBytes(const char *bytes, int cBytes)
     }
 }
 
-void MockLink::_handleIncomingMavlinkBytes(const uint8_t *bytes, int cBytes)
+void MockLink::_handleIncomingMavlinkBytes(const uint8_t* bytes, int cBytes)
 {
     mavlink_message_t msg{};
     mavlink_status_t comm{};
@@ -882,7 +830,7 @@ void MockLink::_handleIncomingMavlinkBytes(const uint8_t *bytes, int cBytes)
     }
 }
 
-void MockLink::_updateIncomingMessageCounts(const mavlink_message_t &msg)
+void MockLink::_updateIncomingMessageCounts(const mavlink_message_t& msg)
 {
     _receivedMavlinkMessageCountMap[msg.msgid]++;
     _lastReceivedMavlinkMessageMap[msg.msgid] = msg;
@@ -908,7 +856,7 @@ void MockLink::_updateIncomingMessageCounts(const mavlink_message_t &msg)
     }
 }
 
-void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t &msg)
+void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t& msg)
 {
     _updateIncomingMessageCounts(msg);
 
@@ -925,82 +873,92 @@ void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t &msg)
     }
 
     switch (msg.msgid) {
-    case MAVLINK_MSG_ID_HEARTBEAT:
-        _handleHeartBeat(msg);
-        break;
-    case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
-        _handleParamRequestList(msg);
-        break;
-    case MAVLINK_MSG_ID_SET_MODE:
-        _handleSetMode(msg);
-        break;
-    case MAVLINK_MSG_ID_PARAM_SET:
-        _handleParamSet(msg);
-        break;
-    case MAVLINK_MSG_ID_PARAM_REQUEST_READ:
-        _handleParamRequestRead(msg);
-        break;
-    case MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL:
-        _handleFTP(msg);
-        break;
-    case MAVLINK_MSG_ID_COMMAND_LONG:
-        _handleCommandLong(msg);
-        break;
-    case MAVLINK_MSG_ID_COMMAND_INT:
-        _handleCommandInt(msg);
-        break;
-    case MAVLINK_MSG_ID_MANUAL_CONTROL:
-        _handleManualControl(msg);
-        break;
-    case MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE:
-        _handleRCChannelsOverride(msg);
-        break;
-    case MAVLINK_MSG_ID_LOG_REQUEST_LIST:
-        _handleLogRequestList(msg);
-        break;
-    case MAVLINK_MSG_ID_LOG_REQUEST_DATA:
-        _handleLogRequestData(msg);
-        break;
-    case MAVLINK_MSG_ID_PARAM_MAP_RC:
-        _handleParamMapRC(msg);
-        break;
-    case MAVLINK_MSG_ID_SETUP_SIGNING:
-        _handleSetupSigning(msg);
-        break;
-    case MAVLINK_MSG_ID_COMMAND_ACK:
-        // GCS sends COMMAND_ACK(command=0) via nextClicked() to acknowledge each pose
-        // during APM full accel calibration (the "Next" button press).
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            mavlink_command_ack_t ack{};
-            mavlink_msg_command_ack_decode(&msg, &ack);
-            if (ack.command == 0) {
-                QMutexLocker locker(&_apmAccelCalMutex);
-                if (_apmAccelCalPosIndex >= 0 && _apmAccelCalPosIndex < 6) {
-                    _apmAccelCalGotAck = true;
+        case MAVLINK_MSG_ID_HEARTBEAT:
+            _handleHeartBeat(msg);
+            break;
+        case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
+            _handleParamRequestList(msg);
+            break;
+        case MAVLINK_MSG_ID_SET_MODE:
+            _handleSetMode(msg);
+            break;
+        case MAVLINK_MSG_ID_PARAM_SET:
+            _handleParamSet(msg);
+            break;
+        case MAVLINK_MSG_ID_PARAM_REQUEST_READ:
+            _handleParamRequestRead(msg);
+            break;
+        case MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL:
+            _handleFTP(msg);
+            break;
+        case MAVLINK_MSG_ID_COMMAND_LONG:
+            _handleCommandLong(msg);
+            break;
+        case MAVLINK_MSG_ID_COMMAND_INT:
+            _handleCommandInt(msg);
+            break;
+        case MAVLINK_MSG_ID_MANUAL_CONTROL:
+            _handleManualControl(msg);
+            break;
+        case MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE:
+            _handleRCChannelsOverride(msg);
+            break;
+        case MAVLINK_MSG_ID_LOG_REQUEST_LIST:
+            _handleLogRequestList(msg);
+            break;
+        case MAVLINK_MSG_ID_LOG_REQUEST_DATA:
+            _handleLogRequestData(msg);
+            break;
+        case MAVLINK_MSG_ID_PARAM_MAP_RC:
+            _handleParamMapRC(msg);
+            break;
+        case MAVLINK_MSG_ID_SETUP_SIGNING:
+            _handleSetupSigning(msg);
+            break;
+        case MAVLINK_MSG_ID_COMMAND_ACK:
+            // GCS sends COMMAND_ACK(command=0) via nextClicked() to acknowledge each pose
+            // during APM full accel calibration (the "Next" button press).
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                mavlink_command_ack_t ack{};
+                mavlink_msg_command_ack_decode(&msg, &ack);
+                if (ack.command == 0) {
+                    QMutexLocker locker(&_apmAccelCalMutex);
+                    if (_apmAccelCalPosIndex >= 0 && _apmAccelCalPosIndex < 6) {
+                        _apmAccelCalGotAck = true;
+                    }
                 }
             }
-        }
-        break;
-    default:
-        break;
+            break;
+        default:
+            break;
     }
 }
 
-void MockLink::_handleHeartBeat(const mavlink_message_t &msg)
+void MockLink::_handleHeartBeat(const mavlink_message_t& msg)
 {
     Q_UNUSED(msg);
     qCDebug(MockLinkVerboseLog) << "Heartbeat";
 }
 
-void MockLink::_handleParamMapRC(const mavlink_message_t &msg)
+void MockLink::_handleParamMapRC(const mavlink_message_t& msg)
 {
     mavlink_param_map_rc_t paramMapRC{};
     mavlink_msg_param_map_rc_decode(&msg, &paramMapRC);
 
-    const QString paramName(QString::fromLocal8Bit(paramMapRC.param_id, static_cast<int>(strnlen(paramMapRC.param_id, MAVLINK_MSG_PARAM_MAP_RC_FIELD_PARAM_ID_LEN))));
+    const QString paramName(QString::fromLocal8Bit(
+        paramMapRC.param_id,
+        static_cast<int>(strnlen(paramMapRC.param_id, MAVLINK_MSG_PARAM_MAP_RC_FIELD_PARAM_ID_LEN))));
 
     if (paramMapRC.param_index == -1) {
-        qCDebug(MockLinkLog) << QStringLiteral("MockLink - PARAM_MAP_RC: param(%1) tuningID(%2) centerValue(%3) scale(%4) min(%5) max(%6)").arg(paramName).arg(paramMapRC.parameter_rc_channel_index).arg(paramMapRC.param_value0).arg(paramMapRC.scale).arg(paramMapRC.param_value_min).arg(paramMapRC.param_value_max);
+        qCDebug(MockLinkLog)
+            << QStringLiteral(
+                   "MockLink - PARAM_MAP_RC: param(%1) tuningID(%2) centerValue(%3) scale(%4) min(%5) max(%6)")
+                   .arg(paramName)
+                   .arg(paramMapRC.parameter_rc_channel_index)
+                   .arg(paramMapRC.param_value0)
+                   .arg(paramMapRC.scale)
+                   .arg(paramMapRC.param_value_min)
+                   .arg(paramMapRC.param_value_max);
     } else if (paramMapRC.param_index == -2) {
         qCDebug(MockLinkLog) << "MockLink - PARAM_MAP_RC: Clear tuningID" << paramMapRC.parameter_rc_channel_index;
     } else {
@@ -1008,7 +966,7 @@ void MockLink::_handleParamMapRC(const mavlink_message_t &msg)
     }
 }
 
-void MockLink::_handleSetupSigning(const mavlink_message_t &msg)
+void MockLink::_handleSetupSigning(const mavlink_message_t& msg)
 {
     mavlink_setup_signing_t setupSigning{};
     mavlink_msg_setup_signing_decode(&msg, &setupSigning);
@@ -1048,7 +1006,7 @@ void MockLink::_handleSetupSigning(const mavlink_message_t &msg)
     qCDebug(MockLinkLog) << "Signing" << (_signingEnabled ? "enabled" : "disabled");
 }
 
-void MockLink::_handleSetMode(const mavlink_message_t &msg)
+void MockLink::_handleSetMode(const mavlink_message_t& msg)
 {
     mavlink_set_mode_t request{};
     mavlink_msg_set_mode_decode(&msg, &request);
@@ -1059,7 +1017,7 @@ void MockLink::_handleSetMode(const mavlink_message_t &msg)
     _mavCustomMode = request.custom_mode;
 }
 
-void MockLink::_handleManualControl(const mavlink_message_t &msg)
+void MockLink::_handleManualControl(const mavlink_message_t& msg)
 {
     mavlink_manual_control_t manualControl{};
     mavlink_msg_manual_control_decode(&msg, &manualControl);
@@ -1077,25 +1035,22 @@ void MockLink::_handleManualControl(const mavlink_message_t &msg)
 
     qCDebug(MockLinkVerboseLog).noquote()
         << "MANUAL_CONTROL"
-        << "target:"             << manualControl.target
-        << "x:"                  << axisStr(manualControl.x)
-        << "y:"                  << axisStr(manualControl.y)
-        << "z:"                  << axisStr(manualControl.z)
-        << "r:"                  << axisStr(manualControl.r)
-        << "buttons:"            << QStringLiteral("0x%1").arg(manualControl.buttons,  4, 16, QLatin1Char('0'))
-        << "buttons2:"           << QStringLiteral("0x%1").arg(manualControl.buttons2, 4, 16, QLatin1Char('0'))
+        << "target:" << manualControl.target << "x:" << axisStr(manualControl.x) << "y:" << axisStr(manualControl.y)
+        << "z:" << axisStr(manualControl.z) << "r:" << axisStr(manualControl.r)
+        << "buttons:" << QStringLiteral("0x%1").arg(manualControl.buttons, 4, 16, QLatin1Char('0'))
+        << "buttons2:" << QStringLiteral("0x%1").arg(manualControl.buttons2, 4, 16, QLatin1Char('0'))
         << "enabled_extensions:" << QStringLiteral("0x%1").arg(ext, 2, 16, QLatin1Char('0'))
-        << "s(pitch):"           << extStr(manualControl.s,    ext & (1 << 0))
-        << "t(roll):"            << extStr(manualControl.t,    ext & (1 << 1))
-        << "aux1:"               << extStr(manualControl.aux1, ext & (1 << 2))
-        << "aux2:"               << extStr(manualControl.aux2, ext & (1 << 3))
-        << "aux3:"               << extStr(manualControl.aux3, ext & (1 << 4))
-        << "aux4:"               << extStr(manualControl.aux4, ext & (1 << 5))
-        << "aux5:"               << extStr(manualControl.aux5, ext & (1 << 6))
-        << "aux6:"               << extStr(manualControl.aux6, ext & (1 << 7));
+        << "s(pitch):" << extStr(manualControl.s, ext & (1 << 0))
+        << "t(roll):" << extStr(manualControl.t, ext & (1 << 1))
+        << "aux1:" << extStr(manualControl.aux1, ext & (1 << 2))
+        << "aux2:" << extStr(manualControl.aux2, ext & (1 << 3))
+        << "aux3:" << extStr(manualControl.aux3, ext & (1 << 4))
+        << "aux4:" << extStr(manualControl.aux4, ext & (1 << 5))
+        << "aux5:" << extStr(manualControl.aux5, ext & (1 << 6))
+        << "aux6:" << extStr(manualControl.aux6, ext & (1 << 7));
 }
 
-void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
+void MockLink::_handleRCChannelsOverride(const mavlink_message_t& msg)
 {
     mavlink_rc_channels_override_t override{};
     mavlink_msg_rc_channels_override_decode(&msg, &override);
@@ -1104,11 +1059,10 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
     //   Channels 1-8:  UINT16_MAX = ignore (no state change), 0 = release back to RC radio
     //   Channels 9-18: UINT16_MAX or 0 = ignore,              UINT16_MAX-1 = release back to RC radio
     const uint16_t rawValues[18] = {
-        override.chan1_raw,  override.chan2_raw,  override.chan3_raw,  override.chan4_raw,
-        override.chan5_raw,  override.chan6_raw,  override.chan7_raw,  override.chan8_raw,
-        override.chan9_raw,  override.chan10_raw, override.chan11_raw, override.chan12_raw,
-        override.chan13_raw, override.chan14_raw, override.chan15_raw, override.chan16_raw,
-        override.chan17_raw, override.chan18_raw,
+        override.chan1_raw,  override.chan2_raw,  override.chan3_raw,  override.chan4_raw,  override.chan5_raw,
+        override.chan6_raw,  override.chan7_raw,  override.chan8_raw,  override.chan9_raw,  override.chan10_raw,
+        override.chan11_raw, override.chan12_raw, override.chan13_raw, override.chan14_raw, override.chan15_raw,
+        override.chan16_raw, override.chan17_raw, override.chan18_raw,
     };
 
     bool anyChange = false;
@@ -1119,7 +1073,7 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
         RCChannelOverride::State newState;
         if (isExtended) {
             if (raw == 0 || raw == UINT16_MAX) {
-                continue; // ignore — no change to this channel's state
+                continue;  // ignore — no change to this channel's state
             } else if (raw == static_cast<uint16_t>(UINT16_MAX - 1)) {
                 newState = RCChannelOverride::State::Released;
             } else {
@@ -1127,7 +1081,7 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
             }
         } else {
             if (raw == UINT16_MAX) {
-                continue; // ignore — no change to this channel's state
+                continue;  // ignore — no change to this channel's state
             } else if (raw == 0) {
                 newState = RCChannelOverride::State::Released;
             } else {
@@ -1135,22 +1089,28 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
             }
         }
 
-        RCChannelOverride &ch = _rcChannelOverrides[i];
+        RCChannelOverride& ch = _rcChannelOverrides[i];
         if (ch.state == newState) {
             continue;
         }
 
         anyChange = true;
 
-        const auto stateLabel = [](RCChannelOverride::State s) -> const char * {
+        const auto stateLabel = [](RCChannelOverride::State s) -> const char* {
             switch (s) {
-            case RCChannelOverride::State::Ignore:      return "ignore";
-            case RCChannelOverride::State::Released:    return "released";
-            case RCChannelOverride::State::Overridden:  return "overridden";
+                case RCChannelOverride::State::Ignore:
+                    return "ignore";
+                case RCChannelOverride::State::Released:
+                    return "released";
+                case RCChannelOverride::State::Overridden:
+                    return "overridden";
             }
             return "unknown";
         };
-        qCDebug(MockLinkLog).noquote() << QStringLiteral("RC_CHANNELS_OVERRIDE ch%1: %2 -> %3").arg(i + 1).arg(stateLabel(ch.state)).arg(stateLabel(newState));
+        qCDebug(MockLinkLog).noquote() << QStringLiteral("RC_CHANNELS_OVERRIDE ch%1: %2 -> %3")
+                                              .arg(i + 1)
+                                              .arg(stateLabel(ch.state))
+                                              .arg(stateLabel(newState));
 
         ch.state = newState;
         ch.value = (newState == RCChannelOverride::State::Overridden) ? raw : 0;
@@ -1166,18 +1126,20 @@ void MockLink::_handleRCChannelsOverride(const mavlink_message_t &msg)
         if (active.isEmpty()) {
             qCDebug(MockLinkLog) << "RC_CHANNELS_OVERRIDE: no channels currently overridden";
         } else {
-            qCDebug(MockLinkLog).noquote() << "RC_CHANNELS_OVERRIDE active overrides:" << active.join(QStringLiteral(", "));
+            qCDebug(MockLinkLog).noquote()
+                << "RC_CHANNELS_OVERRIDE active overrides:" << active.join(QStringLiteral(", "));
         }
     }
 
     for (int i = 0; i < kRcChannelOverrideChannelCount; ++i) {
         if (_rcChannelOverrides[i].state == RCChannelOverride::State::Overridden) {
-            qCDebug(MockLinkVerboseLog).noquote() << QStringLiteral("RC_CHANNELS_OVERRIDE ch%1 value: %2").arg(i + 1).arg(_rcChannelOverrides[i].value);
+            qCDebug(MockLinkVerboseLog).noquote()
+                << QStringLiteral("RC_CHANNELS_OVERRIDE ch%1 value: %2").arg(i + 1).arg(_rcChannelOverrides[i].value);
         }
     }
 }
 
-void MockLink::_setParamFloatUnionIntoMap(int componentId, const QString &paramName, float paramFloat)
+void MockLink::_setParamFloatUnionIntoMap(int componentId, const QString& paramName, float paramFloat)
 {
     Q_ASSERT(_mapParamName2Value.contains(componentId));
     Q_ASSERT(_mapParamName2Value[componentId].contains(paramName));
@@ -1188,45 +1150,45 @@ void MockLink::_setParamFloatUnionIntoMap(int componentId, const QString &paramN
     mavlink_param_union_t valueUnion{};
     valueUnion.param_float = paramFloat;
     switch (paramType) {
-    case MAV_PARAM_TYPE_REAL32:
-        paramVariant = QVariant::fromValue(valueUnion.param_float);
-        break;
-    case MAV_PARAM_TYPE_UINT32:
-        paramVariant = QVariant::fromValue(valueUnion.param_uint32);
-        break;
-    case MAV_PARAM_TYPE_INT32:
-        paramVariant = QVariant::fromValue(valueUnion.param_int32);
-        break;
-    case MAV_PARAM_TYPE_UINT16:
-        paramVariant = QVariant::fromValue(valueUnion.param_uint16);
-        break;
-    case MAV_PARAM_TYPE_INT16:
-        paramVariant = QVariant::fromValue(valueUnion.param_int16);
-        break;
-    case MAV_PARAM_TYPE_UINT8:
-        paramVariant = QVariant::fromValue(valueUnion.param_uint8);
-        break;
-    case MAV_PARAM_TYPE_INT8:
-        paramVariant = QVariant::fromValue(valueUnion.param_int8);
-        break;
-    default:
-        qCCritical(MockLinkLog) << "Invalid parameter type" << paramType;
-        paramVariant = QVariant::fromValue(valueUnion.param_int32);
-        break;
+        case MAV_PARAM_TYPE_REAL32:
+            paramVariant = QVariant::fromValue(valueUnion.param_float);
+            break;
+        case MAV_PARAM_TYPE_UINT32:
+            paramVariant = QVariant::fromValue(valueUnion.param_uint32);
+            break;
+        case MAV_PARAM_TYPE_INT32:
+            paramVariant = QVariant::fromValue(valueUnion.param_int32);
+            break;
+        case MAV_PARAM_TYPE_UINT16:
+            paramVariant = QVariant::fromValue(valueUnion.param_uint16);
+            break;
+        case MAV_PARAM_TYPE_INT16:
+            paramVariant = QVariant::fromValue(valueUnion.param_int16);
+            break;
+        case MAV_PARAM_TYPE_UINT8:
+            paramVariant = QVariant::fromValue(valueUnion.param_uint8);
+            break;
+        case MAV_PARAM_TYPE_INT8:
+            paramVariant = QVariant::fromValue(valueUnion.param_int8);
+            break;
+        default:
+            qCCritical(MockLinkLog) << "Invalid parameter type" << paramType;
+            paramVariant = QVariant::fromValue(valueUnion.param_int32);
+            break;
     }
 
     qCDebug(MockLinkLog) << "_setParamFloatUnionIntoMap" << paramName << paramVariant;
     _mapParamName2Value[componentId][paramName] = paramVariant;
 }
 
-void MockLink::setMockParamValue(int componentId, const QString &paramName, float value)
+void MockLink::setMockParamValue(int componentId, const QString& paramName, float value)
 {
     mavlink_param_union_t valueUnion{};
     valueUnion.param_float = value;
     _setParamFloatUnionIntoMap(componentId, paramName, valueUnion.param_float);
 }
 
-float MockLink::_floatUnionForParam(int componentId, const QString &paramName)
+float MockLink::_floatUnionForParam(int componentId, const QString& paramName)
 {
     Q_ASSERT(_mapParamName2Value.contains(componentId));
     Q_ASSERT(_mapParamName2Value[componentId].contains(paramName));
@@ -1237,58 +1199,58 @@ float MockLink::_floatUnionForParam(int componentId, const QString &paramName)
 
     mavlink_param_union_t valueUnion{};
     switch (paramType) {
-    case MAV_PARAM_TYPE_REAL32:
-        valueUnion.param_float = paramVar.toFloat();
-        break;
-    case MAV_PARAM_TYPE_UINT32:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toUInt();
-        } else {
-            valueUnion.param_uint32 = paramVar.toUInt();
-        }
-        break;
-    case MAV_PARAM_TYPE_INT32:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toInt();
-        } else {
-            valueUnion.param_int32 = paramVar.toInt();
-        }
-        break;
-    case MAV_PARAM_TYPE_UINT16:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toUInt();
-        } else {
-            valueUnion.param_uint16 = paramVar.toUInt();
-        }
-        break;
-    case MAV_PARAM_TYPE_INT16:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toInt();
-        } else {
-            valueUnion.param_int16 = paramVar.toInt();
-        }
-        break;
-    case MAV_PARAM_TYPE_UINT8:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toUInt();
-        } else {
-            valueUnion.param_uint8 = paramVar.toUInt();
-        }
-        break;
-    case MAV_PARAM_TYPE_INT8:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = (unsigned char)paramVar.toChar().toLatin1();
-        } else {
-            valueUnion.param_int8 = (unsigned char)paramVar.toChar().toLatin1();
-        }
-        break;
-    default:
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            valueUnion.param_float = paramVar.toInt();
-        } else {
-            valueUnion.param_int32 = paramVar.toInt();
-        }
-        qCCritical(MockLinkLog) << "Invalid parameter type" << paramType;
+        case MAV_PARAM_TYPE_REAL32:
+            valueUnion.param_float = paramVar.toFloat();
+            break;
+        case MAV_PARAM_TYPE_UINT32:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toUInt();
+            } else {
+                valueUnion.param_uint32 = paramVar.toUInt();
+            }
+            break;
+        case MAV_PARAM_TYPE_INT32:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toInt();
+            } else {
+                valueUnion.param_int32 = paramVar.toInt();
+            }
+            break;
+        case MAV_PARAM_TYPE_UINT16:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toUInt();
+            } else {
+                valueUnion.param_uint16 = paramVar.toUInt();
+            }
+            break;
+        case MAV_PARAM_TYPE_INT16:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toInt();
+            } else {
+                valueUnion.param_int16 = paramVar.toInt();
+            }
+            break;
+        case MAV_PARAM_TYPE_UINT8:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toUInt();
+            } else {
+                valueUnion.param_uint8 = paramVar.toUInt();
+            }
+            break;
+        case MAV_PARAM_TYPE_INT8:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = (unsigned char) paramVar.toChar().toLatin1();
+            } else {
+                valueUnion.param_int8 = (unsigned char) paramVar.toChar().toLatin1();
+            }
+            break;
+        default:
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                valueUnion.param_float = paramVar.toInt();
+            } else {
+                valueUnion.param_int32 = paramVar.toInt();
+            }
+            qCCritical(MockLinkLog) << "Invalid parameter type" << paramType;
     }
 
     return valueUnion.param_float;
@@ -1306,39 +1268,41 @@ uint32_t MockLink::_computeParamHash(int componentId) const
             QJsonParseError parseError{};
             const QJsonDocument doc = QJsonDocument::fromJson(metaDataFile.readAll(), &parseError);
             if (parseError.error != QJsonParseError::NoError) {
-                qCWarning(MockLinkLog) << "Unable to parse parameter metadata for volatile param list:" << parseError.errorString();
+                qCWarning(MockLinkLog) << "Unable to parse parameter metadata for volatile param list:"
+                                       << parseError.errorString();
             }
             const QJsonArray parameters = doc.object().value(QStringLiteral("parameters")).toArray();
-            for (const QJsonValue &parameter : parameters) {
+            for (const QJsonValue& parameter : parameters) {
                 const QJsonObject paramObject = parameter.toObject();
                 if (paramObject.value(QStringLiteral("volatile")).toBool()) {
                     volatiles.insert(paramObject.value(QStringLiteral("name")).toString());
                 }
             }
         } else {
-            qCWarning(MockLinkLog) << "Unable to open parameter metadata for volatile param list" << metaDataFile.fileName();
+            qCWarning(MockLinkLog) << "Unable to open parameter metadata for volatile param list"
+                                   << metaDataFile.fileName();
         }
         return volatiles;
     }();
 
     uint32_t crc = 0;
-    const auto &params = _mapParamName2Value[componentId];
+    const auto& params = _mapParamName2Value[componentId];
     for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
-        const QString &name = it.key();
+        const QString& name = it.key();
         if (volatileParams.contains(name)) {
             continue;
         }
-        const QVariant &value = it.value();
+        const QVariant& value = it.value();
         const MAV_PARAM_TYPE mavType = _mapParamName2MavParamType[componentId][name];
         const FactMetaData::ValueType_t factType = ParameterManager::mavTypeToFactType(mavType);
 
-        crc = QGC::crc32(reinterpret_cast<const uint8_t *>(qPrintable(name)), name.length(), crc);
-        crc = QGC::crc32(static_cast<const uint8_t *>(value.constData()), FactMetaData::typeToSize(factType), crc);
+        crc = QGC::crc32(reinterpret_cast<const uint8_t*>(qPrintable(name)), name.length(), crc);
+        crc = QGC::crc32(static_cast<const uint8_t*>(value.constData()), FactMetaData::typeToSize(factType), crc);
     }
     return crc;
 }
 
-void MockLink::_handleParamRequestList(const mavlink_message_t &msg)
+void MockLink::_handleParamRequestList(const mavlink_message_t& msg)
 {
     if (_failureMode == MockConfiguration::FailParamNoResponseToRequestList) {
         return;
@@ -1397,19 +1361,15 @@ void MockLink::_paramRequestListWorker()
             char paramId[MAVLINK_MSG_ID_PARAM_VALUE_LEN]{};
             (void) strncpy(paramId, "_HASH_CHECK", MAVLINK_MSG_ID_PARAM_VALUE_LEN);
 
-            qCDebug(MockLinkLog) << "Sending _HASH_CHECK in PARAM_REQUEST_LIST stream" << componentId << "hash:" << valueUnion.param_uint32;
+            qCDebug(MockLinkLog) << "Sending _HASH_CHECK in PARAM_REQUEST_LIST stream" << componentId
+                                 << "hash:" << valueUnion.param_uint32;
 
             mavlink_message_t responseMsg{};
             (void) mavlink_msg_param_value_pack_chan(
-                _vehicleSystemId,
-                componentId,
-                _outgoingMavlinkChannel,
-                &responseMsg,
-                paramId,
-                valueUnion.param_float,
+                _vehicleSystemId, componentId, _outgoingMavlinkChannel, &responseMsg, paramId, valueUnion.param_float,
                 MAV_PARAM_TYPE_UINT32,
-                0,      // param_count: 0 to avoid affecting ParameterManager's count tracking
-                -1      // param_index: -1 signals this is a virtual/out-of-band parameter
+                0,  // param_count: 0 to avoid affecting ParameterManager's count tracking
+                -1  // param_index: -1 signals this is a virtual/out-of-band parameter
             );
             respondWithMavlinkMessage(responseMsg);
             return;
@@ -1422,16 +1382,19 @@ void MockLink::_paramRequestListWorker()
             _paramRequestListParamNames.clear();
         } else {
             // Cache param names for the new component
-            _paramRequestListParamNames = _mapParamName2Value[_paramRequestListComponentIds.at(_currentParamRequestListComponentIndex)].keys();
+            _paramRequestListParamNames =
+                _mapParamName2Value[_paramRequestListComponentIds.at(_currentParamRequestListComponentIndex)].keys();
             _currentParamRequestListParamIndex = 0;
             _paramRequestListHashCheckSent = false;
         }
         return;
     }
 
-    const QString &paramName = _paramRequestListParamNames.at(_currentParamRequestListParamIndex);
+    const QString& paramName = _paramRequestListParamNames.at(_currentParamRequestListParamIndex);
 
-    if (((_failureMode == MockConfiguration::FailMissingParamOnInitialRequest) || (_failureMode == MockConfiguration::FailMissingParamOnAllRequests)) && (paramName == _failParam)) {
+    if (((_failureMode == MockConfiguration::FailMissingParamOnInitialRequest) ||
+         (_failureMode == MockConfiguration::FailMissingParamOnAllRequests)) &&
+        (paramName == _failParam)) {
         qCDebug(MockLinkLog) << "Skipping param send:" << paramName;
     } else {
         char paramId[MAVLINK_MSG_ID_PARAM_VALUE_LEN]{};
@@ -1445,18 +1408,18 @@ void MockLink::_paramRequestListWorker()
         Q_ASSERT(paramName.length() <= MAVLINK_MSG_ID_PARAM_VALUE_LEN);
         (void) strncpy(paramId, paramName.toLocal8Bit().constData(), MAVLINK_MSG_ID_PARAM_VALUE_LEN);
 
-        qCDebug(MockLinkLog) << "Sending msg_param_value" << componentId << paramId << paramType << _mapParamName2Value[componentId][paramId];
+        qCDebug(MockLinkLog) << "Sending msg_param_value" << componentId << paramId << paramType
+                             << _mapParamName2Value[componentId][paramId];
 
-        (void) mavlink_msg_param_value_pack_chan(
-            _vehicleSystemId,
-            componentId,                                   // component id
-            _outgoingMavlinkChannel,
-            &responseMsg,                                  // Outgoing message
-            paramId,                                       // Parameter name
-            _floatUnionForParam(componentId, paramName),   // Parameter value
-            paramType,                                     // MAV_PARAM_TYPE
-            cParameters,                                   // Total number of parameters
-            _currentParamRequestListParamIndex             // Index of this parameter
+        (void) mavlink_msg_param_value_pack_chan(_vehicleSystemId,
+                                                 componentId,                                  // component id
+                                                 _outgoingMavlinkChannel,
+                                                 &responseMsg,                                 // Outgoing message
+                                                 paramId,                                      // Parameter name
+                                                 _floatUnionForParam(componentId, paramName),  // Parameter value
+                                                 paramType,                                    // MAV_PARAM_TYPE
+                                                 cParameters,                        // Total number of parameters
+                                                 _currentParamRequestListParamIndex  // Index of this parameter
         );
         respondWithMavlinkMessage(responseMsg);
     }
@@ -1465,7 +1428,7 @@ void MockLink::_paramRequestListWorker()
     ++_currentParamRequestListParamIndex;
 }
 
-void MockLink::_handleParamSet(const mavlink_message_t &msg)
+void MockLink::_handleParamSet(const mavlink_message_t& msg)
 {
     mavlink_param_set_t request{};
     mavlink_msg_param_set_decode(&msg, &request);
@@ -1483,7 +1446,8 @@ void MockLink::_handleParamSet(const mavlink_message_t &msg)
     // PX4 special case: _HASH_CHECK is a virtual parameter used by ParameterManager
     // to signal cache-hit and stop parameter streaming. It is intentionally not part
     // of the normal parameter maps.
-    if ((_firmwareType == MAV_AUTOPILOT_PX4) && (strncmp(paramId, "_HASH_CHECK", MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN) == 0)) {
+    if ((_firmwareType == MAV_AUTOPILOT_PX4) &&
+        (strncmp(paramId, "_HASH_CHECK", MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN) == 0)) {
         QMutexLocker locker(&_paramRequestListMutex);
         _currentParamRequestListComponentIndex = -1;
         _paramRequestListComponentIds.clear();
@@ -1511,8 +1475,7 @@ void MockLink::_handleParamSet(const mavlink_message_t &msg)
 
     if (_paramSetFailureMode == FailParamSetParamError) {
         qCDebug(MockLinkLog) << "Param set failure: PARAM_ERROR" << paramId;
-        _sendParamError(componentId, paramId,
-                        _mapParamName2Value[componentId].keys().indexOf(paramId),
+        _sendParamError(componentId, paramId, _mapParamName2Value[componentId].keys().indexOf(paramId),
                         MAV_PARAM_ERROR_VALUE_OUT_OF_RANGE);
         return;
     }
@@ -1523,25 +1486,27 @@ void MockLink::_handleParamSet(const mavlink_message_t &msg)
     mavlink_message_t responseMsg;
     mavlink_msg_param_value_pack_chan(
         _vehicleSystemId,
-        componentId,                                               // component id
+        componentId,                                              // component id
         _outgoingMavlinkChannel,
-        &responseMsg,                                              // Outgoing message
-        paramId,                                                   // Parameter name
-        request.param_value,                                       // Send same value back
-        request.param_type,                                        // Send same type back
-        _mapParamName2Value[componentId].count(),                  // Total number of parameters
-        _mapParamName2Value[componentId].keys().indexOf(paramId)   // Index of this parameter
+        &responseMsg,                                             // Outgoing message
+        paramId,                                                  // Parameter name
+        request.param_value,                                      // Send same value back
+        request.param_type,                                       // Send same type back
+        _mapParamName2Value[componentId].count(),                 // Total number of parameters
+        _mapParamName2Value[componentId].keys().indexOf(paramId)  // Index of this parameter
     );
     respondWithMavlinkMessage(responseMsg);
 }
 
-void MockLink::_handleParamRequestRead(const mavlink_message_t &msg)
+void MockLink::_handleParamRequestRead(const mavlink_message_t& msg)
 {
     mavlink_message_t responseMsg{};
     mavlink_param_request_read_t request{};
     mavlink_msg_param_request_read_decode(&msg, &request);
 
-    const QString paramName(QString::fromLocal8Bit(request.param_id, static_cast<int>(strnlen(request.param_id, MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN))));
+    const QString paramName(QString::fromLocal8Bit(
+        request.param_id,
+        static_cast<int>(strnlen(request.param_id, MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN))));
     const int componentId = request.target_component;
 
     // special case for magic _HASH_CHECK value (PX4 only)
@@ -1552,23 +1517,15 @@ void MockLink::_handleParamRequestRead(const mavlink_message_t &msg)
         }
 
         const int hashComponentId = _mapParamName2Value.contains(MAV_COMP_ID_AUTOPILOT1)
-            ? MAV_COMP_ID_AUTOPILOT1
-            : _mapParamName2Value.keys().first();
+                                        ? MAV_COMP_ID_AUTOPILOT1
+                                        : _mapParamName2Value.keys().first();
 
         mavlink_param_union_t valueUnion{};
         valueUnion.type = MAV_PARAM_TYPE_UINT32;
         valueUnion.param_uint32 = _computeParamHash(hashComponentId);
-        (void) mavlink_msg_param_value_pack_chan(
-            _vehicleSystemId,
-            hashComponentId,
-            _outgoingMavlinkChannel,
-            &responseMsg,
-            request.param_id,
-            valueUnion.param_float,
-            MAV_PARAM_TYPE_UINT32,
-            0,
-            -1
-        );
+        (void) mavlink_msg_param_value_pack_chan(_vehicleSystemId, hashComponentId, _outgoingMavlinkChannel,
+                                                 &responseMsg, request.param_id, valueUnion.param_float,
+                                                 MAV_PARAM_TYPE_UINT32, 0, -1);
         respondWithMavlinkMessage(responseMsg);
         return;
     }
@@ -1601,7 +1558,8 @@ void MockLink::_handleParamRequestRead(const mavlink_message_t &msg)
         return;
     }
 
-    if (_paramRequestReadFailureMode == FailParamRequestReadFirstAttemptNoResponse && _paramRequestReadFailureFirstAttemptPending) {
+    if (_paramRequestReadFailureMode == FailParamRequestReadFirstAttemptNoResponse &&
+        _paramRequestReadFailureFirstAttemptPending) {
         qCDebug(MockLinkLog) << "Param request read failure: first attempt no response" << paramId;
         _paramRequestReadFailureFirstAttemptPending = false;
         return;
@@ -1620,109 +1578,89 @@ void MockLink::_handleParamRequestRead(const mavlink_message_t &msg)
 
     (void) mavlink_msg_param_value_pack_chan(
         _vehicleSystemId,
-        componentId,                                               // component id
+        componentId,                                              // component id
         _outgoingMavlinkChannel,
-        &responseMsg,                                              // Outgoing message
-        paramId,                                                   // Parameter name
-        _floatUnionForParam(componentId, paramId),                 // Parameter value
-        _mapParamName2MavParamType[componentId][paramId],          // Parameter type
-        _mapParamName2Value[componentId].count(),                  // Total number of parameters
-        _mapParamName2Value[componentId].keys().indexOf(paramId)   // Index of this parameter
+        &responseMsg,                                             // Outgoing message
+        paramId,                                                  // Parameter name
+        _floatUnionForParam(componentId, paramId),                // Parameter value
+        _mapParamName2MavParamType[componentId][paramId],         // Parameter type
+        _mapParamName2Value[componentId].count(),                 // Total number of parameters
+        _mapParamName2Value[componentId].keys().indexOf(paramId)  // Index of this parameter
     );
     respondWithMavlinkMessage(responseMsg);
 }
 
-void MockLink::_sendParamError(int componentId, const char *paramId, int16_t paramIndex, uint8_t errorCode)
+void MockLink::_sendParamError(int componentId, const char* paramId, int16_t paramIndex, uint8_t errorCode)
 {
     mavlink_message_t responseMsg{};
     char paramIdBuf[MAVLINK_MSG_PARAM_ERROR_FIELD_PARAM_ID_LEN + 1] = {};
     (void) strncpy(paramIdBuf, paramId, MAVLINK_MSG_PARAM_ERROR_FIELD_PARAM_ID_LEN);
 
-    (void) mavlink_msg_param_error_pack_chan(
-        _vehicleSystemId,
-        static_cast<uint8_t>(componentId),
-        _outgoingMavlinkChannel,
-        &responseMsg,
-        MAVLinkProtocol::instance()->getSystemId(),
-        MAVLinkProtocol::getComponentId(),
-        paramIdBuf,
-        paramIndex,
-        errorCode
-    );
+    (void) mavlink_msg_param_error_pack_chan(_vehicleSystemId, static_cast<uint8_t>(componentId),
+                                             _outgoingMavlinkChannel, &responseMsg,
+                                             MAVLinkProtocol::instance()->getSystemId(),
+                                             MAVLinkProtocol::getComponentId(), paramIdBuf, paramIndex, errorCode);
     respondWithMavlinkMessage(responseMsg);
 }
 
-void MockLink::_handleFTP(const mavlink_message_t &msg)
+void MockLink::_handleFTP(const mavlink_message_t& msg)
 {
     _mockLinkFTP->mavlinkMessageReceived(msg);
 }
 
-void MockLink::_handleInProgressCommandLong(const mavlink_command_long_t &request)
+void MockLink::_handleInProgressCommandLong(const mavlink_command_long_t& request)
 {
     uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
 
     switch (request.command) {
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_ACCEPTED:
-        // Test command which sends in progress messages and then acceptance ack
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_FAILED:
-        // Test command which sends in progress messages and then failure ack
-        commandResult = MAV_RESULT_FAILED;
-        break;
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_NO_ACK:
-        // Test command which sends in progress messages and then never sends final result ack
-        break;
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_ACCEPTED:
+            // Test command which sends in progress messages and then acceptance ack
+            commandResult = MAV_RESULT_ACCEPTED;
+            break;
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_FAILED:
+            // Test command which sends in progress messages and then failure ack
+            commandResult = MAV_RESULT_FAILED;
+            break;
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_NO_ACK:
+            // Test command which sends in progress messages and then never sends final result ack
+            break;
     }
 
     mavlink_message_t commandAck{};
-    (void) mavlink_msg_command_ack_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &commandAck,
-        request.command,
-        MAV_RESULT_IN_PROGRESS,
-        1,  // progress
-        0,  // result_param2
-        0,  // target_system
-        0   // target_component
+    (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                             &commandAck, request.command, MAV_RESULT_IN_PROGRESS,
+                                             1,  // progress
+                                             0,  // result_param2
+                                             0,  // target_system
+                                             0   // target_component
     );
     respondWithMavlinkMessage(commandAck);
 
     if (request.command != MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_NO_ACK) {
-        (void) mavlink_msg_command_ack_pack_chan(
-            _vehicleSystemId,
-            _vehicleComponentId,
-            _outgoingMavlinkChannel,
-            &commandAck,
-            request.command,
-            commandResult,
-            0,  // progress
-            0,  // result_param2
-            0,  // target_system
-            0   // target_component
+        (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                 &commandAck, request.command, commandResult,
+                                                 0,  // progress
+                                                 0,  // result_param2
+                                                 0,  // target_system
+                                                 0   // target_component
         );
         respondWithMavlinkMessage(commandAck);
     }
 }
 
-void MockLink::_handleCommandLongSetMessageInterval(const mavlink_command_long_t &request, bool &accepted)
+void MockLink::_handleCommandLongSetMessageInterval(const mavlink_command_long_t& request, bool& accepted)
 {
     // Accept only the message IDs that MAVLinkStreamConfig requests for PID tuning.
     // Anything else gets MAV_RESULT_UNSUPPORTED so unit tests will catch unexpected usage.
     static const QSet<int> kPidTuningMessageIds = {
-        MAVLINK_MSG_ID_ATTITUDE_QUATERNION,
-        MAVLINK_MSG_ID_ATTITUDE_TARGET,
-        MAVLINK_MSG_ID_LOCAL_POSITION_NED,
-        MAVLINK_MSG_ID_POSITION_TARGET_LOCAL_NED,
-        MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT,
-        MAVLINK_MSG_ID_VFR_HUD,
+        MAVLINK_MSG_ID_ATTITUDE_QUATERNION,   MAVLINK_MSG_ID_ATTITUDE_TARGET,
+        MAVLINK_MSG_ID_LOCAL_POSITION_NED,    MAVLINK_MSG_ID_POSITION_TARGET_LOCAL_NED,
+        MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT, MAVLINK_MSG_ID_VFR_HUD,
     };
     accepted = kPidTuningMessageIds.contains(static_cast<int>(request.param1));
 }
 
-void MockLink::_handleCommandLong(const mavlink_message_t &msg)
+void MockLink::_handleCommandLong(const mavlink_message_t& msg)
 {
     static bool firstCmdUser3 = true;
     static bool firstCmdUser4 = true;
@@ -1733,148 +1671,141 @@ void MockLink::_handleCommandLong(const mavlink_message_t &msg)
     uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
 
     switch (request.command) {
-    case MAV_CMD_COMPONENT_ARM_DISARM:
-        if (request.param1 == 0.0f) {
-            _mavBaseMode &= ~MAV_MODE_FLAG_SAFETY_ARMED;
-        } else {
-            _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
-        }
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_PREFLIGHT_CALIBRATION:
-        _handlePreFlightCalibration(request);
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_DO_MOTOR_TEST:
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_DO_START_MAG_CAL:
-        // APM onboard compass calibration: start sending MAG_CAL_PROGRESS then MAG_CAL_REPORT
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            QMutexLocker locker(&_apmCompassCalMutex);
-            _apmCompassCalProgress  = 0;
-            _apmCompassCalTickCount = 0;
+        case MAV_CMD_COMPONENT_ARM_DISARM:
+            if (request.param1 == 0.0f) {
+                _mavBaseMode &= ~MAV_MODE_FLAG_SAFETY_ARMED;
+            } else {
+                _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
+            }
             commandResult = MAV_RESULT_ACCEPTED;
-        }
-        break;
-    case MAV_CMD_DO_CANCEL_MAG_CAL:
-        // Stop APM compass calibration worker
-        if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
-            QMutexLocker locker(&_apmCompassCalMutex);
-            _apmCompassCalProgress = -1;
+            break;
+        case MAV_CMD_PREFLIGHT_CALIBRATION:
+            _handlePreFlightCalibration(request);
             commandResult = MAV_RESULT_ACCEPTED;
-        }
-        break;
-    case MAV_CMD_CONTROL_HIGH_LATENCY:
-        if (linkConfiguration()->isHighLatency()) {
-            _highLatencyTransmissionEnabled = static_cast<int>(request.param1) != 0;
-            emit highLatencyTransmissionEnabledChanged(_highLatencyTransmissionEnabled);
+            break;
+        case MAV_CMD_DO_MOTOR_TEST:
             commandResult = MAV_RESULT_ACCEPTED;
-        } else {
+            break;
+        case MAV_CMD_DO_START_MAG_CAL:
+            // APM onboard compass calibration: start sending MAG_CAL_PROGRESS then MAG_CAL_REPORT
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                QMutexLocker locker(&_apmCompassCalMutex);
+                _apmCompassCalProgress = 0;
+                _apmCompassCalTickCount = 0;
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
+        case MAV_CMD_DO_CANCEL_MAG_CAL:
+            // Stop APM compass calibration worker
+            if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+                QMutexLocker locker(&_apmCompassCalMutex);
+                _apmCompassCalProgress = -1;
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
+        case MAV_CMD_CONTROL_HIGH_LATENCY:
+            if (linkConfiguration()->isHighLatency()) {
+                _highLatencyTransmissionEnabled = static_cast<int>(request.param1) != 0;
+                emit highLatencyTransmissionEnabledChanged(_highLatencyTransmissionEnabled);
+                commandResult = MAV_RESULT_ACCEPTED;
+            } else {
+                commandResult = MAV_RESULT_FAILED;
+            }
+            break;
+        case MAV_CMD_PREFLIGHT_STORAGE:
+            if (static_cast<int>(request.param1) == 2) {
+                // Reset all parameters to firmware defaults (unit test support)
+                _resetParamsToDefaults();
+            }
+            commandResult = MAV_RESULT_ACCEPTED;
+            break;
+        case MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN:
+            // Unit test support: accept the reboot command so tests can exercise
+            // flows which restart the vehicle (e.g. airframe Apply and Restart).
+            // The actual reboot is not simulated.
+            commandResult = MAV_RESULT_ACCEPTED;
+            break;
+        case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES:
+            commandResult = MAV_RESULT_ACCEPTED;
+            _respondWithAutopilotVersion();
+            break;
+        case MAV_CMD_REQUEST_MESSAGE: {
+            bool accepted = false;
+            bool noAck = false;
+            _handleRequestMessage(request, accepted, noAck);
+            if (noAck) {
+                // FailRequestMessageCommandNoResponse: don't send any ack, let vehicle timeout
+                return;
+            }
+            if (accepted) {
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
+        }
+        case MAV_CMD_NAV_TAKEOFF:
+            _handleTakeoff(request);
+            commandResult = MAV_RESULT_ACCEPTED;
+            break;
+        case MAV_CMD_MOCKLINK_ALWAYS_RESULT_ACCEPTED:
+            // Test command which always returns MAV_RESULT_ACCEPTED
+            commandResult = MAV_RESULT_ACCEPTED;
+            break;
+        case MAV_CMD_MOCKLINK_ALWAYS_RESULT_FAILED:
+            // Test command which always returns MAV_RESULT_FAILED
             commandResult = MAV_RESULT_FAILED;
-        }
-        break;
-    case MAV_CMD_PREFLIGHT_STORAGE:
-        if (static_cast<int>(request.param1) == 2) {
-            // Reset all parameters to firmware defaults (unit test support)
-            _resetParamsToDefaults();
-        }
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN:
-        // Unit test support: accept the reboot command so tests can exercise
-        // flows which restart the vehicle (e.g. airframe Apply and Restart).
-        // The actual reboot is not simulated.
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES:
-        commandResult = MAV_RESULT_ACCEPTED;
-        _respondWithAutopilotVersion();
-        break;
-    case MAV_CMD_REQUEST_MESSAGE:
-    {
-        bool accepted = false;
-        bool noAck = false;
-        _handleRequestMessage(request, accepted, noAck);
-        if (noAck) {
-            // FailRequestMessageCommandNoResponse: don't send any ack, let vehicle timeout
+            break;
+        case MAV_CMD_MOCKLINK_SECOND_ATTEMPT_RESULT_ACCEPTED:
+            // Test command which does not respond to first request and returns MAV_RESULT_ACCEPTED on second attempt
+            if (firstCmdUser3) {
+                firstCmdUser3 = false;
+                return;
+            } else {
+                firstCmdUser3 = true;
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
+        case MAV_CMD_MOCKLINK_SECOND_ATTEMPT_RESULT_FAILED:
+            // Test command which does not respond to first request and returns MAV_RESULT_FAILED on second attempt
+            if (firstCmdUser4) {
+                firstCmdUser4 = false;
+                return;
+            } else {
+                firstCmdUser4 = true;
+                commandResult = MAV_RESULT_FAILED;
+            }
+            break;
+        case MAV_CMD_MOCKLINK_NO_RESPONSE:
+        case MAV_CMD_MOCKLINK_NO_RESPONSE_NO_RETRY:
+            // Test command which never responds
             return;
-        }
-        if (accepted) {
-            commandResult = MAV_RESULT_ACCEPTED;
-        }
-        break;
-    }
-    case MAV_CMD_NAV_TAKEOFF:
-        _handleTakeoff(request);
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_MOCKLINK_ALWAYS_RESULT_ACCEPTED:
-        // Test command which always returns MAV_RESULT_ACCEPTED
-        commandResult = MAV_RESULT_ACCEPTED;
-        break;
-    case MAV_CMD_MOCKLINK_ALWAYS_RESULT_FAILED:
-        // Test command which always returns MAV_RESULT_FAILED
-        commandResult = MAV_RESULT_FAILED;
-        break;
-    case MAV_CMD_MOCKLINK_SECOND_ATTEMPT_RESULT_ACCEPTED:
-        // Test command which does not respond to first request and returns MAV_RESULT_ACCEPTED on second attempt
-        if (firstCmdUser3) {
-            firstCmdUser3 = false;
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_ACCEPTED:
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_FAILED:
+        case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_NO_ACK:
+            _handleInProgressCommandLong(request);
             return;
-        } else {
-            firstCmdUser3 = true;
-            commandResult = MAV_RESULT_ACCEPTED;
-        }
-        break;
-    case MAV_CMD_MOCKLINK_SECOND_ATTEMPT_RESULT_FAILED:
-        // Test command which does not respond to first request and returns MAV_RESULT_FAILED on second attempt
-        if (firstCmdUser4) {
-            firstCmdUser4 = false;
-            return;
-        } else {
-            firstCmdUser4 = true;
-            commandResult = MAV_RESULT_FAILED;
-        }
-        break;
-    case MAV_CMD_MOCKLINK_NO_RESPONSE:
-    case MAV_CMD_MOCKLINK_NO_RESPONSE_NO_RETRY:
-        // Test command which never responds
-        return;
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_ACCEPTED:
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_FAILED:
-    case MockLink::MAV_CMD_MOCKLINK_RESULT_IN_PROGRESS_NO_ACK:
-        _handleInProgressCommandLong(request);
-        return;
-    case MAV_CMD_SET_MESSAGE_INTERVAL:
-    {
-        bool accepted = false;
+        case MAV_CMD_SET_MESSAGE_INTERVAL: {
+            bool accepted = false;
 
-        _handleCommandLongSetMessageInterval(request, accepted);
-        if (accepted) {
-            commandResult = MAV_RESULT_ACCEPTED;
+            _handleCommandLongSetMessageInterval(request, accepted);
+            if (accepted) {
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
         }
-        break;
-    }
     }
 
     mavlink_message_t commandAck{};
-    (void) mavlink_msg_command_ack_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &commandAck,
-        request.command,
-        commandResult,
-        0,    // progress
-        0,    // result_param2
-        0,    // target_system
-        0     // target_component
+    (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                             &commandAck, request.command, commandResult,
+                                             0,  // progress
+                                             0,  // result_param2
+                                             0,  // target_system
+                                             0   // target_component
     );
     respondWithMavlinkMessage(commandAck);
 }
 
-void MockLink::_handleCommandInt(const mavlink_message_t &msg)
+void MockLink::_handleCommandInt(const mavlink_message_t& msg)
 {
     mavlink_command_int_t request{};
     mavlink_msg_command_int_decode(&msg, &request);
@@ -1886,17 +1817,12 @@ void MockLink::_handleCommandInt(const mavlink_message_t &msg)
     const uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
 
     mavlink_message_t commandAck{};
-    (void) mavlink_msg_command_ack_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &commandAck,
-        request.command,
-        commandResult,
-        0,    // progress
-        0,    // result_param2
-        0,    // target_system
-        0     // target_component
+    (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                             &commandAck, request.command, commandResult,
+                                             0,  // progress
+                                             0,  // result_param2
+                                             0,  // target_system
+                                             0   // target_component
     );
     respondWithMavlinkMessage(commandAck);
 }
@@ -1904,27 +1830,24 @@ void MockLink::_handleCommandInt(const mavlink_message_t &msg)
 void MockLink::sendUnexpectedCommandAck(MAV_CMD command, MAV_RESULT ackResult)
 {
     mavlink_message_t commandAck{};
-    (void) mavlink_msg_command_ack_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &commandAck,
-        command,
-        ackResult,
-        0,    // progress
-        0,    // result_param2
-        0,    // target_system
-        0     // target_component
+    (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                             &commandAck, command, ackResult,
+                                             0,  // progress
+                                             0,  // result_param2
+                                             0,  // target_system
+                                             0   // target_component
     );
     respondWithMavlinkMessage(commandAck);
 }
 
 void MockLink::_respondWithAutopilotVersion()
 {
-    union FlightVersion {
+    union FlightVersion
+    {
         uint32_t raw;
 
-        struct {
+        struct
+        {
             uint8_t type;   // bits 0–7
             uint8_t patch;  // bits 8–15
             uint8_t minor;  // bits 16–23
@@ -1933,6 +1856,7 @@ void MockLink::_respondWithAutopilotVersion()
 
         FlightVersion(uint32_t version = 0) : raw(version) {}
     };
+
     FlightVersion flightVersion;
 
 #ifndef QGC_NO_ARDUPILOT_DIALECT
@@ -1952,26 +1876,24 @@ void MockLink::_respondWithAutopilotVersion()
 #endif
 
     const uint8_t customVersion[8]{};
-    const uint64_t capabilities = MAV_PROTOCOL_CAPABILITY_MAVLINK2 | MAV_PROTOCOL_CAPABILITY_MISSION_FENCE | MAV_PROTOCOL_CAPABILITY_MISSION_RALLY | MAV_PROTOCOL_CAPABILITY_MISSION_INT | ((_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) ? MAV_PROTOCOL_CAPABILITY_TERRAIN : 0);
+    const uint64_t capabilities =
+        MAV_PROTOCOL_CAPABILITY_MAVLINK2 | MAV_PROTOCOL_CAPABILITY_MISSION_FENCE |
+        MAV_PROTOCOL_CAPABILITY_MISSION_RALLY | MAV_PROTOCOL_CAPABILITY_MISSION_INT |
+        ((_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) ? MAV_PROTOCOL_CAPABILITY_TERRAIN : 0);
 
     mavlink_message_t msg{};
     (void) mavlink_msg_autopilot_version_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        capabilities,
-        flightVersion.raw,                                  // flight_sw_version,
-        0,                                                  // middleware_sw_version,
-        0,                                                  // os_sw_version,
-        0,                                                  // board_version,
-        reinterpret_cast<const uint8_t*>(&customVersion),   // flight_custom_version,
-        reinterpret_cast<const uint8_t*>(&customVersion),   // middleware_custom_version,
-        reinterpret_cast<const uint8_t*>(&customVersion),   // os_custom_version,
-        _boardVendorId,
-        _boardProductId,
-        0,                                                  // uid
-        0                                                   // uid2
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, capabilities,
+        flightVersion.raw,                                 // flight_sw_version,
+        0,                                                 // middleware_sw_version,
+        0,                                                 // os_sw_version,
+        0,                                                 // board_version,
+        reinterpret_cast<const uint8_t*>(&customVersion),  // flight_custom_version,
+        reinterpret_cast<const uint8_t*>(&customVersion),  // middleware_custom_version,
+        reinterpret_cast<const uint8_t*>(&customVersion),  // os_custom_version,
+        _boardVendorId, _boardProductId,
+        0,                                                 // uid
+        0                                                  // uid2
     );
     respondWithMavlinkMessage(msg);
 }
@@ -1982,18 +1904,9 @@ void MockLink::_sendHomePosition()
 
     mavlink_message_t msg{};
     (void) mavlink_msg_home_position_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        static_cast<int32_t>(_vehicleLatitude * 1E7),
-        static_cast<int32_t>(_vehicleLongitude * 1E7),
-        static_cast<int32_t>(_defaultVehicleHomeAltitude * 1000),
-        0.0f, 0.0f, 0.0f,
-        &bogus[0],
-        0.0f, 0.0f, 0.0f,
-        0
-    );
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+        static_cast<int32_t>(_vehicleLatitude * 1E7), static_cast<int32_t>(_vehicleLongitude * 1E7),
+        static_cast<int32_t>(_defaultVehicleHomeAltitude * 1000), 0.0f, 0.0f, 0.0f, &bogus[0], 0.0f, 0.0f, 0.0f, 0);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2003,27 +1916,22 @@ void MockLink::_sendGpsRawInt()
 
     mavlink_message_t msg{};
     (void) mavlink_msg_gps_raw_int_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeTick++,                             // time since boot
-        GPS_FIX_TYPE_3D_FIX,
-        static_cast<int32_t>(_vehicleLatitude * 1E7),
-        static_cast<int32_t>(_vehicleLongitude * 1E7),
-        static_cast<int32_t>(_vehicleAltitudeAMSL * 1000),
-        3 * 100,                                // hdop
-        3 * 100,                                // vdop
-        UINT16_MAX,                             // velocity not known
-        UINT16_MAX,                             // course over ground not known
-        8,                                      // satellites visible
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+        timeTick++,  // time since boot
+        GPS_FIX_TYPE_3D_FIX, static_cast<int32_t>(_vehicleLatitude * 1E7),
+        static_cast<int32_t>(_vehicleLongitude * 1E7), static_cast<int32_t>(_vehicleAltitudeAMSL * 1000),
+        3 * 100,     // hdop
+        3 * 100,     // vdop
+        UINT16_MAX,  // velocity not known
+        UINT16_MAX,  // course over ground not known
+        8,           // satellites visible
         //-- Extension
-        0,                                      // Altitude (above WGS84, EGM96 ellipsoid), in meters * 1000 (positive for up).
-        0,                                      // Position uncertainty in meters * 1000 (positive for up).
-        0,                                      // Altitude uncertainty in meters * 1000 (positive for up).
-        0,                                      // Speed uncertainty in meters * 1000 (positive for up).
-        0,                                      // Heading / track uncertainty in degrees * 1e5.
-        65535                                   // Yaw not provided
+        0,     // Altitude (above WGS84, EGM96 ellipsoid), in meters * 1000 (positive for up).
+        0,     // Position uncertainty in meters * 1000 (positive for up).
+        0,     // Altitude uncertainty in meters * 1000 (positive for up).
+        0,     // Speed uncertainty in meters * 1000 (positive for up).
+        0,     // Heading / track uncertainty in degrees * 1e5.
+        65535  // Yaw not provided
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2034,17 +1942,12 @@ void MockLink::_sendGlobalPositionInt()
 
     mavlink_message_t msg{};
     (void) mavlink_msg_global_position_int_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeTick++, // time since boot
-        static_cast<int32_t>(_vehicleLatitude * 1E7),
-        static_cast<int32_t>(_vehicleLongitude * 1E7),
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+        timeTick++,  // time since boot
+        static_cast<int32_t>(_vehicleLatitude * 1E7), static_cast<int32_t>(_vehicleLongitude * 1E7),
         static_cast<int32_t>(_vehicleAltitudeAMSL * 1000),
-        static_cast<int32_t>((_vehicleAltitudeAMSL - _defaultVehicleHomeAltitude) * 1000),
-        0, 0, 0,    // no speed sent
-        UINT16_MAX  // no heading sent
+        static_cast<int32_t>((_vehicleAltitudeAMSL - _defaultVehicleHomeAltitude) * 1000), 0, 0, 0,  // no speed sent
+        UINT16_MAX                                                                                   // no heading sent
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2055,37 +1958,33 @@ void MockLink::_sendAttitudeQuaternion()
     const float t = timeBootMs / 1000.0f;
 
     // Synthesize sinusoidal Euler angles (rad)
-    const float roll  = 0.20f * std::sin(2.0f * static_cast<float>(M_PI) * 0.50f * t);
+    const float roll = 0.20f * std::sin(2.0f * static_cast<float>(M_PI) * 0.50f * t);
     const float pitch = 0.10f * std::sin(2.0f * static_cast<float>(M_PI) * 0.40f * t);
-    const float yaw   = 0.30f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float yaw = 0.30f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
 
     // ZYX Euler → quaternion
-    const float cr = std::cos(roll  / 2.0f), sr = std::sin(roll  / 2.0f);
+    const float cr = std::cos(roll / 2.0f), sr = std::sin(roll / 2.0f);
     const float cp = std::cos(pitch / 2.0f), sp = std::sin(pitch / 2.0f);
-    const float cy = std::cos(yaw   / 2.0f), sy = std::sin(yaw   / 2.0f);
-    const float q1 = cr * cp * cy + sr * sp * sy; // w
-    const float q2 = sr * cp * cy - cr * sp * sy; // x
-    const float q3 = cr * sp * cy + sr * cp * sy; // y
-    const float q4 = cr * cp * sy - sr * sp * cy; // z
+    const float cy = std::cos(yaw / 2.0f), sy = std::sin(yaw / 2.0f);
+    const float q1 = cr * cp * cy + sr * sp * sy;  // w
+    const float q2 = sr * cp * cy - cr * sp * sy;  // x
+    const float q3 = cr * sp * cy + sr * cp * sy;  // y
+    const float q4 = cr * cp * sy - sr * sp * cy;  // z
 
     // Body rates = time-derivatives of the Euler angles
-    const float rollspeed  = 0.20f * (2.0f * static_cast<float>(M_PI) * 0.50f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.50f * t);
-    const float pitchspeed = 0.10f * (2.0f * static_cast<float>(M_PI) * 0.40f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.40f * t);
-    const float yawspeed   = 0.30f * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float rollspeed =
+        0.20f * (2.0f * static_cast<float>(M_PI) * 0.50f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.50f * t);
+    const float pitchspeed =
+        0.10f * (2.0f * static_cast<float>(M_PI) * 0.40f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.40f * t);
+    const float yawspeed =
+        0.30f * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
 
-    const float reprOffsetQ[4] = {1.0f, 0.0f, 0.0f, 0.0f}; // identity
+    const float reprOffsetQ[4] = {1.0f, 0.0f, 0.0f, 0.0f};  // identity
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_attitude_quaternion_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        q1, q2, q3, q4,
-        rollspeed, pitchspeed, yawspeed,
-        reprOffsetQ
-    );
+    (void) mavlink_msg_attitude_quaternion_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                     &msg, timeBootMs, q1, q2, q3, q4, rollspeed, pitchspeed, yawspeed,
+                                                     reprOffsetQ);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2094,15 +1993,15 @@ void MockLink::_sendAttitudeTarget()
     // Setpoint: same shape as actual, phase-shifted by +0.3 rad
     const uint32_t timeBootMs = static_cast<uint32_t>(_runningTime.elapsed());
     const float t = timeBootMs / 1000.0f;
-    static constexpr float kPhase = 0.3f; // rad
+    static constexpr float kPhase = 0.3f;  // rad
 
-    const float roll  = 0.20f * std::sin(2.0f * static_cast<float>(M_PI) * 0.50f * t + kPhase);
+    const float roll = 0.20f * std::sin(2.0f * static_cast<float>(M_PI) * 0.50f * t + kPhase);
     const float pitch = 0.10f * std::sin(2.0f * static_cast<float>(M_PI) * 0.40f * t + kPhase);
-    const float yaw   = 0.30f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t + kPhase);
+    const float yaw = 0.30f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t + kPhase);
 
-    const float cr = std::cos(roll  / 2.0f), sr = std::sin(roll  / 2.0f);
+    const float cr = std::cos(roll / 2.0f), sr = std::sin(roll / 2.0f);
     const float cp = std::cos(pitch / 2.0f), sp = std::sin(pitch / 2.0f);
-    const float cy = std::cos(yaw   / 2.0f), sy = std::sin(yaw   / 2.0f);
+    const float cy = std::cos(yaw / 2.0f), sy = std::sin(yaw / 2.0f);
     const float qSp[4] = {
         cr * cp * cy + sr * sp * sy,
         sr * cp * cy - cr * sp * sy,
@@ -2110,21 +2009,19 @@ void MockLink::_sendAttitudeTarget()
         cr * cp * sy - sr * sp * cy,
     };
 
-    const float bodyRollRate  = 0.20f * (2.0f * static_cast<float>(M_PI) * 0.50f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.50f * t + kPhase);
-    const float bodyPitchRate = 0.10f * (2.0f * static_cast<float>(M_PI) * 0.40f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.40f * t + kPhase);
-    const float bodyYawRate   = 0.30f * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t + kPhase);
+    const float bodyRollRate = 0.20f * (2.0f * static_cast<float>(M_PI) * 0.50f) *
+                               std::cos(2.0f * static_cast<float>(M_PI) * 0.50f * t + kPhase);
+    const float bodyPitchRate = 0.10f * (2.0f * static_cast<float>(M_PI) * 0.40f) *
+                                std::cos(2.0f * static_cast<float>(M_PI) * 0.40f * t + kPhase);
+    const float bodyYawRate = 0.30f * (2.0f * static_cast<float>(M_PI) * 0.10f) *
+                              std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t + kPhase);
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_attitude_target_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        0,   // type_mask: all fields valid
-        qSp,
-        bodyRollRate, bodyPitchRate, bodyYawRate,
-        0.5f // thrust
+    (void) mavlink_msg_attitude_target_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                 timeBootMs,
+                                                 0,    // type_mask: all fields valid
+                                                 qSp, bodyRollRate, bodyPitchRate, bodyYawRate,
+                                                 0.5f  // thrust
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2134,23 +2031,19 @@ void MockLink::_sendLocalPositionNed()
     const uint32_t timeBootMs = static_cast<uint32_t>(_runningTime.elapsed());
     const float t = timeBootMs / 1000.0f;
 
-    const float x  =  5.0f  * std::sin(2.0f * static_cast<float>(M_PI) * 0.08f * t);
-    const float y  =  5.0f  * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
-    const float z  = -10.0f + 1.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.15f * t);  // negative = up in NED
-    const float vx =  5.0f  * (2.0f * static_cast<float>(M_PI) * 0.08f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.08f * t);
-    const float vy =  5.0f  * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
-    const float vz =  1.0f  * (2.0f * static_cast<float>(M_PI) * 0.15f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.15f * t);
+    const float x = 5.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.08f * t);
+    const float y = 5.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float z = -10.0f + 1.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.15f * t);  // negative = up in NED
+    const float vx =
+        5.0f * (2.0f * static_cast<float>(M_PI) * 0.08f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.08f * t);
+    const float vy =
+        5.0f * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float vz =
+        1.0f * (2.0f * static_cast<float>(M_PI) * 0.15f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.15f * t);
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_local_position_ned_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        x, y, z,
-        vx, vy, vz
-    );
+    (void) mavlink_msg_local_position_ned_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                    &msg, timeBootMs, x, y, z, vx, vy, vz);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2158,28 +2051,24 @@ void MockLink::_sendPositionTargetLocalNed()
 {
     // Setpoint: same shape as _sendLocalPositionNed, with a 0.5 s time offset (not a phase in rad)
     const uint32_t timeBootMs = static_cast<uint32_t>(_runningTime.elapsed());
-    const float t = timeBootMs / 1000.0f + 0.5f; // +0.5 s time lead
+    const float t = timeBootMs / 1000.0f + 0.5f;  // +0.5 s time lead
 
-    const float x  =  5.0f  * std::sin(2.0f * static_cast<float>(M_PI) * 0.08f * t);
-    const float y  =  5.0f  * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
-    const float z  = -10.0f + 1.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.15f * t);
-    const float vx =  5.0f  * (2.0f * static_cast<float>(M_PI) * 0.08f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.08f * t);
-    const float vy =  5.0f  * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
-    const float vz =  1.0f  * (2.0f * static_cast<float>(M_PI) * 0.15f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.15f * t);
+    const float x = 5.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.08f * t);
+    const float y = 5.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float z = -10.0f + 1.0f * std::sin(2.0f * static_cast<float>(M_PI) * 0.15f * t);
+    const float vx =
+        5.0f * (2.0f * static_cast<float>(M_PI) * 0.08f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.08f * t);
+    const float vy =
+        5.0f * (2.0f * static_cast<float>(M_PI) * 0.10f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.10f * t);
+    const float vz =
+        1.0f * (2.0f * static_cast<float>(M_PI) * 0.15f) * std::cos(2.0f * static_cast<float>(M_PI) * 0.15f * t);
 
     mavlink_message_t msg{};
     (void) mavlink_msg_position_target_local_ned_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        timeBootMs,
-        MAV_FRAME_LOCAL_NED,
-        0,                              // type_mask: all fields valid
-        x, y, z,
-        vx, vy, vz,
-        0.0f, 0.0f, 0.0f,              // acceleration not used
-        0.0f, 0.0f                      // yaw, yaw_rate not used
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, timeBootMs, MAV_FRAME_LOCAL_NED,
+        0,                                      // type_mask: all fields valid
+        x, y, z, vx, vy, vz, 0.0f, 0.0f, 0.0f,  // acceleration not used
+        0.0f, 0.0f                              // yaw, yaw_rate not used
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2188,13 +2077,8 @@ void MockLink::_sendExtendedSysState()
 {
     mavlink_message_t msg{};
     (void) mavlink_msg_extended_sys_state_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        MAV_VTOL_STATE_UNDEFINED,
-        (_vehicleAltitudeAMSL > _defaultVehicleHomeAltitude) ? MAV_LANDED_STATE_IN_AIR : MAV_LANDED_STATE_ON_GROUND
-    );
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, MAV_VTOL_STATE_UNDEFINED,
+        (_vehicleAltitudeAMSL > _defaultVehicleHomeAltitude) ? MAV_LANDED_STATE_IN_AIR : MAV_LANDED_STATE_ON_GROUND);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2222,18 +2106,12 @@ void MockLink::_sendChunkedStatusText(uint16_t chunkId, bool missingChunks)
                 num = 0;
             }
         }
-        msgBuf[cBuf-1] = 'A' + i;
+        msgBuf[cBuf - 1] = 'A' + i;
 
         mavlink_message_t msg{};
-        (void) mavlink_msg_statustext_pack_chan(
-            _vehicleSystemId,
-            _vehicleComponentId,
-            _outgoingMavlinkChannel,
-            &msg,
-            MAV_SEVERITY_INFO,
-            msgBuf,
-            chunkId,
-            i // chunk sequence number
+        (void) mavlink_msg_statustext_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                MAV_SEVERITY_INFO, msgBuf, chunkId,
+                                                i  // chunk sequence number
         );
         respondWithMavlinkMessage(msg);
     }
@@ -2241,49 +2119,42 @@ void MockLink::_sendChunkedStatusText(uint16_t chunkId, bool missingChunks)
 
 void MockLink::_sendStatusTextMessages()
 {
-    struct StatusMessage {
+    struct StatusMessage
+    {
         MAV_SEVERITY severity;
-        const char *msg;
+        const char* msg;
     };
 
     static constexpr struct StatusMessage rgMessages[] = {
-        { MAV_SEVERITY_INFO,        "#Testing audio output" },
-        { MAV_SEVERITY_EMERGENCY,   "Status text emergency" },
-        { MAV_SEVERITY_ALERT,       "Status text alert" },
-        { MAV_SEVERITY_CRITICAL,    "Status text critical" },
-        { MAV_SEVERITY_ERROR,       "Status text error" },
-        { MAV_SEVERITY_WARNING,     "Status text warning" },
-        { MAV_SEVERITY_NOTICE,      "Status text notice" },
-        { MAV_SEVERITY_INFO,        "Status text info" },
-        { MAV_SEVERITY_DEBUG,       "Status text debug" },
+        {MAV_SEVERITY_INFO, "#Testing audio output"}, {MAV_SEVERITY_EMERGENCY, "Status text emergency"},
+        {MAV_SEVERITY_ALERT, "Status text alert"},    {MAV_SEVERITY_CRITICAL, "Status text critical"},
+        {MAV_SEVERITY_ERROR, "Status text error"},    {MAV_SEVERITY_WARNING, "Status text warning"},
+        {MAV_SEVERITY_NOTICE, "Status text notice"},  {MAV_SEVERITY_INFO, "Status text info"},
+        {MAV_SEVERITY_DEBUG, "Status text debug"},
     };
 
     mavlink_message_t msg{};
     for (size_t i = 0; i < std::size(rgMessages); i++) {
-        const struct StatusMessage *status = &rgMessages[i];
+        const struct StatusMessage* status = &rgMessages[i];
         char statusText[MAVLINK_MSG_STATUSTEXT_FIELD_TEXT_LEN] = {};
         (void) std::strncpy(statusText, status->msg, sizeof(statusText) - 1);
 
-        (void) mavlink_msg_statustext_pack_chan(
-            _vehicleSystemId,
-            _vehicleComponentId,
-            _outgoingMavlinkChannel,
-            &msg,
-            status->severity,
-            statusText,
-            0, // Not a chunked sequence
-            0  // Not a chunked sequence
+        (void) mavlink_msg_statustext_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                                status->severity, statusText,
+                                                0,  // Not a chunked sequence
+                                                0   // Not a chunked sequence
         );
         respondWithMavlinkMessage(msg);
     }
 
     _sendChunkedStatusText(1, false /* missingChunks */);
     _sendChunkedStatusText(2, true /* missingChunks */);
-    _sendChunkedStatusText(3, false /* missingChunks */);   // This should cause the previous incomplete chunk to spit out
-    _sendChunkedStatusText(4, true /* missingChunks */);    // This should cause the timeout to fire
+    _sendChunkedStatusText(3,
+                           false /* missingChunks */);    // This should cause the previous incomplete chunk to spit out
+    _sendChunkedStatusText(4, true /* missingChunks */);  // This should cause the timeout to fire
 }
 
-MockLink *MockLink::_startMockLink(MockConfiguration *mockConfig)
+MockLink* MockLink::_startMockLink(MockConfiguration* mockConfig)
 {
     mockConfig->setDynamic(true);
     SharedLinkConfigurationPtr config = LinkManager::instance()->addConfiguration(mockConfig);
@@ -2295,9 +2166,11 @@ MockLink *MockLink::_startMockLink(MockConfiguration *mockConfig)
     return nullptr;
 }
 
-MockLink *MockLink::_startMockLinkWorker(const QString &configName, MAV_AUTOPILOT firmwareType, MAV_TYPE vehicleType, MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::_startMockLinkWorker(const QString& configName, MAV_AUTOPILOT firmwareType, MAV_TYPE vehicleType,
+                                         MockConfiguration::Options options,
+                                         MockConfiguration::FailureMode_t failureMode)
 {
-    MockConfiguration *const mockConfig = new MockConfiguration(configName);
+    MockConfiguration* const mockConfig = new MockConfiguration(configName);
 
     mockConfig->setFirmwareType(firmwareType);
     mockConfig->setVehicleType(vehicleType);
@@ -2311,69 +2184,79 @@ MockLink *MockLink::_startMockLinkWorker(const QString &configName, MAV_AUTOPILO
     return _startMockLink(mockConfig);
 }
 
-MockLink *MockLink::startPX4MockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startPX4MockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("PX4 MultiRotor MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("PX4 MultiRotor MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR,
+                                options, failureMode);
 }
 
-MockLink *MockLink::startPX4MockLinkWithMission(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startPX4MockLinkWithMission(MockConfiguration::Options options,
+                                                MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("PX4 MultiRotor MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR, options | MockConfiguration::OptionPreloadMission, failureMode);
+    return _startMockLinkWorker(QStringLiteral("PX4 MultiRotor MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_QUADROTOR,
+                                options | MockConfiguration::OptionPreloadMission, failureMode);
 }
 
-MockLink *MockLink::startGenericMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startGenericMockLink(MockConfiguration::Options options,
+                                         MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("Generic MockLink"), MAV_AUTOPILOT_GENERIC, MAV_TYPE_QUADROTOR, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("Generic MockLink"), MAV_AUTOPILOT_GENERIC, MAV_TYPE_QUADROTOR, options,
+                                failureMode);
 }
 
-MockLink *MockLink::startNoInitialConnectMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startNoInitialConnectMockLink(MockConfiguration::Options options,
+                                                  MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("No Initial Connect MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_GENERIC, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("No Initial Connect MockLink"), MAV_AUTOPILOT_PX4, MAV_TYPE_GENERIC,
+                                options, failureMode);
 }
 
-MockLink *MockLink::startAPMArduCopterMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startAPMArduCopterMockLink(MockConfiguration::Options options,
+                                               MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("ArduCopter MockLink"),MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_QUADROTOR, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("ArduCopter MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_QUADROTOR,
+                                options, failureMode);
 }
 
-MockLink *MockLink::startAPMArduPlaneMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startAPMArduPlaneMockLink(MockConfiguration::Options options,
+                                              MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("ArduPlane MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_FIXED_WING, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("ArduPlane MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_FIXED_WING,
+                                options, failureMode);
 }
 
-MockLink *MockLink::startAPMArduSubMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startAPMArduSubMockLink(MockConfiguration::Options options,
+                                            MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("ArduSub MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_SUBMARINE, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("ArduSub MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_SUBMARINE,
+                                options, failureMode);
 }
 
-MockLink *MockLink::startAPMArduRoverMockLink(MockConfiguration::Options options, MockConfiguration::FailureMode_t failureMode)
+MockLink* MockLink::startAPMArduRoverMockLink(MockConfiguration::Options options,
+                                              MockConfiguration::FailureMode_t failureMode)
 {
-    return _startMockLinkWorker(QStringLiteral("ArduRover MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA, MAV_TYPE_GROUND_ROVER, options, failureMode);
+    return _startMockLinkWorker(QStringLiteral("ArduRover MockLink"), MAV_AUTOPILOT_ARDUPILOTMEGA,
+                                MAV_TYPE_GROUND_ROVER, options, failureMode);
 }
 
 void MockLink::_sendRCChannels()
 {
     mavlink_message_t msg{};
-    (void) mavlink_msg_rc_channels_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        0, // time_boot_ms
-        16, // chancount
-        1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, // channel 1-8
-        1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, // channel 9-16
-        UINT16_MAX, UINT16_MAX, // channel 17/18 unused
-        0 // rssi
+    (void) mavlink_msg_rc_channels_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                             0,                                               // time_boot_ms
+                                             16,                                              // chancount
+                                             1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500,  // channel 1-8
+                                             1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500,  // channel 9-16
+                                             UINT16_MAX, UINT16_MAX,                          // channel 17/18 unused
+                                             0                                                // rssi
     );
     respondWithMavlinkMessage(msg);
 }
 
 void MockLink::_handlePreFlightCalibration(const mavlink_command_long_t& request)
 {
-    if ((request.param1 == 0) && (request.param2 == 0) && (request.param3 == 0) &&
-        (request.param4 == 0) && (request.param5 == 0) && (request.param6 == 0) &&
-        (request.param7 == 0)) {
+    if ((request.param1 == 0) && (request.param2 == 0) && (request.param3 == 0) && (request.param4 == 0) &&
+        (request.param5 == 0) && (request.param6 == 0) && (request.param7 == 0)) {
         // All zeros is a calibration cancel request.
         if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
             // Send ACCELCAL_VEHICLE_POS_FAILED so controller calls _stopCalibration(Failed)
@@ -2381,12 +2264,12 @@ void MockLink::_handlePreFlightCalibration(const mavlink_command_long_t& request
             if (_apmAccelCalPosIndex >= 0) {
                 mavlink_message_t msg{};
                 mavlink_command_long_t cmd{};
-                cmd.target_system    = 255;
+                cmd.target_system = 255;
                 cmd.target_component = MAV_COMP_ID_MISSIONPLANNER;
-                cmd.command          = MAV_CMD_ACCELCAL_VEHICLE_POS;
-                cmd.param1           = static_cast<float>(ACCELCAL_VEHICLE_POS_FAILED);
-                (void) mavlink_msg_command_long_encode_chan(
-                    _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, &cmd);
+                cmd.command = MAV_CMD_ACCELCAL_VEHICLE_POS;
+                cmd.param1 = static_cast<float>(ACCELCAL_VEHICLE_POS_FAILED);
+                (void) mavlink_msg_command_long_encode_chan(_vehicleSystemId, _vehicleComponentId,
+                                                            _outgoingMavlinkChannel, &msg, &cmd);
                 respondWithMavlinkMessage(msg);
                 _apmAccelCalPosIndex = -1;
             }
@@ -2412,8 +2295,8 @@ void MockLink::_handlePreFlightCalibration(const mavlink_command_long_t& request
         if (_firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
             // APM full accelerometer calibration: drive the ACCELCAL_VEHICLE_POS handshake
             QMutexLocker locker(&_apmAccelCalMutex);
-            _apmAccelCalPosIndex  = 0;
-            _apmAccelCalGotAck    = false;
+            _apmAccelCalPosIndex = 0;
+            _apmAccelCalGotAck = false;
             _apmAccelCalTickCount = 0;
         } else {
             // Accelerometer calibration runs the full pose-driven simulation
@@ -2422,32 +2305,26 @@ void MockLink::_handlePreFlightCalibration(const mavlink_command_long_t& request
     }
 }
 
-void MockLink::sendStatusTextMessage(uint8_t severity, const QString &text)
+void MockLink::sendStatusTextMessage(uint8_t severity, const QString& text)
 {
     char statusText[MAVLINK_MSG_STATUSTEXT_FIELD_TEXT_LEN] = {};
     (void) std::strncpy(statusText, text.toUtf8().constData(), sizeof(statusText) - 1);
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_statustext_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        severity,
-        statusText,
-        0,
-        0 // Not chunked
+    (void) mavlink_msg_statustext_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                            severity, statusText, 0,
+                                            0  // Not chunked
     );
     respondWithMavlinkMessage(msg);
 }
 
-void MockLink::_handleTakeoff(const mavlink_command_long_t &request)
+void MockLink::_handleTakeoff(const mavlink_command_long_t& request)
 {
     _vehicleAltitudeAMSL = request.param7 + _defaultVehicleHomeAltitude;
     _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
 }
 
-void MockLink::_handleLogRequestList(const mavlink_message_t &msg)
+void MockLink::_handleLogRequestList(const mavlink_message_t& msg)
 {
     mavlink_log_request_list_t request{};
     mavlink_msg_log_request_list_decode(&msg, &request);
@@ -2458,16 +2335,12 @@ void MockLink::_handleLogRequestList(const mavlink_message_t &msg)
     }
 
     mavlink_message_t responseMsg{};
-    mavlink_msg_log_entry_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &responseMsg,
-        _logDownloadLogId,      // log id
-        1,                      // num_logs
-        1,                      // last_log_num
-        0,                      // time_utc
-        _logDownloadFileSize    // size
+    mavlink_msg_log_entry_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &responseMsg,
+                                    _logDownloadLogId,    // log id
+                                    1,                    // num_logs
+                                    1,                    // last_log_num
+                                    0,                    // time_utc
+                                    _logDownloadFileSize  // size
     );
     respondWithMavlinkMessage(responseMsg);
 }
@@ -2490,7 +2363,7 @@ QString MockLink::_createRandomFile(uint32_t byteCount)
     return tempFile.fileName();
 }
 
-void MockLink::_handleLogRequestData(const mavlink_message_t &msg)
+void MockLink::_handleLogRequestData(const mavlink_message_t& msg)
 {
     mavlink_log_request_data_t request{};
     mavlink_msg_log_request_data_decode(&msg, &request);
@@ -2507,7 +2380,8 @@ void MockLink::_handleLogRequestData(const mavlink_message_t &msg)
     }
 
     if (request.ofs > (_logDownloadFileSize - 1)) {
-        qCWarning(MockLinkLog) << "_handleLogRequestData offset past end of file request.ofs:size" << request.ofs << _logDownloadFileSize;
+        qCWarning(MockLinkLog) << "_handleLogRequestData offset past end of file request.ofs:size" << request.ofs
+                               << _logDownloadFileSize;
         return;
     }
 
@@ -2539,23 +2413,15 @@ void MockLink::_logDownloadWorker()
 
     uint8_t buffer[MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN]{};
 
-    const qint64 bytesToRead = qMin(_logDownloadBytesRemaining, (uint32_t)MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN);
+    const qint64 bytesToRead = qMin(_logDownloadBytesRemaining, (uint32_t) MAVLINK_MSG_LOG_DATA_FIELD_DATA_LEN);
     Q_ASSERT(file.seek(_logDownloadCurrentOffset));
     Q_ASSERT(file.read(reinterpret_cast<char*>(buffer), bytesToRead) == bytesToRead);
 
     qCDebug(MockLinkLog) << "_logDownloadWorker" << _logDownloadCurrentOffset << _logDownloadBytesRemaining;
 
     mavlink_message_t responseMsg{};
-    (void) mavlink_msg_log_data_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &responseMsg,
-        _logDownloadLogId,
-        _logDownloadCurrentOffset,
-        bytesToRead,
-        &buffer[0]
-    );
+    (void) mavlink_msg_log_data_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &responseMsg,
+                                          _logDownloadLogId, _logDownloadCurrentOffset, bytesToRead, &buffer[0]);
     respondWithMavlinkMessage(responseMsg);
 
     _logDownloadCurrentOffset += bytesToRead;
@@ -2568,13 +2434,14 @@ void MockLink::_sendADSBVehicles()
 {
     for (int i = 0; i < _adsbVehicles.size(); ++i) {
         // Slightly change the direction to simulate different paths
-        _adsbVehicles[i].angle += (i + 1); // Vary the change to make each path unique
+        _adsbVehicles[i].angle += (i + 1);  // Vary the change to make each path unique
 
         // Move each vehicle by a smaller distance to simulate slower speed
-        _adsbVehicles[i].coordinate = _adsbVehicles[i].coordinate.atDistanceAndAzimuth(5, _adsbVehicles[i].angle); // 50 meters per update for slower speed
+        _adsbVehicles[i].coordinate = _adsbVehicles[i].coordinate.atDistanceAndAzimuth(
+            5, _adsbVehicles[i].angle);  // 50 meters per update for slower speed
 
         // Simulate slight variations in altitude
-        _adsbVehicles[i].altitude += (i % 2 == 0 ? 0.5 : -0.5); // Increase or decrease altitude
+        _adsbVehicles[i].altitude += (i % 2 == 0 ? 0.5 : -0.5);  // Increase or decrease altitude
 
         QByteArray callsign = QString("N12345%1").arg(i, 2, 10, QChar('0')).toLatin1();
         callsign.resize(MAVLINK_MSG_ADSB_VEHICLE_FIELD_CALLSIGN_LEN);
@@ -2582,22 +2449,19 @@ void MockLink::_sendADSBVehicles()
         // Prepare and send MAVLink message for each vehicle
         mavlink_message_t responseMsg{};
         (void) mavlink_msg_adsb_vehicle_pack_chan(
-            _vehicleSystemId,
-            _vehicleComponentId,
-            _outgoingMavlinkChannel,
-            &responseMsg,
-            12345 + i, // Unique ICAO address for each vehicle
-            _adsbVehicles[i].coordinate.latitude() * 1e7,
-            _adsbVehicles[i].coordinate.longitude() * 1e7,
+            _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &responseMsg,
+            12345 + i,  // Unique ICAO address for each vehicle
+            _adsbVehicles[i].coordinate.latitude() * 1e7, _adsbVehicles[i].coordinate.longitude() * 1e7,
             ADSB_ALTITUDE_TYPE_GEOMETRIC,
-            _adsbVehicles[i].altitude * 1000, // Altitude in millimeters
+            _adsbVehicles[i].altitude * 1000,  // Altitude in millimeters
             // Use the current angle as heading
-            static_cast<uint16_t>(_adsbVehicles[i].angle * 100), // Heading in centidegrees
-            0, 0, // Horizontal/Vertical velocity
-            callsign.constData(), // Unique callsign
+            static_cast<uint16_t>(_adsbVehicles[i].angle * 100),  // Heading in centidegrees
+            0, 0,                                                 // Horizontal/Vertical velocity
+            callsign.constData(),                                 // Unique callsign
             ADSB_EMITTER_TYPE_ROTOCRAFT,
-            1, // Seconds since last communication
-            ADSB_FLAGS_VALID_COORDS | ADSB_FLAGS_VALID_ALTITUDE | ADSB_FLAGS_VALID_HEADING | ADSB_FLAGS_VALID_CALLSIGN | ADSB_FLAGS_SIMULATED,
+            1,                                                    // Seconds since last communication
+            ADSB_FLAGS_VALID_COORDS | ADSB_FLAGS_VALID_ALTITUDE | ADSB_FLAGS_VALID_HEADING | ADSB_FLAGS_VALID_CALLSIGN |
+                ADSB_FLAGS_SIMULATED,
             0  // Squawk code
         );
         respondWithMavlinkMessage(responseMsg);
@@ -2606,65 +2470,60 @@ void MockLink::_sendADSBVehicles()
 
 void MockLink::_moveADSBVehicle(int vehicleIndex)
 {
-    _adsbAngles[vehicleIndex] += 10; // Increment angle for smoother movement
-    QGeoCoordinate &coord = _adsbVehicleCoordinates[vehicleIndex];
+    _adsbAngles[vehicleIndex] += 10;  // Increment angle for smoother movement
+    QGeoCoordinate& coord = _adsbVehicleCoordinates[vehicleIndex];
 
     // Update the position based on the new angle
     coord = QGeoCoordinate(coord.latitude(), coord.longitude()).atDistanceAndAzimuth(500, _adsbAngles[vehicleIndex]);
-    coord.setAltitude(100); // Keeping altitude constant for simplicity
+    coord.setAltitude(100);  // Keeping altitude constant for simplicity
 }
 
-void MockLink::_handleRequestMessageAutopilotVersion(const mavlink_command_long_t &/*request*/, bool &accepted)
+void MockLink::_handleRequestMessageAutopilotVersion(const mavlink_command_long_t& /*request*/, bool& accepted)
 {
     accepted = true;
 
     switch (_failureMode) {
-    case MockConfiguration::FailNone:
-        break;
-    case MockConfiguration::FailInitialConnectRequestMessageAutopilotVersionFailure:
-        accepted = false;
-        return;
-    case MockConfiguration::FailInitialConnectRequestMessageAutopilotVersionLost:
-        accepted = true;
-        return;
-    default:
-        break;
+        case MockConfiguration::FailNone:
+            break;
+        case MockConfiguration::FailInitialConnectRequestMessageAutopilotVersionFailure:
+            accepted = false;
+            return;
+        case MockConfiguration::FailInitialConnectRequestMessageAutopilotVersionLost:
+            accepted = true;
+            return;
+        default:
+            break;
     }
 
     _respondWithAutopilotVersion();
 }
 
-void MockLink::_handleRequestMessageDebug(const mavlink_command_long_t &/*request*/, bool &accepted, bool &noAck)
+void MockLink::_handleRequestMessageDebug(const mavlink_command_long_t& /*request*/, bool& accepted, bool& noAck)
 {
     accepted = true;
     noAck = false;
 
     switch (_requestMessageFailureMode) {
-    case FailRequestMessageNone:
-        break;
-    case FailRequestMessageCommandAcceptedMsgNotSent:
-        return;
-    case FailRequestMessageCommandUnsupported:
-        accepted = false;
-        return;
-    case FailRequestMessageCommandNoResponse:
-        accepted = false;
-        noAck = true;
-        return;
+        case FailRequestMessageNone:
+            break;
+        case FailRequestMessageCommandAcceptedMsgNotSent:
+            return;
+        case FailRequestMessageCommandUnsupported:
+            accepted = false;
+            return;
+        case FailRequestMessageCommandNoResponse:
+            accepted = false;
+            noAck = true;
+            return;
     }
 
     mavlink_message_t responseMsg{};
-    (void) mavlink_msg_debug_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &responseMsg,
-        0, 0, 0
-    );
+    (void) mavlink_msg_debug_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &responseMsg, 0,
+                                       0, 0);
     respondWithMavlinkMessage(responseMsg);
 }
 
-void MockLink::_handleRequestMessageAvailableModes(const mavlink_command_long_t &request, bool &accepted)
+void MockLink::_handleRequestMessageAvailableModes(const mavlink_command_long_t& request, bool& accepted)
 {
     accepted = true;
 
@@ -2675,25 +2534,30 @@ void MockLink::_handleRequestMessageAvailableModes(const mavlink_command_long_t 
     if (request.param2 == 0) {
         // Request for available modes to be streamed out
         if (_availableModesWorkerNextModeIndex != 0) {
-            qCWarning(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: _availableModesWorker already running - _availableModesWorkerNextModeIndex:" << _availableModesWorkerNextModeIndex;
+            qCWarning(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: _availableModesWorker already running - "
+                                      "_availableModesWorkerNextModeIndex:"
+                                   << _availableModesWorkerNextModeIndex;
             accepted = false;
             return;
         }
         qCDebug(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: starting available modes sequence worker";
-        _availableModesWorkerNextModeIndex = 1; // Start with the first mode in sequence (1-based index)
+        _availableModesWorkerNextModeIndex = 1;  // Start with the first mode in sequence (1-based index)
     } else {
         // Request for specific mode
         if (request.param2 > _availableFlightModes.count()) {
-            qCWarning(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: requested mode index out of range" << request.param2 << _availableFlightModes.count();
+            qCWarning(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: requested mode index out of range"
+                                   << request.param2 << _availableFlightModes.count();
             accepted = false;
             return;
         }
-        qCDebug(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: received specific mode request for index" << request.param2;
-        _availableModesWorkerNextModeIndex = -request.param2; // Negative index indicates a specific single mode request
+        qCDebug(MockLinkLog) << "MAVLINK_MSG_ID_AVAILABLE_MODES: received specific mode request for index"
+                             << request.param2;
+        _availableModesWorkerNextModeIndex =
+            -request.param2;  // Negative index indicates a specific single mode request
     }
 }
 
-void MockLink::_handleRequestMessage(const mavlink_command_long_t &request, bool &accepted, bool &noAck)
+void MockLink::_handleRequestMessage(const mavlink_command_long_t& request, bool& accepted, bool& noAck)
 {
     accepted = false;
     noAck = false;
@@ -2710,38 +2574,35 @@ void MockLink::_handleRequestMessage(const mavlink_command_long_t &request, bool
     }
 
     switch (static_cast<int>(request.param1)) {
-    case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
-        _handleRequestMessageAutopilotVersion(request, accepted);
-        break;
-    case MAVLINK_MSG_ID_COMPONENT_METADATA:
-        if (_firmwareType == MAV_AUTOPILOT_PX4) {
-            _sendGeneralMetaData();
-            accepted = true;
-        }
-        break;
-    case MAVLINK_MSG_ID_DEBUG:
-        _handleRequestMessageDebug(request, accepted, noAck);
-        break;
-    case MAVLINK_MSG_ID_AVAILABLE_MODES:
-        _handleRequestMessageAvailableModes(request, accepted);
-        break;
+        case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
+            _handleRequestMessageAutopilotVersion(request, accepted);
+            break;
+        case MAVLINK_MSG_ID_COMPONENT_METADATA:
+            if (_firmwareType == MAV_AUTOPILOT_PX4) {
+                _sendGeneralMetaData();
+                accepted = true;
+            }
+            break;
+        case MAVLINK_MSG_ID_DEBUG:
+            _handleRequestMessageDebug(request, accepted, noAck);
+            break;
+        case MAVLINK_MSG_ID_AVAILABLE_MODES:
+            _handleRequestMessageAvailableModes(request, accepted);
+            break;
     }
 }
 
 void MockLink::_sendGeneralMetaData()
 {
-    static constexpr const char metaDataURI[MAVLINK_MSG_COMPONENT_METADATA_FIELD_URI_LEN] = "mftp://[;comp=1]general.json"; ///< "https://bit.ly/31nm0fs"
+    static constexpr const char metaDataURI[MAVLINK_MSG_COMPONENT_METADATA_FIELD_URI_LEN] =
+        "mftp://[;comp=1]general.json";  ///< "https://bit.ly/31nm0fs"
 
     mavlink_message_t responseMsg{};
     (void) mavlink_msg_component_metadata_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &responseMsg,
-        0, // time_boot_ms
-        25436021, // general_metadata_file_crc (crc32 of General.MetaData.json)
-        metaDataURI
-    );
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &responseMsg,
+        0,         // time_boot_ms
+        25436021,  // general_metadata_file_crc (crc32 of General.MetaData.json)
+        metaDataURI);
     respondWithMavlinkMessage(responseMsg);
 }
 
@@ -2766,13 +2627,8 @@ void MockLink::_sendRemoteIDArmStatus()
     std::strncpy(armStatusError, errorUtf8.constData(), sizeof(armStatusError) - 1);
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_open_drone_id_arm_status_pack(
-        _vehicleSystemId,
-        MAV_COMP_ID_ODID_TXRX_1,
-        &msg,
-        armStatus,
-        armStatusError
-    );
+    (void) mavlink_msg_open_drone_id_arm_status_pack(_vehicleSystemId, MAV_COMP_ID_ODID_TXRX_1, &msg, armStatus,
+                                                     armStatusError);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2781,46 +2637,32 @@ void MockLink::_sendEscInfo()
     // Send ESC_INFO for 4 motors starting at index 0.
     // count=4 and info bitmask=0x0F (all 4 online) makes the ESC indicator visible.
     static const uint16_t failureFlags[4] = {0, 0, 0, 0};
-    static const uint32_t errorCount[4]   = {0, 0, 0, 0};
-    static const int16_t  temperature[4]  = {3000, 3000, 3000, 3000}; // centidegrees
+    static const uint32_t errorCount[4] = {0, 0, 0, 0};
+    static const int16_t temperature[4] = {3000, 3000, 3000, 3000};  // centidegrees
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_esc_info_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        0,                              // index: first group starts at 0
-        static_cast<uint64_t>(_runningTime.elapsed()) * 1000, // time_usec
-        0,                              // counter
-        4,                              // count: 4 motors
-        ESC_CONNECTION_TYPE_DSHOT,      // connection_type
-        0x0F,                           // info: bitmask — motors 0-3 online
-        failureFlags,
-        errorCount,
-        temperature
-    );
+    (void) mavlink_msg_esc_info_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                          0,  // index: first group starts at 0
+                                          static_cast<uint64_t>(_runningTime.elapsed()) * 1000,  // time_usec
+                                          0,                                                     // counter
+                                          4,                                                     // count: 4 motors
+                                          ESC_CONNECTION_TYPE_DSHOT,                             // connection_type
+                                          0x0F,  // info: bitmask — motors 0-3 online
+                                          failureFlags, errorCount, temperature);
     respondWithMavlinkMessage(msg);
 }
 
 void MockLink::_sendEscStatus()
 {
-    static const int32_t rpm[4]     = {5000, 5000, 5000, 5000};
-    static const float   voltage[4] = {16.0f, 16.0f, 16.0f, 16.0f};
-    static const float   current[4] = {5.0f, 5.0f, 5.0f, 5.0f};
+    static const int32_t rpm[4] = {5000, 5000, 5000, 5000};
+    static const float voltage[4] = {16.0f, 16.0f, 16.0f, 16.0f};
+    static const float current[4] = {5.0f, 5.0f, 5.0f, 5.0f};
 
     mavlink_message_t msg{};
-    (void) mavlink_msg_esc_status_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        0,                              // index: first group
-        static_cast<uint64_t>(_runningTime.elapsed()) * 1000, // time_usec
-        rpm,
-        voltage,
-        current
-    );
+    (void) mavlink_msg_esc_status_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                            0,                                                     // index: first group
+                                            static_cast<uint64_t>(_runningTime.elapsed()) * 1000,  // time_usec
+                                            rpm, voltage, current);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2829,18 +2671,14 @@ void MockLink::_sendRadioStatus()
     // Send a RADIO_STATUS message to make the TelemetryRSSI indicator visible.
     // Any non-zero rssi value triggers showIndicator (TelemetryRSSIIndicator checks lrssi.rawValue != 0).
     mavlink_message_t msg{};
-    (void) mavlink_msg_radio_status_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        100,    // rssi: local signal strength
-        100,    // remrssi: remote signal strength
-        50,     // txbuf: transmit buffer fill (%)
-        10,     // noise: local background noise
-        10,     // remnoise: remote background noise
-        0,      // rxerrors
-        0       // fixed
+    (void) mavlink_msg_radio_status_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg,
+                                              100,  // rssi: local signal strength
+                                              100,  // remrssi: remote signal strength
+                                              50,   // txbuf: transmit buffer fill (%)
+                                              10,   // noise: local background noise
+                                              10,   // remnoise: remote background noise
+                                              0,    // rxerrors
+                                              0     // fixed
     );
     respondWithMavlinkMessage(msg);
 }
@@ -2851,7 +2689,7 @@ void MockLink::simulateConnectionRemoved()
     _connectionRemoved();
 }
 
-MockLinkFTP *MockLink::mockLinkFTP() const
+MockLinkFTP* MockLink::mockLinkFTP() const
 {
     return _mockLinkFTP;
 }
@@ -2865,23 +2703,16 @@ void MockLink::_sendAvailableMode(uint8_t modeIndexOneBased)
 
     qCDebug(MockLinkLog) << "_sendAvailableMode modeIndexOneBased:" << modeIndexOneBased;
 
-    const FlightMode_t &availableMode = _availableFlightModes[modeIndexOneBased - 1];
+    const FlightMode_t& availableMode = _availableFlightModes[modeIndexOneBased - 1];
     char modeName[MAVLINK_MSG_AVAILABLE_MODES_FIELD_MODE_NAME_LEN] = {};
     std::strncpy(modeName, availableMode.name, sizeof(modeName) - 1);
 
     mavlink_message_t msg{};
 
     (void) mavlink_msg_available_modes_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        _availableModesCount(),
-        modeIndexOneBased,
-        availableMode.standard_mode,
-        availableMode.custom_mode,
-        availableMode.canBeSet ? 0 : MAV_MODE_PROPERTY_NOT_USER_SELECTABLE,
-        modeName);
+        _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, _availableModesCount(), modeIndexOneBased,
+        availableMode.standard_mode, availableMode.custom_mode,
+        availableMode.canBeSet ? 0 : MAV_MODE_PROPERTY_NOT_USER_SELECTABLE, modeName);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2911,18 +2742,14 @@ void MockLink::_sendAvailableModesMonitor()
 {
     mavlink_message_t msg{};
 
-    (void) mavlink_msg_available_modes_monitor_pack_chan(
-        _vehicleSystemId,
-        _vehicleComponentId,
-        _outgoingMavlinkChannel,
-        &msg,
-        _availableModesMonitorSeqNumber);
+    (void) mavlink_msg_available_modes_monitor_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                         &msg, _availableModesMonitorSeqNumber);
     respondWithMavlinkMessage(msg);
 }
 
 int MockLink::_availableModesCount() const
 {
-    return _availableFlightModes.count() - (_availableModesMonitorSeqNumber == 0 ? 1 : 0); // Exclude the delayed mode
+    return _availableFlightModes.count() - (_availableModesMonitorSeqNumber == 0 ? 1 : 0);  // Exclude the delayed mode
 }
 
 // ---------------------------------------------------------------------------
@@ -2956,12 +2783,12 @@ void MockLink::_apmCompassCalWorker()
     mavlink_message_t msg{};
     for (uint8_t id = 0; id < 3; ++id) {
         mavlink_mag_cal_progress_t progress{};
-        progress.compass_id      = id;
-        progress.cal_mask        = 0x07; // all 3 compasses
-        progress.cal_status      = MAG_CAL_RUNNING_STEP_ONE;
-        progress.completion_pct  = static_cast<uint8_t>(qMin(pct, 100));
-        (void) mavlink_msg_mag_cal_progress_encode_chan(
-            _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, &progress);
+        progress.compass_id = id;
+        progress.cal_mask = 0x07;  // all 3 compasses
+        progress.cal_status = MAG_CAL_RUNNING_STEP_ONE;
+        progress.completion_pct = static_cast<uint8_t>(qMin(pct, 100));
+        (void) mavlink_msg_mag_cal_progress_encode_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                        &msg, &progress);
         respondWithMavlinkMessage(msg);
     }
 
@@ -2969,32 +2796,35 @@ void MockLink::_apmCompassCalWorker()
         // Send MAG_CAL_REPORT for all 3 compasses
         for (uint8_t id = 0; id < 3; ++id) {
             mavlink_mag_cal_report_t report{};
-            report.compass_id  = id;
-            report.cal_mask    = 0x07;
-            report.cal_status  = MAG_CAL_SUCCESS;
-            report.fitness     = 0.5f;
-            (void) mavlink_msg_mag_cal_report_encode_chan(
-                _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, &report);
+            report.compass_id = id;
+            report.cal_mask = 0x07;
+            report.cal_status = MAG_CAL_SUCCESS;
+            report.fitness = 0.5f;
+            (void) mavlink_msg_mag_cal_report_encode_chan(_vehicleSystemId, _vehicleComponentId,
+                                                          _outgoingMavlinkChannel, &msg, &report);
             respondWithMavlinkMessage(msg);
         }
 
         // Write non-zero offsets so QGC sees all compasses as calibrated after refresh.
         // _mapParamName2Value is owned by MockLink's main thread; dispatch the write there
         // to avoid a data race with concurrent param reads on the main thread.
-        (void) QMetaObject::invokeMethod(this, [this] {
-            constexpr int compId = MAV_COMP_ID_AUTOPILOT1;
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_X")]   = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_Y")]   = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_Z")]   = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_X")]  = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_Y")]  = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_Z")]  = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_X")]  = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_Y")]  = QVariant(10.0f);
-            _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_Z")]  = QVariant(10.0f);
-        }, Qt::QueuedConnection);
+        (void) QMetaObject::invokeMethod(
+            this,
+            [this] {
+                constexpr int compId = MAV_COMP_ID_AUTOPILOT1;
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_X")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_Y")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS_Z")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_X")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_Y")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS2_Z")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_X")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_Y")] = QVariant(10.0f);
+                _mapParamName2Value[compId][QStringLiteral("COMPASS_OFS3_Z")] = QVariant(10.0f);
+            },
+            Qt::QueuedConnection);
 
-        _apmCompassCalProgress = -1; // deactivate
+        _apmCompassCalProgress = -1;  // deactivate
     } else {
         _apmCompassCalProgress = qMin(pct + 5, 100);
     }
@@ -3022,23 +2852,26 @@ void MockLink::_apmAccelCalWorker()
         // All poses done: send SUCCESS
         mavlink_message_t msg{};
         mavlink_command_long_t cmd{};
-        cmd.target_system    = 255; // GCS
+        cmd.target_system = 255;  // GCS
         cmd.target_component = MAV_COMP_ID_MISSIONPLANNER;
-        cmd.command          = MAV_CMD_ACCELCAL_VEHICLE_POS;
-        cmd.param1           = static_cast<float>(ACCELCAL_VEHICLE_POS_SUCCESS);
-        (void) mavlink_msg_command_long_encode_chan(
-            _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, &cmd);
+        cmd.command = MAV_CMD_ACCELCAL_VEHICLE_POS;
+        cmd.param1 = static_cast<float>(ACCELCAL_VEHICLE_POS_SUCCESS);
+        (void) mavlink_msg_command_long_encode_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                    &msg, &cmd);
         respondWithMavlinkMessage(msg);
 
         // Write non-zero accel offsets.
         // _mapParamName2Value is owned by MockLink's main thread; dispatch the write there
         // to avoid a data race with concurrent param reads on the main thread.
-        (void) QMetaObject::invokeMethod(this, [this] {
-            constexpr int compId = MAV_COMP_ID_AUTOPILOT1;
-            _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_X")] = QVariant(0.1f);
-            _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_Y")] = QVariant(0.1f);
-            _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_Z")] = QVariant(0.1f);
-        }, Qt::QueuedConnection);
+        (void) QMetaObject::invokeMethod(
+            this,
+            [this] {
+                constexpr int compId = MAV_COMP_ID_AUTOPILOT1;
+                _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_X")] = QVariant(0.1f);
+                _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_Y")] = QVariant(0.1f);
+                _mapParamName2Value[compId][QStringLiteral("INS_ACCOFFS_Z")] = QVariant(0.1f);
+            },
+            Qt::QueuedConnection);
 
         _apmAccelCalPosIndex = -1;
         return;
@@ -3054,16 +2887,16 @@ void MockLink::_apmAccelCalWorker()
 
         mavlink_message_t msg{};
         mavlink_command_long_t cmd{};
-        cmd.target_system    = 255;
+        cmd.target_system = 255;
         cmd.target_component = MAV_COMP_ID_MISSIONPLANNER;
-        cmd.command          = MAV_CMD_ACCELCAL_VEHICLE_POS;
-        cmd.param1           = static_cast<float>(kAPMAccelCalPosSequence[_apmAccelCalPosIndex]);
-        (void) mavlink_msg_command_long_encode_chan(
-            _vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel, &msg, &cmd);
+        cmd.command = MAV_CMD_ACCELCAL_VEHICLE_POS;
+        cmd.param1 = static_cast<float>(kAPMAccelCalPosSequence[_apmAccelCalPosIndex]);
+        (void) mavlink_msg_command_long_encode_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,
+                                                    &msg, &cmd);
         respondWithMavlinkMessage(msg);
     } else {
         // Ack received — advance to next pose
-        _apmAccelCalGotAck  = false;
+        _apmAccelCalGotAck = false;
         _apmAccelCalPosIndex++;
     }
 }
