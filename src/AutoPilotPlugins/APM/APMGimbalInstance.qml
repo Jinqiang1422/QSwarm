@@ -198,7 +198,6 @@ ColumnLayout {
                         ]
 
                         LabelledComboBox {
-                            id: outputChannelCombo
                             label: modelData.comboLabel
                             comboBoxPreferredWidth: ScreenTools.defaultFontPixelWidth * 30
                             model: _rcChannelModel()

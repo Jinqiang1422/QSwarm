@@ -12,6 +12,8 @@ target_sources(
             QmlObjectListModelTest.h
             QmlObjectTreeModelTest.cc
             QmlObjectTreeModelTest.h
+            QGCImageProviderTest.cc
+            QGCImageProviderTest.h
             TestDirtyObject.h
             RCToParamDialogControllerTest.cc
             RCToParamDialogControllerTest.h
@@ -23,4 +25,5 @@ add_qgc_test(ObjectItemModelBaseTest LABELS Unit)
 add_qgc_test(ObjectListModelBaseTest LABELS Unit)
 add_qgc_test(QmlObjectListModelTest LABELS Unit)
 add_qgc_test(QmlObjectTreeModelTest LABELS Unit)
+add_qgc_test(QGCImageProviderTest LABELS Unit)
 add_qgc_test(RCToParamDialogControllerTest LABELS Integration Vehicle)

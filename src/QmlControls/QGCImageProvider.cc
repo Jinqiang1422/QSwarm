@@ -1,16 +1,12 @@
 #include "QGCImageProvider.h"
 
-#include <QtGui/QPainter>
 #include <QtGui/QFont>
+#include <QtGui/QPainter>
+#include <limits>
 
-QGCImageProvider::QGCImageProvider(QQmlImageProviderBase::ImageType imageType)
-    : QQuickImageProvider(imageType)
-    , _dummy(320, 240, QImage::Format_RGBA8888)
+QGCImageProvider::QGCImageProvider()
+    : QQuickImageProvider(QQmlImageProviderBase::ImageType::Image), _dummy(320, 240, QImage::Format_RGBA8888)
 {
-    // qCDebug(ImageProtocolManagerLog) << Q_FUNC_INFO << this;
-
-    Q_ASSERT(imageType == QQmlImageProviderBase::ImageType::Image);
-
     // Dummy temporary image until something comes along
     _dummy.fill(Qt::black);
     QPainter painter(&_dummy);
@@ -27,41 +23,25 @@ QGCImageProvider::~QGCImageProvider()
     // qCDebug(ImageProtocolManagerLog) << Q_FUNC_INFO << this;
 }
 
-QImage QGCImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
+QImage QGCImageProvider::requestImage(const QString& id, QSize* size, const QSize& requestedSize)
 {
     Q_UNUSED(requestedSize);
 
-    if (id.isEmpty()) {
-        return _dummy;
+    QImage image = _dummy;
+    const QStringList url = id.split('/');
+    if (url.size() == 2) {
+        bool vehicleIdValid = false;
+        bool indexValid = false;
+        const uint vehicleId = url[0].toUInt(&vehicleIdValid);
+        // The index only invalidates the QML image cache; it does not select a stored image.
+        (void) url[1].toUInt(&indexValid);
+        if (vehicleIdValid && indexValid && vehicleId <= std::numeric_limits<uint8_t>::max()) {
+            image = _images.value(static_cast<uint8_t>(vehicleId), _dummy);
+        }
     }
-
-    if (!id.contains("/")) {
-        return _dummy;
+    if (size) {
+        *size = image.size();
     }
-
-    const QStringList url = id.split('/', Qt::SkipEmptyParts);
-    if (url.size() != 2) {
-        return _dummy;
-    }
-
-    bool ok = false;
-    const uint8_t vehicleId = url[0].toUInt(&ok);
-    if (!ok) {
-        return _dummy;
-    }
-
-    const uint8_t index [[maybe_unused]] = url[1].toUInt(&ok);
-    if (!ok) {
-        return _dummy;
-    }
-
-    if (!_images.contains(vehicleId)) {
-        return _dummy;
-    }
-
-    const QImage image = _images[vehicleId];
-    // image->scaled(requestedSize);
-    *size = image.size();
 
     return image;
 }
