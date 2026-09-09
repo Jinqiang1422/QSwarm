@@ -65,12 +65,21 @@ public:
     /// 告警 → 单行文本（UI/审计共用）
     static QString alertToText(const Alert& a);
 
+    int cooldownRecordCount() const { return _lastFired.size(); }
+
+    int speedHistoryCount() const { return _lastSpeed.size(); }
+
+    quint64 capacityRejectedCount() const { return _capacityRejectedCount; }
+
 private:
     bool _cooldownHit(const QString& key, const QString& level, qint64 monoMs);
+    void _pruneCooldown(qint64 monoMs, const QSet<int>& alive, bool tracks);
+    bool _fenceBreach(double lat, double lon) const;
 
     Config _cfg;
     QList<QList<QPair<double, double>>> _includePolys, _excludePolys;
     QHash<int, bool> _wasOnline;        ///< vehicleId → 上次在线
     QHash<int, double> _lastSpeed;      ///< fusedId → 上次地速
     QHash<QString, qint64> _lastFired;  ///< 去抖键 → 上次出警时刻
+    quint64 _capacityRejectedCount = 0;
 };

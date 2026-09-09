@@ -2,6 +2,31 @@
 
 #include <QtCore/QtMath>
 
+namespace {
+// Cartesian cells avoid longitude wrap and polar singularities. Every spherical neighbour within
+// radius also has a chord shorter than radius; the final distance test retains the original metric.
+struct Cell
+{
+    int x;
+    int y;
+    int z;
+};
+
+Cell cellFor(double lat, double lon, double width)
+{
+    const double latitude = SwarmTypes::degToRad(lat), longitude = SwarmTypes::degToRad(lon);
+    constexpr double earthRadius = 6371000.0;
+    return {int(std::floor(earthRadius * std::cos(latitude) * std::cos(longitude) / width)),
+            int(std::floor(earthRadius * std::cos(latitude) * std::sin(longitude) / width)),
+            int(std::floor(earthRadius * std::sin(latitude) / width))};
+}
+
+QString cellKey(const Cell& cell)
+{
+    return QStringLiteral("%1:%2:%3").arg(cell.x).arg(cell.y).arg(cell.z);
+}
+}  // namespace
+
 SwarmEventDetector::SwarmEventDetector() : SwarmEventDetector(Config()) {}
 
 SwarmEventDetector::SwarmEventDetector(const Config& cfg) : _cfg(cfg) {}
@@ -16,15 +41,46 @@ void SwarmEventDetector::setFences(const QList<QList<QPair<double, double>>>& in
 bool SwarmEventDetector::_cooldownHit(const QString& key, const QString& level, qint64 monoMs)
 {
     if (level == QStringLiteral("critical")) {
-        _lastFired[key] = monoMs;  // critical 不过冷却，每次都报
         return false;
     }
     const qint64 last = _lastFired.value(key, -1);
     if (last >= 0 && monoMs - last < _cfg.cooldownMs) {
         return true;
     }
+    if (!_lastFired.contains(key) && _lastFired.size() >= 8192) {
+        ++_capacityRejectedCount;
+        return true;
+    }
     _lastFired[key] = monoMs;
     return false;
+}
+
+void SwarmEventDetector::_pruneCooldown(qint64 monoMs, const QSet<int>& alive, bool tracks)
+{
+    for (auto it = _lastFired.begin(); it != _lastFired.end();) {
+        const auto parts = it.key().split(QLatin1Char('_'));
+        const auto prefix = parts.first();
+        const bool isTrack = prefix == QStringLiteral("tb") || prefix == QStringLiteral("sb") ||
+                             prefix == QStringLiteral("os") || prefix == QStringLiteral("gather");
+        const int id = prefix == QStringLiteral("gather") ? parts.value(1).toInt() : parts.last().toInt();
+        if (monoMs - it.value() >= _cfg.cooldownMs || (tracks == isTrack && !alive.contains(id)))
+            it = _lastFired.erase(it);
+        else
+            ++it;
+    }
+}
+
+bool SwarmEventDetector::_fenceBreach(double lat, double lon) const
+{
+    if (!SwarmTypes::isFiniteLatLon(lat, lon))
+        return false;
+    bool permitted = _includePolys.isEmpty();
+    for (const auto& polygon : _includePolys)
+        permitted |= SwarmTypes::pointInPolygon(lat, lon, polygon);
+    for (const auto& polygon : _excludePolys)
+        if (SwarmTypes::pointInPolygon(lat, lon, polygon))
+            return true;
+    return !permitted;
 }
 
 QString SwarmEventDetector::alertToText(const Alert& a)
@@ -39,6 +95,11 @@ QList<SwarmEventDetector::Alert> SwarmEventDetector::checkVehicles(const QList<S
                                                                    qint64 monoMs)
 {
     QList<Alert> out;
+    QSet<int> alive;
+    for (const auto& vehicle : vehicles)
+        alive.insert(vehicle.id);
+    _wasOnline.removeIf([&alive](auto it) { return !alive.contains(it.key()); });
+    _pruneCooldown(monoMs, alive, false);
     for (const SwarmTypes::VehicleState& v : vehicles) {
         // ---- 低电量 ----
         if (v.batteryPct >= 0.0) {
@@ -76,25 +137,7 @@ QList<SwarmEventDetector::Alert> SwarmEventDetector::checkVehicles(const QList<S
         _wasOnline[v.id] = v.online;
         // ---- 机体越出空域围栏 ----
         if (v.online && (!_includePolys.isEmpty() || !_excludePolys.isEmpty())) {
-            bool breach = false;
-            if (!_includePolys.isEmpty()) {
-                bool insideAny = false;
-                for (const auto& poly : _includePolys) {
-                    if (SwarmTypes::pointInPolygon(v.lat, v.lon, poly)) {
-                        insideAny = true;
-                        break;
-                    }
-                }
-                breach = !insideAny;
-            }
-            if (!breach) {
-                for (const auto& poly : _excludePolys) {
-                    if (SwarmTypes::pointInPolygon(v.lat, v.lon, poly)) {
-                        breach = true;
-                        break;
-                    }
-                }
-            }
+            const bool breach = _fenceBreach(v.lat, v.lon);
             if (breach && !_cooldownHit(QStringLiteral("fence_%1").arg(v.id), QStringLiteral("warning"), monoMs)) {
                 out.append({QStringLiteral("warning"),
                             QStringLiteral("fence_breach"),
@@ -111,11 +154,30 @@ QList<SwarmEventDetector::Alert> SwarmEventDetector::checkTracks(const QList<Swa
                                                                  qint64 monoMs)
 {
     QList<Alert> out;
+    QSet<int> alive;
+    QHash<QString, QList<int>> grid;
+    const double width = std::isfinite(_cfg.gatherRadiusM) ? qMax(0.01, _cfg.gatherRadiusM) : 50.0;
+    for (int i = 0; i < tracks.size(); ++i) {
+        if (!SwarmTypes::isFiniteLatLon(tracks[i].lat, tracks[i].lon))
+            continue;
+        alive.insert(tracks[i].fusedId);
+        grid[cellKey(cellFor(tracks[i].lat, tracks[i].lon, width))].append(i);
+    }
+    _lastSpeed.removeIf([&alive](auto it) { return !alive.contains(it.key()); });
+    _pruneCooldown(monoMs, alive, true);
 
     // ---- 聚集：任取 gatherCount 个目标两两互在半径内（简化为存在性判定） ----
     for (int i = 0; i < tracks.count(); i++) {
+        if (!alive.contains(tracks[i].fusedId))
+            continue;
         QList<int> cluster{tracks[i].fusedId};
-        for (int j = 0; j < tracks.count(); j++) {
+        const auto cell = cellFor(tracks[i].lat, tracks[i].lon, width);
+        QList<int> candidates;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz)
+                    candidates.append(grid.value(cellKey({cell.x + dx, cell.y + dy, cell.z + dz})));
+        for (int j : candidates) {
             if (i == j) {
                 continue;
             }
@@ -145,19 +207,15 @@ QList<SwarmEventDetector::Alert> SwarmEventDetector::checkTracks(const QList<Swa
     }
 
     for (const SwarmTrackFusion::FusedTrack& t : tracks) {
+        if (!alive.contains(t.fusedId))
+            continue;
         // ---- 目标越界 ----
         if (!_excludePolys.isEmpty() || !_includePolys.isEmpty()) {
-            bool breach = false;
-            for (const auto& poly : _excludePolys) {
-                if (SwarmTypes::pointInPolygon(t.lat, t.lon, poly)) {
-                    breach = true;
-                    break;
-                }
-            }
+            const bool breach = _fenceBreach(t.lat, t.lon);
             if (breach && !_cooldownHit(QStringLiteral("tb_%1").arg(t.fusedId), QStringLiteral("warning"), monoMs)) {
                 out.append({QStringLiteral("warning"),
                             QStringLiteral("boundary"),
-                            QStringLiteral("目标 #%1（%2）进入禁飞区")
+                            QStringLiteral("目标 #%1（%2）越出允许区或进入禁飞区")
                                 .arg(t.fusedId)
                                 .arg(SwarmTrackFusion::categoryName(t.category)),
                             {t.fusedId},

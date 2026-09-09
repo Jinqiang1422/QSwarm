@@ -24,6 +24,7 @@
 #include <QtCore/QObject>
 #include <QtPositioning/QGeoCoordinate>
 #include <QtQmlIntegration/QtQmlIntegration>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -33,6 +34,7 @@
 #include "SwarmConstraintChecker.h"
 #include "SwarmControlLease.h"
 #include "SwarmEventDetector.h"
+#include "SwarmMissionSnapshot.h"
 #include "SwarmTrackFusion.h"
 #include "SwarmTypes.h"
 #include "SwarmVideoHub.h"
@@ -44,6 +46,7 @@ class SwarmCOPModel;
 class SwarmPerceptionBridge;
 class SwarmTaskController;
 class SwarmTaskLibrary;
+class SwarmConstraintStore;
 class QTimer;
 class Vehicle;
 class QmlObjectListModel;
@@ -54,6 +57,7 @@ class SwarmAcceptanceServer;
 class SwarmManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantMap perceptionDiagnostics READ perceptionDiagnostics NOTIFY perceptionDiagnosticsChanged)
     QML_ELEMENT
     QML_UNCREATABLE("")
     Q_MOC_INCLUDE("Vehicle.h")
@@ -82,11 +86,15 @@ class SwarmManager : public QObject
     Q_PROPERTY(QString situationOneLiner READ situationOneLiner NOTIFY situationChanged)
     Q_PROPERTY(QVariantMap executionStates READ executionStates NOTIFY executionStatesChanged)
     Q_PROPERTY(QString executionMessage READ executionMessage NOTIFY executionStatesChanged)
+    Q_PROPERTY(bool constraintsValid READ constraintsValid NOTIFY constraintsChanged)
+    Q_PROPERTY(QString constraintsError READ constraintsError NOTIFY constraintsChanged)
+    Q_PROPERTY(quint64 constraintRevision READ constraintRevision NOTIFY constraintsChanged)
     Q_PROPERTY(quint64 lastExecutionId READ lastExecutionId NOTIFY executionStatesChanged)
     Q_MOC_INCLUDE("SwarmCOPModel.h")
     Q_MOC_INCLUDE("SwarmPerceptionBridge.h")
 
 public:
+    QVariantMap perceptionDiagnostics() const;
     enum class ExecutionApproval
     {
         Automatic,
@@ -194,6 +202,9 @@ public:
 
     /// 围栏/空域配置摘要（供 QML 显示）
     Q_INVOKABLE QString fenceSummary();
+    bool constraintsValid() const;
+    QString constraintsError() const;
+    quint64 constraintRevision() const;
 
     /// 批量解锁(arm=true)/上锁。作用于选中车辆；无选中时作用于全部在线车辆。
     Q_INVOKABLE void armAll(bool arm);
@@ -230,7 +241,7 @@ public:
     /// 经控制租约闸门生成上传区域覆盖任务，或清空已有任务。
     Q_INVOKABLE bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
                                            double angleDeg, const QString& assignMode = QStringLiteral("sequential"));
-    Q_INVOKABLE void clearAllMissions();
+    Q_INVOKABLE bool clearAllMissions();
 
     // ------------------------------------------------------------------
     // 统一动作管线（大模型 / 任务状态机 / 人工界面共用）
@@ -244,7 +255,8 @@ public:
     /// 按序执行动作序列（映射到本类批量指令与各子控制器）。
     /// origin 标记来源（ai / ai_confirmed / task / template / operator），写入审计日志便于回放归因。
     bool executeActions(const QList<SwarmAction>& actions, const QString& origin = QStringLiteral("ai"),
-                        ExecutionApproval approval = ExecutionApproval::Automatic);
+                        ExecutionApproval approval = ExecutionApproval::Automatic,
+                        const QHash<int, SwarmMissionSnapshot>& expectedMissions = {}, quint64* executionId = nullptr);
 
     quint64 lastExecutionId() const { return _lastExecutionId; }
 
@@ -253,9 +265,12 @@ public:
     QString executionMessage() const { return _executionMessage; }
 
 signals:
+    void perceptionDiagnosticsChanged();
     void executionFinished(quint64 executionId, bool success, const QString& reason);
     void executionProgress(quint64 executionId, int vehicleId, const QString& state);
+    void actionDispatched(quint64 executionId, int vehicleId, const QString& type);
     void executionStatesChanged();
+    void constraintsChanged();
     void vehicleCountChanged();
     void commandIntervalMsChanged();
     void autonomyLevelChanged();
@@ -272,11 +287,18 @@ private slots:
     void _vehicleRemoved(Vehicle* vehicle);
     void _onTrackBatch(const QVariantList& tracks, qint64 timeUsec);
     void _onPerceptionTick();
+    void _drainTrackReports();
 
 private:
     struct Execution;
     void _advanceExecution(const std::shared_ptr<Execution>& execution);
+    void _dispatchExecutionAction(const std::shared_ptr<Execution>& execution, SwarmAction action);
     void _finishExecution(const std::shared_ptr<Execution>& execution, bool success, const QString& reason);
+    void _continueExecution(const std::shared_ptr<Execution>& execution);
+    bool _policyAllowed(const std::shared_ptr<Execution>& execution) const;
+    bool _executionAllowed(const std::shared_ptr<Execution>& execution, const SwarmAction& action, int vehicleId);
+    void _enforcePolicy();
+    void _syncConstraintConsumers();
     bool _executeImmediateActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval);
     QHash<quint64, std::shared_ptr<Execution>> _executions;
     quint64 _lastExecutionId = 0;
@@ -311,7 +333,10 @@ private:
     QSet<int> _automationExcludedIds;
     int _autonomyLevel = 2;       ///< 自主等级（1=L1 2=L2 3=L3），默认 L2 监督执行
     QStringList _l3AllowedTypes;  ///< L3 限定域自主白名单（动作类型）
-    SwarmControlLease _lease;     ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
+    quint64 _policyRevision = 0;
+    ExecutionApproval _formationApproval = ExecutionApproval::OperatorConfirmed;
+    SwarmConstraintStore* _constraintStore = nullptr;
+    SwarmControlLease _lease;  ///< per-vehicle 控制租约（人工接管即跳过该机自动下发）
     bool _automationDispatchInProgress = false;
     std::optional<QList<int>> _dispatchTargetIds;
     QSet<int> _formationTargetIds;
@@ -326,7 +351,21 @@ private:
     // ---- P3 感知融合与态势理解 ----
     SwarmCOPModel* _copModel = nullptr;
     SwarmPerceptionBridge* _perception = nullptr;
-    SwarmTrackFusion _fusion;                  ///< 多源航迹融合（WP3.3）
+    SwarmTrackFusion _fusion;  ///< 多源航迹融合（WP3.3）
+
+    struct PendingReport
+    {
+        SwarmTrackFusion::TrackReport report;
+        qint64 receivedMs;
+    };
+
+    std::deque<PendingReport> _pendingReports;
+    bool _drainScheduled = false;
+    quint64 _perceptionGeneration = 0;
+    quint64 _droppedReports = 0;
+    quint64 _rejectedCoordinates = 0;
+    quint64 _reportedOverloadCount = 0;
+    qint64 _lastOverloadAlertMs = -30000;
     SwarmEventDetector _eventDetector;         ///< 异常事件规则引擎（WP3.6）
     SwarmVideoHub _videoHub;                   ///< 视频汇聚（WP3.1）
     QTimer* _perceptionTimer = nullptr;        ///< 2Hz 融合/事件/态势节拍

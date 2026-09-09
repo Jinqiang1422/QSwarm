@@ -75,6 +75,8 @@ public:
 
     /// 是否有 error 级违例
     static bool hasError(const QList<Violation>& violations);
+    /// Check the complete segment against the union of allowed polygons and every exclusion.
+    static bool segmentAllowed(const QPair<double, double>& from, const QPair<double, double>& to, const Config& cfg);
 
     /// 覆盖任务估算（米/分钟）：条带数、单架次扫掠距离
     static void coverageGeometry(double lengthMeters, double widthMeters, double spacingMeters, int& bands,

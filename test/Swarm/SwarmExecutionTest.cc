@@ -253,6 +253,10 @@ void SwarmExecutionTest::_blockedStageCannotAdvance_data()
 
 void SwarmExecutionTest::_blockedStageCannotAdvance()
 {
+    // The headless image has no pressure backend; takeoff can initialize the sensor singleton.
+    ignoreLogMessage(
+        "Utilities.QGCSensors", QtWarningMsg,
+        QRegularExpression("QGCPressure.*(Failed to connect to pressure backend|Error Initializing Pressure Sensor)"));
     QFETCH(QString, condition);
     _writeConfig({{"max_altitude_m", 20.0}});
     QStringList errors;
@@ -274,8 +278,9 @@ void SwarmExecutionTest::_blockedStageCannotAdvance()
     task->retryBlockedStage();
     QVERIFY(!task->blocked());
     QCOMPARE(task->currentStageIndex(), 0);
-    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1,
-                              TestTimeout::longMs());
+    // MockLink's takeoff handler itself arms the vehicle; an extra ARM depends on heartbeat timing.
+    QTRY_COMPARE_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 1, TestTimeout::longMs());
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->armed(), TestTimeout::longMs());
 }
 
 void SwarmExecutionTest::_coverageCoordinatesReachTheChecker()

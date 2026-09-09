@@ -18,6 +18,10 @@ target_sources(
             SwarmClock.h
             SwarmConstraintChecker.cc
             SwarmConstraintChecker.h
+            SwarmConstraintStore.cc
+            SwarmMissionSnapshot.h
+            SwarmMissionSnapshot.cc
+            SwarmConstraintStore.h
             SwarmControlLease.cc
             SwarmControlLease.h
             SwarmCOPModel.cc

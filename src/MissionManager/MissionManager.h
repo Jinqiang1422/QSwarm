@@ -33,6 +33,9 @@ public:
 
     quint64 executionRevision() const { return _executionRevision; }
 
+    /// Content may have changed; deliberately independent of beginMissionExecution().
+    quint64 contentRevision() const { return _contentRevision; }
+
     int missionState() const { return _missionState; }
 
     bool executionComplete() const { return _executionActiveObserved && _missionState == MISSION_STATE_COMPLETE; }
@@ -53,6 +56,7 @@ private:
 
     int _cachedLastCurrentIndex;
     quint64 _executionRevision = 0;
+    quint64 _contentRevision = 0;
     quint32 _missionId = 0;
     int _missionState = MISSION_STATE_UNKNOWN;
     int _lastReachedIndex = -1;

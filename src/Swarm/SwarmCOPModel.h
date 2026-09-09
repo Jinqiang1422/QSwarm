@@ -31,6 +31,7 @@ class SwarmCOPModel : public QAbstractListModel
     Q_PROPERTY(QVariantList threatZones READ threatZones WRITE setThreatZones NOTIFY threatZonesChanged)
     Q_PROPERTY(QVariantList heatmap READ heatmap NOTIFY heatmapChanged)
     Q_PROPERTY(int heatmapCellCount READ heatmapCellCount NOTIFY heatmapChanged)
+    Q_PROPERTY(quint64 rejectedCoverageCount READ rejectedCoverageCount NOTIFY coverageRejected)
 
 public:
     enum Role
@@ -69,6 +70,8 @@ public:
 
     int heatmapCellCount() const { return _heat.count(); }
 
+    quint64 rejectedCoverageCount() const { return _rejectedCoverageCount; }
+
     void clearHeatmap();
 
     /// 单个融合航迹的 QVariantMap（供 QML 详情弹层/AI 上下文）
@@ -78,10 +81,12 @@ signals:
     void tracksChanged();
     void threatZonesChanged();
     void heatmapChanged();
+    void coverageRejected();
 
 private:
     QList<SwarmTrackFusion::FusedTrack> _tracks;
     qint64 _monoMs = 0;
     QVariantList _threatZones;
     QHash<qint64, int> _heat;  // 格网键（lat/lon 0.0005° 量化）→ 权重
+    quint64 _rejectedCoverageCount = 0;
 };

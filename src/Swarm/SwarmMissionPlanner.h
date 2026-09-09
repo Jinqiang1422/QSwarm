@@ -23,6 +23,8 @@
 #include <QtQmlIntegration/QtQmlIntegration>
 #include <functional>
 
+#include "SwarmMissionSnapshot.h"
+
 class MissionItem;
 class Vehicle;
 
@@ -63,10 +65,13 @@ public:
     /// @param assignMode      条带分配方式：sequential（id 升序，默认）/ auction（集中式拍卖，WP2.4）/
     /// cbba（分布式一致性拍卖）
     bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters, double angleDeg,
-                               const QString& assignMode = QStringLiteral("sequential"));
+                               const QString& assignMode = QStringLiteral("sequential"),
+                               std::function<bool(int)> allowed = {});
 
     /// 清空全部目标车辆上的任务
-    void clearAllMissions();
+    bool clearAllMissions();
+    /// Fixed batch, preflighted in full before starting any transaction. Never cancels an unrelated upload.
+    bool readMissionBatch(const QList<int>& ids, bool clearFirst, std::function<bool(int)> allowed);
 
     /// 构建单架机的区域覆盖任务项序列（起飞→航点→返航）。
     /// 与上传逻辑分离，供预览/测试/其他调用方复用；调用方负责释放返回的 MissionItem。
@@ -84,6 +89,8 @@ public:
     quint64 batchId() const { return _batchId; }
 
     quint64 verifiedRevision(int vehicleId) const { return _verifiedRevisions.value(vehicleId); }
+
+    SwarmMissionSnapshot verifiedSnapshot(int vehicleId) const { return _verifiedSnapshots.value(vehicleId); }
 
     void cancelTargets(const QList<int>& ids);
 
@@ -104,14 +111,15 @@ signals:
 private:
     /// 本地平面坐标(x=沿航线, y=垂直航线, 单位米) → WGS84 坐标
     QGeoCoordinate _localToGeo(const QGeoCoordinate& center, double angleDeg, double x, double y) const;
-    void _trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items);
-    void _finishUpload(int vehicleId, bool success, const QString& reason, bool withdrawn = false);
+    void _trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items, std::function<bool(int)> allowed);
+    void _finishUpload(quint64 batch, int vehicleId, bool success, const QString& reason, bool withdrawn = false);
     QHash<int, QObject*> _uploads;
     QVariantMap _uploadStates;
     quint64 _batchId = 0;
     bool _batchFailed = false;
     int _verifiedCount = 0;
     QHash<int, quint64> _verifiedRevisions;
+    QHash<int, SwarmMissionSnapshot> _verifiedSnapshots;
 
     double _surveyAltitude = 30.0;  ///< 作业高度（相对起飞点，米）
     double _surveySpacing = 20.0;   ///< 航线间隔（米）

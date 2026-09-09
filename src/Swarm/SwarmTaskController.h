@@ -31,6 +31,7 @@
 #include <QtQmlIntegration/QtQmlIntegration>
 
 #include "SwarmAction.h"
+#include "SwarmMissionSnapshot.h"
 
 class SwarmManager;
 
@@ -52,8 +53,20 @@ class SwarmTaskController : public QObject
     Q_PROPERTY(bool canRetry READ canRetry NOTIFY taskChanged)
     Q_PROPERTY(bool awaitingMissionConfirmation READ awaitingMissionConfirmation NOTIFY taskChanged)
     Q_PROPERTY(QString executionToken READ executionToken NOTIFY taskChanged)
+    Q_PROPERTY(QString taskId READ taskId NOTIFY taskChanged)
+    Q_PROPERTY(Outcome outcome READ outcome NOTIFY taskChanged)
+    Q_PROPERTY(QVariantMap result READ result NOTIFY taskChanged)
+    Q_PROPERTY(QString persistenceError READ persistenceError NOTIFY taskChanged)
 
 public:
+    enum class Outcome
+    {
+        None,
+        Succeeded,
+        Aborted,
+        Failed
+    };
+    Q_ENUM(Outcome)
     explicit SwarmTaskController(SwarmManager* swarmManager);
     ~SwarmTaskController();
 
@@ -109,12 +122,26 @@ public:
     bool awaitingMissionConfirmation() const { return _awaitingMissionConfirmation; }
 
     QString executionToken() const;
+
+    QString taskId() const { return _taskId; }
+
+    Outcome outcome() const { return _outcome; }
+
+    QVariantMap result() const { return _result; }
+
+    QString persistenceError() const { return _persistenceError; }
+
+    QVariantList dispatchRecords() const { return _dispatchRecords; }
+
+    QList<int> withdrawnTargets() const { return _withdrawnIds.values(); }
+
     Q_INVOKABLE bool confirmMissionCompletion(const QString& token);
 
 signals:
     void taskChanged();
     void taskFeedback(const QString& message);
     void taskFinished(bool success, const QString& message);
+    void taskResultReady(const QString& taskId, const QVariantMap& result);
 
 private slots:
     void _tick();
@@ -122,7 +149,7 @@ private slots:
 private:
     void _enterStage(int index);
     void _blockStage(const QString& reason);
-    void _finish(bool success, const QString& message);
+    void _finish(Outcome outcome, const QString& message);
     bool _conditionMet(const Stage& stage);
     void _setStateText(const QString& text);
     void _persistState();
@@ -130,6 +157,13 @@ private:
     SwarmManager* _swarmManager = nullptr;
 
     bool _running = false;
+    bool _terminating = false;
+    QString _taskId;
+    Outcome _outcome = Outcome::None;
+    QVariantMap _result;
+    QVariantList _dispatchRecords;
+    QVariantMap _withdrawalOffsets;
+    QString _persistenceError;
     bool _blocked = false;
     bool _operatorConfirmed = false;
     QString _taskName;
@@ -146,7 +180,7 @@ private:
     bool _awaitingMissionConfirmation = false;
     bool _stageDispatched = false;
     QHash<int, quint64> _missionRevisions;
-    QHash<int, quint64> _plannedMissionRevisions;
+    QHash<int, SwarmMissionSnapshot> _plannedMissions;
     void _actionsFinished(quint64 id, bool success, const QString& reason);
     QSet<int> _vehiclesSeenInMission;  ///< all_mission_finished：已观察到进入 Mission 模式的机号
     QString _stateText;

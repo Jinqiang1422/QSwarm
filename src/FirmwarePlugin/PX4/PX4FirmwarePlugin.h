@@ -8,6 +8,8 @@ class PX4FirmwarePlugin : public FirmwarePlugin
     Q_OBJECT
 
 public:
+    bool missionReturnPath(Vehicle* vehicle, const QGeoCoordinate& from, QList<QGeoCoordinate>& path,
+                           double& dwellSeconds, QString& reason) const override;
     PX4FirmwarePlugin();
     virtual ~PX4FirmwarePlugin();
 

@@ -22,6 +22,11 @@
 class SwarmTrackFusion
 {
 public:
+    static constexpr int MaxTracks = 1024;
+    static constexpr int MaxSources = 8192;
+    static constexpr int MaxContributors = 64;
+    static constexpr qint64 ContributorLifetimeMs = 10000;
+
     /// 上游航迹上报（与 swarm_msgs.make_track / SWARM_TARGET_TRACK 字段一一对应）
     struct TrackReport
     {
@@ -92,6 +97,10 @@ public:
     /// 因坐标非法/置信度不足被感知校验闸门丢弃的航迹累计数（供审计/诊断）
     int rejectedCount() const { return _rejectedCount; }
 
+    quint64 capacityRejectedCount() const { return _capacityRejectedCount; }
+
+    int sourceCount() const { return _sourceReceived.size(); }
+
     /// 类别名（与 mavlink/swarm_perception.xml 对齐）
     static QString categoryName(int category);
 
@@ -99,16 +108,21 @@ private:
     int _associate(double eastM, double northM, qint64 monoMs) const;  ///< 最近邻（门限内）
     static QString _sourceKey(const TrackReport& report);
     void _rebuildTrackIndexes();
+    void _removeSource(const QString& key);
+    void _refreshContributors(FusedTrack& track, qint64 monoMs);
     void _localToGeo(double eastM, double northM, double& lat, double& lon) const;
 
     Config _cfg;
     QList<FusedTrack> _tracks;
     QHash<QString, int> _sourceAssociations;
     QHash<QString, qint64> _sourceTimestamps;
-    QHash<QString, qint64> _sourceReceived;  ///< (sensorId, trackId) → fusedId
-    QHash<int, int> _trackIndexes;           ///< fusedId → _tracks index
+    QHash<QString, qint64> _sourceReceived;           ///< (sensorId, trackId) → fusedId
+    QHash<QString, QPair<int, int>> _sourceMetadata;  // sensorId, trackId
+    QHash<int, QSet<QString>> _contributors;
+    QHash<int, int> _trackIndexes;                    ///< fusedId → _tracks index
     double _refLat = 0.0, _refLon = 0.0;
     bool _refSet = false;
     int _nextFusedId = 1;
     int _rejectedCount = 0;
+    quint64 _capacityRejectedCount = 0;
 };

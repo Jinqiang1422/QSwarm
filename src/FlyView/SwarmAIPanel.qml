@@ -196,6 +196,14 @@ Rectangle {
                     font.pointSize:     ScreenTools.smallFontPointSize
                 }
 
+                QGCLabel {
+                    width: parent.width
+                    visible: !_root._swarm.constraintsValid
+                    text: qsTr("约束配置无效：%1。地图保留上次有效围栏；起飞、航线启动和编队受限。").arg(_root._swarm.constraintsError)
+                    color: "#ffb74d"
+                    wrapMode: Text.Wrap
+                }
+
                 // ---- P3 感知链路 / 态势 / 周期摘要 ----
                 Rectangle {
                     width:              parent.width
@@ -537,6 +545,13 @@ Rectangle {
                         wrapMode:       Text.Wrap
                         Layout.fillWidth: true
                         color:          _task.running ? "#4fc3f7" : qgcPal.text
+                    }
+                    QGCLabel {
+                        visible: _root._task.persistenceError.length > 0
+                        text: _root._task.persistenceError
+                        color: "#ffb74d"
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
                     }
                     Repeater {
                         model: _task.stageNames

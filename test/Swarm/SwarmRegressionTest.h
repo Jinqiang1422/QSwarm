@@ -29,6 +29,7 @@ private slots:
     void missionCompletionRequiresCurrentExecutionEvidence();
     void lateTakeoffAcknowledgementCannotArmWithdrawnTarget();
     void missionReplacementBlocksLaterStart();
+    void missionReplacementBlocksLaterStart_data();
     void formationLeaderWithdrawalKeepsRemainingMembers();
     void durationUsesMonotonicDeadline();
 

@@ -2,6 +2,8 @@
 
 #include <QtCore/QVariantMap>
 
+#include "SwarmTypes.h"
+
 SwarmCOPModel::SwarmCOPModel(QObject* parent) : QAbstractListModel(parent) {}
 
 int SwarmCOPModel::rowCount(const QModelIndex& parent) const
@@ -80,7 +82,12 @@ void SwarmCOPModel::setThreatZones(const QVariantList& zones)
 
 void SwarmCOPModel::ingestCoverage(double lat, double lon, int maxCells)
 {
-    // 0.0005° ≈ 55m 格网量化，键 = lat*1e4 << 32 | lon*1e4（非负偏移防负数）
+    if (!SwarmTypes::isFiniteLatLon(lat, lon)) {
+        ++_rejectedCoverageCount;
+        emit coverageRejected();
+        return;
+    }
+    // 0.00005° ≈ 5.5m; validate before floating-point to integer conversion.
     const qint64 la = qint64(lat * 20000.0) + (1LL << 30);
     const qint64 lo = qint64(lon * 20000.0) + (1LL << 30);
     const qint64 key = (la << 32) | (lo & 0xFFFFFFFFLL);

@@ -655,6 +655,17 @@ void FirmwarePlugin::_sendMissionStartCommand(Vehicle* vehicle) const
     Q_UNUSED(vehicle);
 }
 
+bool FirmwarePlugin::missionReturnPath(Vehicle* vehicle, const QGeoCoordinate& from, QList<QGeoCoordinate>& path,
+                                       double& dwellSeconds, QString& reason) const
+{
+    Q_UNUSED(vehicle);
+    Q_UNUSED(from);
+    path.clear();
+    dwellSeconds = 0;
+    reason = tr("当前固件的返航路径无法可靠校验，请使用标准 QGC 工作流");
+    return false;
+}
+
 void FirmwarePlugin::_armInModeAsync(Vehicle* vehicle, const QString& mode, QObject* context,
                                      std::function<bool()> allowed, std::function<void(bool)> finished) const
 {

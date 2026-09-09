@@ -4,36 +4,37 @@
 
 struct APMCopterMode
 {
-    enum Mode : uint32_t{
-        STABILIZE   = 0,   // hold level position
-        ACRO        = 1,   // rate control
-        ALT_HOLD    = 2,   // AUTO control
-        AUTO        = 3,   // AUTO control
-        GUIDED      = 4,   // AUTO control
-        LOITER      = 5,   // Hold a single location
-        RTL         = 6,   // AUTO control
-        CIRCLE      = 7,   // AUTO control
-        POSITION    = 8,   // Deprecated
-        LAND        = 9,   // AUTO control
-        OF_LOITER   = 10,  // Deprecated
-        DRIFT       = 11,  // Drift 'Car Like' mode
+    enum Mode : uint32_t
+    {
+        STABILIZE = 0,     // hold level position
+        ACRO = 1,          // rate control
+        ALT_HOLD = 2,      // AUTO control
+        AUTO = 3,          // AUTO control
+        GUIDED = 4,        // AUTO control
+        LOITER = 5,        // Hold a single location
+        RTL = 6,           // AUTO control
+        CIRCLE = 7,        // AUTO control
+        POSITION = 8,      // Deprecated
+        LAND = 9,          // AUTO control
+        OF_LOITER = 10,    // Deprecated
+        DRIFT = 11,        // Drift 'Car Like' mode
         RESERVED_12 = 12,  // RESERVED FOR FUTURE USE
-        SPORT       = 13,
-        FLIP        = 14,
-        AUTOTUNE    = 15,
-        POS_HOLD    = 16, // HYBRID LOITER.
-        BRAKE       = 17,
-        THROW       = 18,
-        AVOID_ADSB  = 19,
-        GUIDED_NOGPS= 20,
-        SMART_RTL   = 21,  // SMART_RTL returns to home by retracing its steps
-        FLOWHOLD    = 22,  // FLOWHOLD holds position with optical flow without rangefinder
-        FOLLOW      = 23,  // follow attempts to follow another vehicle or ground station
-        ZIGZAG      = 24,  // ZIGZAG mode is able to fly in a zigzag manner with predefined point A and point B
-        SYSTEMID    = 25,
-        AUTOROTATE  = 26,
-        AUTO_RTL    = 27,
-        TURTLE      = 28,
+        SPORT = 13,
+        FLIP = 14,
+        AUTOTUNE = 15,
+        POS_HOLD = 16,  // HYBRID LOITER.
+        BRAKE = 17,
+        THROW = 18,
+        AVOID_ADSB = 19,
+        GUIDED_NOGPS = 20,
+        SMART_RTL = 21,  // SMART_RTL returns to home by retracing its steps
+        FLOWHOLD = 22,   // FLOWHOLD holds position with optical flow without rangefinder
+        FOLLOW = 23,     // follow attempts to follow another vehicle or ground station
+        ZIGZAG = 24,     // ZIGZAG mode is able to fly in a zigzag manner with predefined point A and point B
+        SYSTEMID = 25,
+        AUTOROTATE = 26,
+        AUTO_RTL = 27,
+        TURTLE = 28,
     };
 };
 
@@ -42,26 +43,50 @@ class ArduCopterFirmwarePlugin : public APMFirmwarePlugin
     Q_OBJECT
 
 public:
-    explicit ArduCopterFirmwarePlugin(QObject *parent = nullptr);
+    bool missionReturnPath(Vehicle* vehicle, const QGeoCoordinate& from, QList<QGeoCoordinate>& path,
+                           double& dwellSeconds, QString& reason) const override;
+    explicit ArduCopterFirmwarePlugin(QObject* parent = nullptr);
     ~ArduCopterFirmwarePlugin();
 
-    void guidedModeLand(Vehicle *vehicle) const override { _setFlightModeAndValidate(vehicle, landFlightMode()); }
-    const FirmwarePlugin::remapParamNameMajorVersionMap_t &paramNameRemapMajorVersionMap() const override { return _remapParamName; }
+    void guidedModeLand(Vehicle* vehicle) const override { _setFlightModeAndValidate(vehicle, landFlightMode()); }
+
+    const FirmwarePlugin::remapParamNameMajorVersionMap_t& paramNameRemapMajorVersionMap() const override
+    {
+        return _remapParamName;
+    }
+
     int remapParamNameHigestMinorVersionNumber(int majorVersionNumber) const override;
+
     bool multiRotorCoaxialMotors(Vehicle* /*vehicle*/) const override { return _coaxialMotors; }
-    bool multiRotorXConfig(Vehicle *vehicle) const override;
-    QString offlineEditingParamFile(Vehicle *vehicle) const override { Q_UNUSED(vehicle); return QStringLiteral(":/FirmwarePlugin/APM/Copter.OfflineEditing.params"); }
+
+    bool multiRotorXConfig(Vehicle* vehicle) const override;
+
+    QString offlineEditingParamFile(Vehicle* vehicle) const override
+    {
+        Q_UNUSED(vehicle);
+        return QStringLiteral(":/FirmwarePlugin/APM/Copter.OfflineEditing.params");
+    }
+
     QString pauseFlightMode() const override;
     QString landFlightMode() const override;
     QString takeControlFlightMode() const override;
     QString followFlightMode() const override;
+
     QString gotoFlightMode() const override { return guidedFlightMode(); }
+
     QString takeOffFlightMode() const override { return guidedFlightMode(); }
+
     QString stabilizedFlightMode() const override;
-    QString autoDisarmParameter(Vehicle *vehicle) const override { Q_UNUSED(vehicle); return QStringLiteral("DISARM_DELAY"); }
+
+    QString autoDisarmParameter(Vehicle* vehicle) const override
+    {
+        Q_UNUSED(vehicle);
+        return QStringLiteral("DISARM_DELAY");
+    }
+
     bool supportsSmartRTL() const override { return true; }
 
-    void updateAvailableFlightModes(FlightModeList &modeList) override;
+    void updateAvailableFlightModes(FlightModeList& modeList) override;
 
 protected:
     uint32_t _convertToCustomFlightModeEnum(uint32_t val) const override;

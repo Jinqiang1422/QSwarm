@@ -2,6 +2,7 @@
 
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
@@ -26,6 +27,7 @@
 #include "SwarmAuditLogger.h"
 #include "SwarmCOPModel.h"
 #include "SwarmClock.h"
+#include "SwarmConstraintStore.h"
 #include "SwarmInputFilter.h"
 #include "SwarmMissionPlanner.h"
 #include "SwarmPerceptionBridge.h"
@@ -151,9 +153,16 @@ struct SwarmManager::Execution
     QPointer<QObject> context;
     QHash<int, QPointer<Vehicle>> targets;
     QHash<int, quint64> generations;
-    QHash<int, quint64> plannedMissions;
+    QHash<int, SwarmMissionSnapshot> plannedMissions;
+    QHash<int, SwarmMissionSnapshot> validatedMissions;
+    QHash<int, quint64> contentRevisions;
+    quint64 plannerBatch = 0;
     QSet<int> withdrawn;
     bool finished = false;
+    quint64 policyRevision = 0;
+    std::optional<SwarmAction> activeAction;
+    QString failureCode;
+    QString failureReason;
 };
 
 Q_APPLICATION_STATIC(SwarmManager, _swarmManagerInstance);
@@ -170,15 +179,20 @@ SwarmManager::SwarmManager(QObject* parent)
 {
     SwarmAuditLogger::instance();  // 尽早建立审计会话（WP1.1）
     _loadSettings();
+    _constraintStore = new SwarmConstraintStore(
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/SwarmConfig/fences.json"),
+        this);
+    connect(_constraintStore, &SwarmConstraintStore::changed, this, &SwarmManager::_syncConstraintConsumers);
+    _syncConstraintConsumers();
 
     _formation->setVehicleAutomationAllowedCallback(
         [this](int vehicleId) { return _formationAutomationAllowed(vehicleId); });
     _formation->setTargetAllowedCallback([this](int id, const QGeoCoordinate& point) {
-        Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(id);
+        QPointer<Vehicle> vehicle = MultiVehicleManager::instance()->getVehicleById(id);
         if (!vehicle || !std::isfinite(point.altitude()) || !vehicle->coordinate().isValid())
             return false;
         const auto config = _constraintConfig();
-        if (!config.error.isEmpty())
+        if (!vehicle || !config.error.isEmpty())
             return false;
         if (!config.includePolygons.isEmpty() &&
             std::none_of(config.includePolygons.begin(), config.includePolygons.end(), [&point](const auto& polygon) {
@@ -319,10 +333,8 @@ void SwarmManager::setAutonomyLevel(int level)
     level = qBound(1, level, 3);
     if (_autonomyLevel != level) {
         _autonomyLevel = level;
-        if (level == 1) {
-            for (auto it = _commandGenerations.begin(); it != _commandGenerations.end(); ++it)
-                ++it.value();
-        }
+        ++_policyRevision;
+        _enforcePolicy();
         QSettings().setValue(QStringLiteral("Swarm/autonomyLevel"), level);
         SwarmAuditLogger::instance()->logAutonomyChange(level);
         emit autonomyLevelChanged();
@@ -335,6 +347,8 @@ void SwarmManager::setL3AllowedTypes(const QStringList& types)
 {
     if (_l3AllowedTypes != types) {
         _l3AllowedTypes = types;
+        ++_policyRevision;
+        _enforcePolicy();
         QSettings().setValue(QStringLiteral("Swarm/l3AllowedTypes"), QVariant::fromValue(types));
         emit l3AllowedTypesChanged();
     }
@@ -468,35 +482,37 @@ QList<SwarmTypes::VehicleState> SwarmManager::_vehicleStates(const std::optional
 
 SwarmConstraintChecker::Config SwarmManager::_constraintConfig() const
 {
-    const QString path =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/SwarmConfig/fences.json");
-    QFile file(path);
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QJsonParseError error;
-        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-        if (error.error != QJsonParseError::NoError || !document.isObject()) {
-            SwarmConstraintChecker::Config cfg;
-            cfg.error = tr("围栏配置 JSON 损坏或格式错误");
-            return cfg;
-        }
-        return SwarmConstraintChecker::configFromJson(document.object());
+    return _constraintStore->snapshot();
+}
+
+bool SwarmManager::constraintsValid() const
+{
+    return _constraintStore->error().isEmpty();
+}
+
+QString SwarmManager::constraintsError() const
+{
+    return _constraintStore->error();
+}
+
+quint64 SwarmManager::constraintRevision() const
+{
+    return _constraintStore->revision();
+}
+
+void SwarmManager::_syncConstraintConsumers()
+{
+    const auto config = _constraintStore->lastValid();
+    QVariantList zones;
+    for (const auto& polygon : config.excludePolygons) {
+        QVariantList ring;
+        for (const auto& point : polygon)
+            ring.append(QVariantList{point.first, point.second});
+        zones.append(ring);
     }
-    if (file.exists()) {
-        SwarmConstraintChecker::Config cfg;
-        cfg.error = tr("无法读取围栏配置");
-        return cfg;
-    }
-    // 首次运行：写默认配置（全部不限制），供用户按需编辑
-    const SwarmConstraintChecker::Config cfg;
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QFile out(path);
-    if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QJsonObject doc = SwarmConstraintChecker::configToJson(cfg);
-        doc[QStringLiteral("include")] = QJsonArray();
-        doc[QStringLiteral("exclude")] = QJsonArray();
-        out.write(QJsonDocument(doc).toJson(QJsonDocument::Indented));
-    }
-    return cfg;
+    _copModel->setThreatZones(zones);
+    _eventDetector.setFences(config.includePolygons, config.excludePolygons);
+    emit constraintsChanged();
 }
 
 QList<SwarmConstraintChecker::Violation> SwarmManager::_planViolations(const QList<SwarmAction>& actions, double mapLat,
@@ -594,18 +610,7 @@ bool SwarmManager::startPerception(int port)
         settings.value(QStringLiteral("Swarm/perceptionBindAddress"), QStringLiteral("127.0.0.1")).toString(),
         settings.value(QStringLiteral("Swarm/perceptionAllowedSources")).toStringList());
     if (ok) {
-        // 威胁区图层 = 禁飞区多边形（fences.json exclude）
-        const SwarmConstraintChecker::Config cfg = _constraintConfig();
-        QVariantList zones;
-        for (const auto& poly : cfg.excludePolygons) {
-            QVariantList ring;
-            for (const auto& pt : poly) {
-                ring.append(QVariantList{pt.first, pt.second});
-            }
-            zones.append(ring);
-        }
-        _copModel->setThreatZones(zones);
-        _eventDetector.setFences(cfg.includePolygons, cfg.excludePolygons);
+        _constraintStore->refresh();
         SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("perception_start"),
                                           {{QStringLiteral("port"), port}});
         emit swarmCommandFeedback(tr("感知链路已启动（端口 %1）").arg(port));
@@ -617,6 +622,9 @@ bool SwarmManager::startPerception(int port)
 
 void SwarmManager::stopPerception()
 {
+    ++_perceptionGeneration;
+    _pendingReports.clear();
+    _drainScheduled = false;
     _perception->stop();
     SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("perception_stop"), {});
 }
@@ -630,20 +638,65 @@ void SwarmManager::_onTrackBatch(const QVariantList& tracks, qint64 timeUsec)
         r.trackId = m.value(QStringLiteral("track_id")).toInt();
         r.sensorId = m.value(QStringLiteral("sensor_id")).toInt();
         r.category = m.value(QStringLiteral("category")).toInt();
-        r.lat = m.value(QStringLiteral("lat")).toDouble();
-        r.lon = m.value(QStringLiteral("lon")).toDouble();
+        bool latitudeValid = false, longitudeValid = false;
+        r.lat = m.value(QStringLiteral("lat")).toDouble(&latitudeValid);
+        r.lon = m.value(QStringLiteral("lon")).toDouble(&longitudeValid);
+        if (!latitudeValid || !longitudeValid || !SwarmTypes::isFiniteLatLon(r.lat, r.lon)) {
+            ++_rejectedCoordinates;
+            continue;
+        }
         r.ve = m.value(QStringLiteral("ve")).toDouble();
         r.vn = m.value(QStringLiteral("vn")).toDouble();
         r.confidence = m.value(QStringLiteral("confidence"), 0.5).toDouble();
         r.source = m.value(QStringLiteral("source")).toInt();
         r.timeUsec = m.value(QStringLiteral("time_usec"), timeUsec).toLongLong();
         r.streamId = m.value(QStringLiteral("stream_id")).toString();
-        _fusion.ingest(r, monoMs);
+        if (_pendingReports.size() >= 8192) {
+            _pendingReports.pop_front();
+            ++_droppedReports;
+        }
+        _pendingReports.push_back({r, monoMs});
     }
+    if (!_drainScheduled)
+        _drainTrackReports();
+}
+
+void SwarmManager::_drainTrackReports()
+{
+    _drainScheduled = false;
+    if (_shutdownComplete)
+        return;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    for (int count = 0; !_pendingReports.empty() && count < 128 && elapsed.nsecsElapsed() < 2000000; ++count) {
+        const auto pending = _pendingReports.front();
+        _pendingReports.pop_front();
+        _fusion.ingest(pending.report, pending.receivedMs);
+    }
+    if (!_pendingReports.empty()) {
+        _drainScheduled = true;
+        QTimer::singleShot(0, this, [this, generation = _perceptionGeneration] {
+            if (generation == _perceptionGeneration)
+                _drainTrackReports();
+        });
+    }
+}
+
+QVariantMap SwarmManager::perceptionDiagnostics() const
+{
+    return {{QStringLiteral("pending_reports"), QVariant::fromValue(quint64(_pendingReports.size()))},
+            {QStringLiteral("dropped_reports"), QVariant::fromValue(_droppedReports)},
+            {QStringLiteral("rejected_coordinates"), QVariant::fromValue(_rejectedCoordinates)},
+            {QStringLiteral("fusion_rejected"), _fusion.rejectedCount()},
+            {QStringLiteral("capacity_rejected"), QVariant::fromValue(_fusion.capacityRejectedCount())},
+            {QStringLiteral("source_records"), _fusion.sourceCount()},
+            {QStringLiteral("cooldown_records"), _eventDetector.cooldownRecordCount()},
+            {QStringLiteral("speed_records"), _eventDetector.speedHistoryCount()}};
 }
 
 void SwarmManager::_onPerceptionTick()
 {
+    _constraintStore->refresh();
     const qint64 monoMs = SwarmClock::nowMs();
     for (const auto& execution : std::as_const(_executions)) {
         for (int id : execution->targets.keys()) {
@@ -665,13 +718,27 @@ void SwarmManager::_onPerceptionTick()
     const auto vehicles = _vehicleStates();
     for (const auto& v : vehicles) {
         if (v.online) {
-            _copModel->ingestCoverage(v.lat, v.lon);
+            if (SwarmTypes::isFiniteLatLon(v.lat, v.lon))
+                _copModel->ingestCoverage(v.lat, v.lon);
+            else
+                ++_rejectedCoordinates;
         }
     }
 
     // 事件检测：平台 + 目标
     _raiseAlerts(_eventDetector.checkVehicles(vehicles, monoMs));
     _raiseAlerts(_eventDetector.checkTracks(fused, monoMs));
+    const auto overload = _droppedReports + _fusion.capacityRejectedCount() + _eventDetector.capacityRejectedCount();
+    if (overload != _reportedOverloadCount && monoMs - _lastOverloadAlertMs >= 30000) {
+        _reportedOverloadCount = overload;
+        _lastOverloadAlertMs = monoMs;
+        _raiseAlerts({{QStringLiteral("warning"),
+                       QStringLiteral("perception_capacity"),
+                       tr("感知处理达到容量上限，累计丢弃 %1 条新状态或排队报告").arg(overload),
+                       {},
+                       monoMs}});
+    }
+    emit perceptionDiagnosticsChanged();
 
     // 态势一行摘要（面板状态栏）
     const QJsonObject digest = SwarmSituationDigest::build(vehicles, fused, _taskController->stateText(),
@@ -948,12 +1015,13 @@ void SwarmManager::cancelTargets(const QList<int>& ids, const QString& reason)
             execution->withdrawn.insert(id);
     }
     _formation->removeMembers(QSet<int>(ids.begin(), ids.end()));
-    _taskController->withdrawTargets(ids, reason);
     _missionPlanner->cancelTargets(ids);
     _aiAgent->invalidatePendingWork();
     SwarmAuditLogger::instance()->logTaskEvent(
         QStringLiteral("members_withdrawn"),
         {{QStringLiteral("reason"), reason}, {QStringLiteral("count"), ids.size()}});
+    // A terminal task notification may start a new task. Finish cancelling the old work first.
+    _taskController->withdrawTargets(ids, reason);
 }
 
 void SwarmManager::startMissionAll()
@@ -1037,15 +1105,12 @@ bool SwarmManager::planAndUploadCoverage(const QGeoCoordinate& center, double le
     return _missionPlanner->planAndUploadCoverage(center, lengthMeters, widthMeters, angleDeg, assignMode);
 }
 
-void SwarmManager::clearAllMissions()
+bool SwarmManager::clearAllMissions()
 {
-    QList<int> ids;
-    for (Vehicle* vehicle : _targetVehicles())
-        if (vehicle)
-            ids.append(vehicle->id());
-    QScopedValueRollback<std::optional<QList<int>>> targetsScope(_dispatchTargetIds, ids);
-    _requestAutomationLeases(QStringLiteral("operator"));
-    _missionPlanner->clearAllMissions();
+    SwarmAction action;
+    action.type = QStringLiteral("clear_missions");
+    action.targetIds = boundTargetIds();
+    return executeActions({action}, QStringLiteral("operator"), ExecutionApproval::OperatorConfirmed);
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,6 +1432,7 @@ bool SwarmManager::_executeImmediateActions(const QList<SwarmAction>& actions, c
             _formation->setSpacingMeters(p.value(QStringLiteral("spacing")).toDouble());
             _formation->setVerticalStepMeters(p.value(QStringLiteral("vertical_step")).toDouble());
             _formationAutomated = true;
+            _formationApproval = approval;
             _formationTargetIds = QSet<int>(action.targetIds.cbegin(), action.targetIds.cend());
             _formation->setMembers(_formationTargetIds);
             if (!_formation->start(p.value(QStringLiteral("leader_id")).toInt()))
@@ -1526,7 +1592,8 @@ void SwarmManager::_vehicleRemoved(Vehicle* vehicle)
     emit vehicleCountChanged();
 }
 
-bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval)
+bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QString& origin, ExecutionApproval approval,
+                                  const QHash<int, SwarmMissionSnapshot>& expectedMissions, quint64* executionId)
 {
     const bool manual = origin == QStringLiteral("operator");
     QString reason;
@@ -1547,11 +1614,15 @@ bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
     }
     auto execution = std::make_shared<Execution>();
     execution->id = ++_lastExecutionId;
+    if (executionId)
+        *executionId = execution->id;
+    execution->policyRevision = _policyRevision;
     _executionStates.clear();
     _executionMessage.clear();
     execution->actions = actions;
     execution->origin = origin;
     execution->approval = approval;
+    execution->plannedMissions = expectedMissions;
     execution->context = new QObject(this);
     for (const auto& action : actions) {
         for (int id : action.targetIds) {
@@ -1574,7 +1645,7 @@ bool SwarmManager::executeActions(const QList<SwarmAction>& actions, const QStri
                 emit executionStatesChanged();
             });
     emit executionStatesChanged();
-    QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+    _continueExecution(execution);
     return true;
 }
 
@@ -1583,6 +1654,10 @@ void SwarmManager::_finishExecution(const std::shared_ptr<Execution>& execution,
     if (execution->finished)
         return;
     execution->finished = true;
+    if (!success && execution->failureCode.isEmpty())
+        execution->failureCode = QStringLiteral("execution_failed");
+    if (execution->plannerBatch != 0 && execution->plannerBatch == _missionPlanner->batchId())
+        _missionPlanner->cancelTargets(execution->targets.keys());
     if (execution->id == _lastExecutionId) {
         _executionMessage = reason;
         emit executionStatesChanged();
@@ -1598,10 +1673,13 @@ void SwarmManager::_finishExecution(const std::shared_ptr<Execution>& execution,
     _executions.remove(execution->id);
     if (execution->context)
         execution->context->deleteLater();
-    SwarmAuditLogger::instance()->logTaskEvent(QStringLiteral("execution_finished"),
-                                               {{QStringLiteral("execution_id"), QVariant::fromValue(execution->id)},
-                                                {QStringLiteral("success"), success},
-                                                {QStringLiteral("reason"), reason}});
+    SwarmAuditLogger::instance()->logTaskEvent(
+        QStringLiteral("execution_finished"),
+        {{QStringLiteral("execution_id"), QVariant::fromValue(execution->id)},
+         {QStringLiteral("success"), success},
+         {QStringLiteral("reason"), reason},
+         {QStringLiteral("reason_code"), execution->failureCode},
+         {QStringLiteral("policy_revision"), QVariant::fromValue(execution->policyRevision)}});
     emit executionFinished(execution->id, success, reason);
 }
 
@@ -1609,7 +1687,7 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
 {
     if (execution->finished)
         return;
-    if (_shutdownComplete || (execution->origin != QStringLiteral("operator") && aiExecutionBlocked())) {
+    if (_shutdownComplete || !_policyAllowed(execution)) {
         _finishExecution(execution, false, tr("自动执行许可已失效"));
         return;
     }
@@ -1618,9 +1696,10 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
         return;
     }
     SwarmAction action = execution->actions[execution->index++];
+    execution->activeAction = action;
     action.targetIds.removeIf([execution](int id) { return execution->withdrawn.contains(id); });
     if (action.targetIds.isEmpty()) {
-        QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+        _continueExecution(execution);
         return;
     }
     QScopedValueRollback<bool> dispatchScope(_automationDispatchInProgress, true);
@@ -1633,10 +1712,8 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
         return;
     }
     for (int id : action.targetIds) {
-        if (!execution->targets.value(id) ||
-            execution->targets.value(id) != MultiVehicleManager::instance()->getVehicleById(id) ||
-            execution->generations.value(id) != _commandGenerations.value(id)) {
-            _finishExecution(execution, false, tr("执行目标或指令代数已变化"));
+        if (!_executionAllowed(execution, action, id)) {
+            _finishExecution(execution, false, execution->failureReason);
             return;
         }
     }
@@ -1646,6 +1723,7 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
             return;
         }
         const quint64 batch = _missionPlanner->batchId() + 1;
+        execution->plannerBatch = batch;
         connect(
             _missionPlanner, &SwarmMissionPlanner::batchFinished, execution->context,
             [this, execution, batch, ids = action.targetIds](quint64 completed, bool success, const QString& reason) {
@@ -1655,8 +1733,8 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
                     _finishExecution(execution, false, reason);
                 else {
                     for (int id : ids)
-                        execution->plannedMissions[id] = _missionPlanner->verifiedRevision(id);
-                    QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+                        execution->plannedMissions[id] = _missionPlanner->verifiedSnapshot(id);
+                    _continueExecution(execution);
                 }
             });
         const auto& p = action.params;
@@ -1667,8 +1745,78 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
                                p.value(QStringLiteral("center_lon")).toDouble()),
                 p.value(QStringLiteral("length")).toDouble(), p.value(QStringLiteral("width")).toDouble(),
                 p.value(QStringLiteral("angle")).toDouble(),
-                p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString()))
+                p.value(QStringLiteral("assign"), QStringLiteral("sequential")).toString(),
+                [this, execution, action](int id) { return _executionAllowed(execution, action, id); }))
             _finishExecution(execution, false, tr("覆盖上传未受理"));
+        return;
+    }
+    if (action.type == QStringLiteral("start_mission") || action.type == QStringLiteral("clear_missions")) {
+        const bool clear = action.type == QStringLiteral("clear_missions");
+        const quint64 batch = _missionPlanner->batchId() + 1;
+        // A rejected busy batch must never become owned by this execution.
+        if (_missionPlanner->busy()) {
+            _finishExecution(execution, false, tr("任务读写忙碌，整批请求已拒绝"));
+            return;
+        }
+        connect(_missionPlanner, &SwarmMissionPlanner::batchFinished, execution->context,
+                [this, execution, action, clear, batch](quint64 completed, bool success, const QString& reason) {
+                    if (completed != batch || execution->finished)
+                        return;
+                    execution->plannerBatch = 0;
+                    if (!success) {
+                        _finishExecution(execution, false, reason);
+                        return;
+                    }
+                    if (clear) {
+                        for (int id : action.targetIds)
+                            if (!execution->withdrawn.contains(id))
+                                emit executionProgress(execution->id, id, QStringLiteral("verified"));
+                        _continueExecution(execution);
+                        return;
+                    }
+                    for (int id : action.targetIds) {
+                        if (execution->withdrawn.contains(id))
+                            continue;
+                        const auto snapshot = _missionPlanner->verifiedSnapshot(id);
+                        if (snapshot.empty() || (execution->plannedMissions.contains(id) &&
+                                                 !execution->plannedMissions.value(id).equivalent(snapshot))) {
+                            execution->failureCode = QStringLiteral("mission_changed");
+                            _finishExecution(execution, false, tr("机载任务为空或与已确认航线不一致，请重新规划上传"));
+                            return;
+                        }
+                        execution->validatedMissions[id] = snapshot;
+                        const auto target = execution->targets.value(id);
+                        execution->contentRevisions[id] =
+                            target && target->missionManager() ? target->missionManager()->contentRevision() : 0;
+                    }
+                    // Validate every bound target before sending the first mode/arm/start request.
+                    for (int id : action.targetIds) {
+                        if (!execution->withdrawn.contains(id) && !_executionAllowed(execution, action, id)) {
+                            _finishExecution(execution, false, execution->failureReason);
+                            return;
+                        }
+                    }
+                    _dispatchExecutionAction(execution, action);
+                });
+        execution->plannerBatch = batch;
+        if (!_missionPlanner->readMissionBatch(action.targetIds, clear, [this, execution, action](int id) {
+                return _executionAllowed(execution, action, id);
+            })) {
+            execution->plannerBatch = 0;
+            _finishExecution(execution, false, tr("任务管理器忙碌或目标许可无效，整批请求已拒绝"));
+        }
+        return;
+    }
+    _dispatchExecutionAction(execution, action);
+}
+
+void SwarmManager::_dispatchExecutionAction(const std::shared_ptr<Execution>& execution, SwarmAction action)
+{
+    if (execution->finished)
+        return;
+    action.targetIds.removeIf([execution](int id) { return execution->withdrawn.contains(id); });
+    if (action.targetIds.isEmpty()) {
+        _continueExecution(execution);
         return;
     }
     static const QSet<QString> commands{QStringLiteral("arm"),     QStringLiteral("disarm"),
@@ -1694,7 +1842,7 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
             _finishExecution(execution, false, tr("动作被拒绝"));
             return;
         }
-        QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+        _continueExecution(execution);
         return;
     }
     auto pending = std::make_shared<int>(action.targetIds.size());
@@ -1703,31 +1851,31 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
             return;
         if (!ok && !execution->withdrawn.contains(id)) {
             emit executionProgress(execution->id, id, QStringLiteral("failed"));
-            _finishExecution(execution, false, tr("%1 号机动作失败；已执行成员保持当前任务").arg(id));
+            _finishExecution(execution, false,
+                             execution->failureReason.isEmpty() ? tr("%1 号机动作失败；已执行成员保持当前任务").arg(id)
+                                                                : execution->failureReason);
             return;
         }
         emit executionProgress(
             execution->id, id,
             execution->withdrawn.contains(id) ? QStringLiteral("withdrawn") : QStringLiteral("accepted"));
         if (--*pending == 0)
-            QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+            _continueExecution(execution);
     };
     int delay = 0;
     for (int id : action.targetIds) {
         QPointer<Vehicle> target = execution->targets.value(id);
-        auto allowed = [this, execution, target, id, recovery] {
-            return !execution->finished && !_shutdownComplete && target && !execution->withdrawn.contains(id) &&
-                   execution->generations.value(id) == _commandGenerations.value(id) &&
-                   (recovery || !_automationExcludedIds.contains(id)) &&
-                   (execution->origin == QStringLiteral("operator") || !aiExecutionBlocked()) &&
-                   _lease.canAutomate(id, SwarmClock::nowMs());
-        };
+        auto allowed = [this, execution, action, id] { return _executionAllowed(execution, action, id); };
         QTimer::singleShot(delay, execution->context, [this, execution, action, target, id, allowed, done] {
             if (!allowed()) {
                 done(id, false);
                 return;
             }
             emit executionProgress(execution->id, id, QStringLiteral("dispatching"));
+            if (!allowed()) {
+                done(id, false);
+                return;
+            }
             SwarmAuditLogger::instance()->logActionDispatch(action.type, action.params, action.description);
             Vehicle* vehicle = target.data();
             if (!vehicle) {
@@ -1737,9 +1885,7 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
             const auto finished = [done, id](bool ok) { done(id, ok); };
             if (action.type == QStringLiteral("start_mission")) {
                 if (!vehicle->missionManager() || vehicle->missionManager()->inProgress() ||
-                    vehicle->missionManager()->missionItems().isEmpty() ||
-                    (execution->plannedMissions.contains(id) &&
-                     execution->plannedMissions.value(id) != vehicle->missionManager()->executionRevision())) {
+                    !execution->validatedMissions.contains(id)) {
                     done(id, false);
                     return;
                 }
@@ -1777,8 +1923,97 @@ void SwarmManager::_advanceExecution(const std::shared_ptr<Execution>& execution
                                             21196);
                 done(id, true);
             }
+            emit actionDispatched(execution->id, id, action.type);
         });
         if (action.type != QStringLiteral("pause") && action.type != QStringLiteral("emergency_disarm"))
             delay += action.type == QStringLiteral("takeoff") ? _takeoffStaggerMs : _commandIntervalMs;
     }
+}
+
+void SwarmManager::_continueExecution(const std::shared_ptr<Execution>& execution)
+{
+    execution->activeAction.reset();
+    execution->validatedMissions.clear();
+    execution->contentRevisions.clear();
+    execution->plannerBatch = 0;
+    if (!execution->finished)
+        QTimer::singleShot(0, execution->context, [this, execution] { _advanceExecution(execution); });
+}
+
+bool SwarmManager::_policyAllowed(const std::shared_ptr<Execution>& execution) const
+{
+    if (execution->origin == QStringLiteral("operator") && execution->approval == ExecutionApproval::OperatorConfirmed)
+        return true;
+    if (aiExecutionBlocked())
+        return false;
+    auto remaining = execution->actions.mid(execution->index);
+    if (execution->activeAction)
+        remaining.prepend(*execution->activeAction);
+    return execution->approval == ExecutionApproval::OperatorConfirmed || !needsConfirmation(remaining);
+}
+
+void SwarmManager::_enforcePolicy()
+{
+    const auto executions = _executions.values();
+    for (const auto& execution : executions) {
+        if (!_policyAllowed(execution)) {
+            execution->failureCode = QStringLiteral("policy_revoked");
+            _finishExecution(execution, false, tr("自主策略已收紧，未获许可的后续动作已取消"));
+        }
+    }
+    SwarmAction formation;
+    formation.type = QStringLiteral("start_formation");
+    if (_formationAutomated && (aiExecutionBlocked() ||
+                                (_formationApproval == ExecutionApproval::Automatic && needsConfirmation({formation}))))
+        _formation->stop();
+}
+
+bool SwarmManager::_executionAllowed(const std::shared_ptr<Execution>& execution, const SwarmAction& action, int id)
+{
+    auto fail = [&](const QString& code, const QString& reason) {
+        execution->failureCode = code;
+        execution->failureReason = reason;
+        return false;
+    };
+    if (execution->finished || _shutdownComplete || execution->withdrawn.contains(id))
+        return fail(QStringLiteral("cancelled"), tr("执行已取消"));
+    if (!_policyAllowed(execution))
+        return fail(QStringLiteral("policy_revoked"), tr("当前自主策略要求重新确认"));
+    const auto target = execution->targets.value(id);
+    if (!target || target != MultiVehicleManager::instance()->getVehicleById(id) ||
+        execution->generations.value(id) != _commandGenerations.value(id))
+        return fail(QStringLiteral("target_changed"), tr("执行目标或指令代数已变化"));
+    if (!_lease.canAutomate(id, SwarmClock::nowMs()))
+        return fail(QStringLiteral("lease_revoked"), tr("控制租约已失效"));
+    SwarmAction single = action;
+    single.targetIds = {id};
+    const auto violations = _planViolations({single}, 0, 0);
+    for (const auto& violation : violations)
+        if (violation.severity == QStringLiteral("error"))
+            return fail(QStringLiteral("constraint_changed"), violation.message);
+    if (action.type == QStringLiteral("start_mission") && execution->validatedMissions.contains(id)) {
+        if (!target || !target->missionManager() || target->missionManager()->inProgress())
+            return fail(QStringLiteral("mission_busy"), tr("航线核验后出现新的任务读写"));
+        auto* mission = target->missionManager();
+        if (execution->contentRevisions.value(id) != mission->contentRevision()) {
+            const auto current = SwarmMissionSnapshot::capture(mission->missionItems(),
+                                                               target->firmwarePlugin()->sendHomePositionToVehicle());
+            if (!execution->validatedMissions.value(id).equivalent(current))
+                return fail(QStringLiteral("mission_changed"), tr("已核验航线内容发生变化"));
+            execution->contentRevisions[id] = mission->contentRevision();
+        }
+        const auto config = _constraintConfig();
+        if (!target || execution->finished || !_policyAllowed(execution))
+            return fail(QStringLiteral("cancelled"), tr("执行已取消"));
+        const auto states = _vehicleStates(QList<int>{id});
+        const auto reason = execution->validatedMissions.value(id).validate(
+            target.data(), config, states.isEmpty() ? -1 : states.first().batteryPct);
+        if (!reason.isEmpty())
+            return fail(QStringLiteral("mission_constraint"), reason);
+    }
+    // Refreshing configuration can notify observers; recheck cancellation after those callbacks.
+    return !execution->finished && !execution->withdrawn.contains(id) && target &&
+           target == MultiVehicleManager::instance()->getVehicleById(id) &&
+           execution->generations.value(id) == _commandGenerations.value(id) &&
+           _lease.canAutomate(id, SwarmClock::nowMs()) && _policyAllowed(execution);
 }

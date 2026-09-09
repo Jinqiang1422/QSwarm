@@ -385,6 +385,7 @@ void SwarmRegressionTest::coverageRoundTripMustRetainTakeoff_data()
 
 void SwarmRegressionTest::missionCompletionRequiresCurrentExecutionEvidence()
 {
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->homePosition().isValid(), TestTimeout::longMs());
     coverageRoundTripMustRetainTakeoff();
     QStringList errors;
     const auto actions =
@@ -440,6 +441,8 @@ void SwarmRegressionTest::durationUsesMonotonicDeadline()
                             {{"hold", {}, "duration", {{"seconds", 100}, {"grace_sec", 0}, {"timeout_sec", 200}}}},
                             true));
     QTRY_VERIFY_WITH_TIMEOUT(!execution.isEmpty(), TestTimeout::longMs());
+    // Deliver the queued execution completion before advancing the simulated stage clock.
+    QCoreApplication::sendPostedEvents(task, QEvent::MetaCall);
     *now += 99000;
     QVERIFY(QMetaObject::invokeMethod(task, "_tick"));
     QVERIFY(finished.isEmpty());
@@ -478,8 +481,17 @@ void SwarmRegressionTest::lateTakeoffAcknowledgementCannotArmWithdrawnTarget()
     QVERIFY(!vehicle()->armed());
 }
 
+void SwarmRegressionTest::missionReplacementBlocksLaterStart_data()
+{
+    QTest::addColumn<bool>("replace");
+    QTest::newRow("replacement") << true;
+    QTest::newRow("same-content-readback") << false;
+}
+
 void SwarmRegressionTest::missionReplacementBlocksLaterStart()
 {
+    QFETCH(bool, replace);
+    QTRY_VERIFY_WITH_TIMEOUT(vehicle()->homePosition().isValid(), TestTimeout::longMs());
     QStringList errors;
     const auto coverage = _manager->parseAndValidate(
         {QJsonObject{{"type", "plan_coverage"}, {"length", 30}, {"width", 30}}}, vehicle()->coordinate(), errors);
@@ -494,14 +506,28 @@ void SwarmRegressionTest::missionReplacementBlocksLaterStart()
     QTRY_VERIFY_WITH_TIMEOUT(task->waitingForProceed(), TestTimeout::longMs());
     verifyExpectedLogMessage();
     auto* mission = vehicle()->missionManager();
+    if (replace) {
+        _manager->missionPlanner()->setSurveyAltitude(45);
+        const auto items = _manager->missionPlanner()->buildCoverageMissionItems(
+            vehicle()->homePosition(), vehicle()->coordinate(), 30, 30, 0, -15, 15);
+        QSignalSpy sent(mission, &MissionManager::sendComplete);
+        mission->writeMissionItems(items);
+        QTRY_VERIFY_WITH_TIMEOUT(!sent.isEmpty(), TestTimeout::longMs());
+        QVERIFY(!sent.first()[0].toBool());
+    }
     QSignalSpy read(mission, &MissionManager::newMissionItemsAvailable);
     mission->loadFromVehicle();
     QTRY_VERIFY_WITH_TIMEOUT(!read.isEmpty(), TestTimeout::longMs());
     mockLink()->clearReceivedMavCommandCounts();
+    QSignalSpy executed(_manager.get(), &SwarmManager::executionFinished);
     task->proceed();
-    QVERIFY(task->blocked());
-    QVERIFY(!vehicle()->armed());
-    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!executed.isEmpty(), TestTimeout::longMs());
+    QCOMPARE(task->blocked(), replace);
+    QCOMPARE(executed.last()[1].toBool(), !replace);
+    if (replace) {
+        QVERIFY(!vehicle()->armed());
+        QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    }
 }
 
 void SwarmRegressionTest::formationLeaderWithdrawalKeepsRemainingMembers()

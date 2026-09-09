@@ -42,7 +42,7 @@ inline double haversineM(double lat1, double lon1, double lat2, double lon2)
     const double dLon = degToRad(lon2 - lon1);
     const double a = std::sin(dLat / 2) * std::sin(dLat / 2) +
                      std::cos(degToRad(lat1)) * std::cos(degToRad(lat2)) * std::sin(dLon / 2) * std::sin(dLon / 2);
-    return 2.0 * kEarthR * std::asin(std::sqrt(a));
+    return 2.0 * kEarthR * std::asin(std::sqrt(qBound(0.0, a, 1.0)));
 }
 
 /// 等距圆柱近似（短距离米级换算，用于成本矩阵/局部几何）
@@ -79,6 +79,11 @@ inline bool pointInPolygon(double lat, double lon, const QList<QPair<double, dou
     for (int i = 0, j = polygon.count() - 1; i < polygon.count(); j = i++) {
         const double yi = polygon.at(i).first, xi = polygon.at(i).second;
         const double yj = polygon.at(j).first, xj = polygon.at(j).second;
+        // Include boundaries in the polygon: allowed edges remain allowed, exclusion edges stay prohibited.
+        const double cross = (xj - xi) * (lat - yi) - (yj - yi) * (lon - xi);
+        if (std::abs(cross) <= 1e-12 && lat >= qMin(yi, yj) - 1e-12 && lat <= qMax(yi, yj) + 1e-12 &&
+            lon >= qMin(xi, xj) - 1e-12 && lon <= qMax(xi, xj) + 1e-12)
+            return true;
         const bool intersect = ((yi > lat) != (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
         if (intersect) {
             inside = !inside;
@@ -87,10 +92,16 @@ inline bool pointInPolygon(double lat, double lon, const QList<QPair<double, dou
     return inside;
 }
 
-/// 经纬度是否在合法地理范围内（[-90,90]×[-180,180]，且非 (0,0) 占位）
+/// A geographic range check; (0,0) is a real coordinate and is accepted.
+inline bool isFiniteLatLon(double lat, double lon)
+{
+    return std::isfinite(lat) && std::isfinite(lon) && std::abs(lat) <= 90.0 && std::abs(lon) <= 180.0;
+}
+
+/// Legacy planning inputs use (0,0) to represent an unspecified reference.
 inline bool isValidLatLon(double lat, double lon)
 {
-    if (!std::isfinite(lat) || !std::isfinite(lon) || lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
+    if (!isFiniteLatLon(lat, lon)) {
         return false;
     }
     return !(std::abs(lat) < 1e-9 && std::abs(lon) < 1e-9);  // (0,0) 视为无效占位

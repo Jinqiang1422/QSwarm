@@ -43,4 +43,6 @@ private:
     QTcpServer* _server = nullptr;
     QString _token;
     QHash<QTcpSocket*, QByteArray> _buffers;
+    QJsonObject _dispatchCounts;
+    QJsonObject _executionResult;
 };

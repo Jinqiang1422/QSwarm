@@ -6,7 +6,10 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonParseError>
+#include <QtCore/QMetaEnum>
+#include <QtCore/QSaveFile>
 #include <QtCore/QSet>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtCore/QVariantMap>
 #include <QtGui/QGuiApplication>
@@ -91,6 +94,17 @@ SwarmAcceptanceServer::SwarmAcceptanceServer(SwarmManager* manager)
     : QObject(manager), _manager(manager), _server(new QTcpServer(this))
 {
     (void) connect(_server, &QTcpServer::newConnection, this, &SwarmAcceptanceServer::_onNewConnection);
+    connect(manager, &SwarmManager::actionDispatched, this, [this](quint64, int vehicleId, const QString& type) {
+        const auto key = QString::number(vehicleId);
+        auto counts = _dispatchCounts.value(key).toObject();
+        counts[type] = counts.value(type).toInt() + 1;
+        _dispatchCounts[key] = counts;
+    });
+    connect(manager, &SwarmManager::executionFinished, this, [this](quint64 id, bool success, const QString& reason) {
+        _executionResult = {{QStringLiteral("execution_id"), QString::number(id)},
+                            {QStringLiteral("success"), success},
+                            {QStringLiteral("reason"), reason}};
+    });
 }
 
 bool SwarmAcceptanceServer::startFromEnvironment()
@@ -193,6 +207,35 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
     if (command == QStringLiteral("configure_px4_sitl")) {
         return _configurePX4SITL();
     }
+    if (command == QStringLiteral("configure_execution_test")) {
+        if (request.contains(QStringLiteral("autonomy_level"))) {
+            const int level = request.value(QStringLiteral("autonomy_level")).toInt();
+            if (level < 1 || level > 3)
+                return errorResponse(QStringLiteral("invalid_autonomy_level"));
+            _manager->setAutonomyLevel(level);
+        }
+        if (request.contains(QStringLiteral("allowed_types"))) {
+            QStringList types;
+            for (const auto& value : request.value(QStringLiteral("allowed_types")).toArray())
+                types.append(value.toString());
+            _manager->setL3AllowedTypes(types);
+        }
+        if (request.contains(QStringLiteral("command_interval_ms")))
+            _manager->setCommandIntervalMs(request.value(QStringLiteral("command_interval_ms")).toInt());
+        if (request.value(QStringLiteral("authorize_targets")).toBool())
+            _manager->authorizeTaskTargets(_manager->boundTargetIds());
+        if (request.contains(QStringLiteral("constraints"))) {
+            const auto config = request.value(QStringLiteral("constraints")).toObject();
+            if (!SwarmConstraintChecker::configFromJson(config).error.isEmpty())
+                return errorResponse(QStringLiteral("invalid_constraints"));
+            QSaveFile file(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           QStringLiteral("/SwarmConfig/fences.json"));
+            const auto bytes = QJsonDocument(config).toJson();
+            if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
+                return errorResponse(QStringLiteral("cannot_write_constraints"));
+        }
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
     if (command == QStringLiteral("plan_coverage")) {
         const QGeoCoordinate center = requestCoordinate(request);
         const bool accepted = _manager->planAndUploadCoverage(
@@ -203,8 +246,8 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
         return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
     }
     if (command == QStringLiteral("clear_missions")) {
-        _manager->clearAllMissions();
-        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+        const bool accepted = _manager->clearAllMissions();
+        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
     }
     if (command == QStringLiteral("arm_all")) {
         _manager->armAll(true);
@@ -360,6 +403,7 @@ QJsonObject SwarmAcceptanceServer::_executeActions(const QJsonObject& request) c
         actions, origin,
         confirmed ? SwarmManager::ExecutionApproval::OperatorConfirmed : SwarmManager::ExecutionApproval::Automatic);
     return {{QStringLiteral("ok"), accepted},
+            {QStringLiteral("execution_id"), QString::number(_manager->lastExecutionId())},
             {QStringLiteral("action_count"), actions.count()},
             {QStringLiteral("warnings"), QJsonArray::fromStringList(warnings)}};
 }
@@ -416,6 +460,9 @@ QJsonObject SwarmAcceptanceServer::_status() const
                      {QStringLiteral("qml_ready"), windowCount > 0},
                      {QStringLiteral("situation_layer_count"), rendered.value(QStringLiteral("situation_layers"))}}},
         {QStringLiteral("vehicle_count"), vehiclesJson.count()},
+        {QStringLiteral("dispatch_counts"), _dispatchCounts},
+        {QStringLiteral("execution"), _executionResult},
+        {QStringLiteral("perception_diagnostics"), QJsonObject::fromVariantMap(_manager->perceptionDiagnostics())},
         {QStringLiteral("vehicles"), vehiclesJson},
         {QStringLiteral("formation"),
          QJsonObject{{QStringLiteral("active"), formation->active()},
@@ -431,6 +478,14 @@ QJsonObject SwarmAcceptanceServer::_status() const
              {QStringLiteral("status"), QJsonObject::fromVariantMap(_manager->missionPlanner()->missionStatus())}}},
         {QStringLiteral("task"),
          QJsonObject{{QStringLiteral("running"), taskController->running()},
+                     {QStringLiteral("blocked"), taskController->blocked()},
+                     {QStringLiteral("task_id"), taskController->taskId()},
+                     {QStringLiteral("outcome"),
+                      QString::fromLatin1(QMetaEnum::fromType<SwarmTaskController::Outcome>().valueToKey(
+                          static_cast<int>(taskController->outcome())))},
+                     {QStringLiteral("result"), QJsonObject::fromVariantMap(taskController->result())},
+                     {QStringLiteral("dispatches"), QJsonArray::fromVariantList(taskController->dispatchRecords())},
+                     {QStringLiteral("persistence_error"), taskController->persistenceError()},
                      {QStringLiteral("name"), taskController->taskName()},
                      {QStringLiteral("stage_index"), taskController->currentStageIndex()},
                      {QStringLiteral("state"), taskController->stateText()},

@@ -19,6 +19,7 @@ MissionManager::MissionManager(Vehicle* vehicle)
         if (!active)
             return;
         ++_executionRevision;
+        ++_contentRevision;
         _executionRequested = false;
         _executionActiveObserved = false;
         _missionState = MISSION_STATE_UNKNOWN;
@@ -289,6 +290,7 @@ void MissionManager::_handleMissionCurrent(const mavlink_message_t& message)
     mavlink_msg_mission_current_decode(&message, &missionCurrent);
     if (_missionId != 0 && missionCurrent.mission_id != 0 && _missionId != missionCurrent.mission_id) {
         ++_executionRevision;
+        ++_contentRevision;
         _executionRequested = false;
         _executionActiveObserved = false;
     }

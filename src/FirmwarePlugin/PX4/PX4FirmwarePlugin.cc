@@ -13,6 +13,7 @@
 #include "ParameterMetaData.h"
 #include "PlanViewSettings.h"
 #include "QGCLoggingCategory.h"
+#include "RallyPointManager.h"
 #include "SettingsManager.h"
 #include "Vehicle.h"
 #include "px4_custom_mode.h"
@@ -838,6 +839,42 @@ QVariant PX4FirmwarePlugin::expandedToolbarIndicatorSource(const Vehicle* /*vehi
     }
 
     return QVariant();
+}
+
+bool PX4FirmwarePlugin::missionReturnPath(Vehicle* vehicle, const QGeoCoordinate& from, QList<QGeoCoordinate>& path,
+                                          double& dwellSeconds, QString& reason) const
+{
+    path.clear();
+    dwellSeconds = 0;
+    reason = tr("PX4 返航参数、Home 或安全点不支持可靠校验");
+    if (!vehicle || !vehicle->multiRotor() || !from.isValid() || !std::isfinite(from.altitude()) ||
+        !vehicle->homePosition().isValid() || !std::isfinite(vehicle->homePosition().altitude()) ||
+        !vehicle->parameterManager() || !vehicle->parameterManager()->parametersReady() ||
+        !vehicle->rallyPointManager() || vehicle->rallyPointManager()->inProgress() ||
+        !vehicle->rallyPointManager()->points().isEmpty())
+        return false;
+    const auto value = [vehicle](const QString& name) {
+        auto* parameters = vehicle->parameterManager();
+        if (!parameters->parameterExists(ParameterManager::defaultComponentId, name))
+            return qQNaN();
+        return parameters->getParameter(ParameterManager::defaultComponentId, name)->rawValue().toDouble();
+    };
+    const double type = value(QStringLiteral("RTL_TYPE"));
+    const double altitude = value(QStringLiteral("RTL_RETURN_ALT"));
+    const double descent = value(QStringLiteral("RTL_DESCEND_ALT"));
+    const double delay = value(QStringLiteral("RTL_LAND_DELAY"));
+    if (type != 0 || !std::isfinite(altitude) || altitude < 0 || !std::isfinite(descent) || descent < 0 ||
+        !std::isfinite(delay) || delay < 0)
+        return false;
+    const auto home = vehicle->homePosition();
+    const double maximum = qMax(from.altitude(), home.altitude() + qMax(altitude, descent));
+    QGeoCoordinate climb = from, returning = home;
+    climb.setAltitude(maximum);
+    returning.setAltitude(maximum);
+    path = {climb, returning, home};
+    dwellSeconds = delay;
+    reason.clear();
+    return true;
 }
 
 void PX4FirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,

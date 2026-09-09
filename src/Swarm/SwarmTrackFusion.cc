@@ -1,6 +1,7 @@
 #include "SwarmTrackFusion.h"
 
 #include <QtCore/QtMath>
+#include <limits>
 
 #include "SwarmTypes.h"
 
@@ -78,12 +79,41 @@ void SwarmTrackFusion::_rebuildTrackIndexes()
         _trackIndexes.insert(_tracks.at(index).fusedId, index);
     }
 
-    for (auto it = _sourceAssociations.begin(); it != _sourceAssociations.end();) {
-        if (_trackIndexes.contains(it.value())) {
-            ++it;
-        } else {
-            it = _sourceAssociations.erase(it);
+    const auto keys = _sourceAssociations.keys();
+    for (const auto& key : keys) {
+        if (!_trackIndexes.contains(_sourceAssociations.value(key)))
+            _removeSource(key);
+    }
+}
+
+void SwarmTrackFusion::_removeSource(const QString& key)
+{
+    const int id = _sourceAssociations.take(key);
+    auto it = _contributors.find(id);
+    if (it != _contributors.end()) {
+        it->remove(key);
+        if (it->isEmpty())
+            _contributors.erase(it);
+    }
+    _sourceReceived.remove(key);
+    _sourceTimestamps.remove(key);
+    _sourceMetadata.remove(key);
+}
+
+void SwarmTrackFusion::_refreshContributors(FusedTrack& track, qint64 monoMs)
+{
+    const auto keys = _contributors.value(track.fusedId);
+    track.sensors.clear();
+    track.sourceTrackIds.clear();
+    for (const auto& key : keys) {
+        if (monoMs - _sourceReceived.value(key) > ContributorLifetimeMs) {
+            _removeSource(key);
+            continue;
         }
+        const auto metadata = _sourceMetadata.value(key);
+        track.sensors.insert(metadata.first);
+        if (!track.sourceTrackIds.contains(metadata.second))
+            track.sourceTrackIds.append(metadata.second);
     }
 }
 
@@ -98,8 +128,8 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
 {
     // 感知输入校验闸门(纵深防御):丢弃非法坐标/低置信航迹,防伪造或污染的外部
     // 航迹进入融合 → COP → LLM 态势解读(与指挥侧输入闸门对称);须在设参考点前拦截。
-    if (!SwarmTypes::isValidLatLon(r.lat, r.lon) || !std::isfinite(r.confidence) || !std::isfinite(r.ve) ||
-        !std::isfinite(r.vn) || r.confidence > 1.0 || r.confidence < _cfg.minConfidence) {
+    if (!SwarmTypes::isFiniteLatLon(r.lat, r.lon) || !std::isfinite(r.confidence) || !std::isfinite(r.ve) ||
+        !std::isfinite(r.vn) || r.confidence > 1.0 || r.confidence < _cfg.minConfidence || r.streamId.size() > 256) {
         _rejectedCount++;
         return -1;
     }
@@ -114,8 +144,13 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
         ++_rejectedCount;
         return -1;
     }
-    _sourceTimestamps[sourceKey] = r.timeUsec;
-    _sourceReceived[sourceKey] = monoMs;
+    if (!_sourceReceived.contains(sourceKey) && _sourceReceived.size() >= MaxSources) {
+        prune(monoMs);
+        if (_sourceReceived.size() >= MaxSources) {
+            ++_capacityRejectedCount;
+            return -1;
+        }
+    }
     int idx = -1;
     const int knownFusedId = _sourceAssociations.value(sourceKey, -1);
     const int knownIndex = _trackIndexes.value(knownFusedId, -1);
@@ -126,9 +161,23 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
         }
     }
     if (idx < 0) {
-        _sourceAssociations.remove(sourceKey);
+        _removeSource(sourceKey);
         idx = _associate(eastM, northM, monoMs);
     }
+    if (idx >= 0) {
+        _refreshContributors(_tracks[idx], monoMs);
+        const auto& contributors = _contributors.value(_tracks[idx].fusedId);
+        if (!contributors.contains(sourceKey) && contributors.size() >= MaxContributors) {
+            ++_capacityRejectedCount;
+            return -1;
+        }
+    } else if (_tracks.size() >= MaxTracks || _nextFusedId == std::numeric_limits<int>::max()) {
+        ++_capacityRejectedCount;
+        return -1;
+    }
+    _sourceTimestamps[sourceKey] = r.timeUsec;
+    _sourceReceived[sourceKey] = monoMs;
+    _sourceMetadata[sourceKey] = {r.sensorId, r.trackId};
     if (idx < 0) {  // 新建融合航迹
         FusedTrack t;
         t.fusedId = _nextFusedId++;
@@ -147,11 +196,13 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
         _tracks.append(t);
         _trackIndexes.insert(t.fusedId, _tracks.size() - 1);
         _sourceAssociations.insert(sourceKey, t.fusedId);
+        _contributors[t.fusedId].insert(sourceKey);
         return t.fusedId;
     }
 
     FusedTrack& t = _tracks[idx];
     _sourceAssociations.insert(sourceKey, t.fusedId);
+    _contributors[t.fusedId].insert(sourceKey);
     // 置信度加权融合（权重 = 上报置信度，融合置信度递推）
     const double w = qBound(0.05, r.confidence, 1.0);
     const double k = w / (t.confidence + w);  // 归一化新息权重
@@ -166,11 +217,9 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
     if (r.category != 0) {  // 非 unknown 类别覆盖
         t.category = r.category;
     }
-    t.sensors.insert(r.sensorId);
-    if (!t.sourceTrackIds.contains(r.trackId)) {
-        t.sourceTrackIds.append(r.trackId);
-    }
-    t.hits++;
+    _refreshContributors(t, monoMs);
+    if (t.hits < std::numeric_limits<int>::max())
+        ++t.hits;
     t.lastSeenMs = monoMs;
     if (t.state == QStringLiteral("tentative") && t.hits >= _cfg.minHits) {
         t.state = QStringLiteral("confirmed");
@@ -182,15 +231,13 @@ int SwarmTrackFusion::ingest(const TrackReport& r, qint64 monoMs)
 
 void SwarmTrackFusion::prune(qint64 monoMs)
 {
-    for (auto it = _sourceReceived.begin(); it != _sourceReceived.end();) {
-        if (monoMs - it.value() > _cfg.dropMs) {
-            _sourceAssociations.remove(it.key());
-            _sourceTimestamps.remove(it.key());
-            it = _sourceReceived.erase(it);
-        } else
-            ++it;
+    const auto keys = _sourceReceived.keys();
+    for (const auto& key : keys) {
+        if (monoMs - _sourceReceived.value(key) > ContributorLifetimeMs)
+            _removeSource(key);
     }
     for (FusedTrack& t : _tracks) {
+        _refreshContributors(t, monoMs);
         const qint64 age = monoMs - t.lastSeenMs;
         if (t.state != QStringLiteral("tentative") && age > _cfg.coastMs) {
             t.state = QStringLiteral("coasting");
@@ -212,12 +259,15 @@ void SwarmTrackFusion::clear()
     _sourceAssociations.clear();
     _sourceTimestamps.clear();
     _sourceReceived.clear();
+    _sourceMetadata.clear();
+    _contributors.clear();
     _trackIndexes.clear();
     _refLat = 0.0;
     _refLon = 0.0;
     _refSet = false;
     _nextFusedId = 1;
     _rejectedCount = 0;
+    _capacityRejectedCount = 0;
 }
 
 QList<SwarmTrackFusion::FusedTrack> SwarmTrackFusion::tracks() const

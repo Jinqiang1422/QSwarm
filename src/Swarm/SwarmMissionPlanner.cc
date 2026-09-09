@@ -99,7 +99,8 @@ QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCoo
 }
 
 bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
-                                                double angleDeg, const QString& assignMode)
+                                                double angleDeg, const QString& assignMode,
+                                                std::function<bool(int)> allowed)
 {
     if (busy() || !center.isValid() || !std::isfinite(lengthMeters) || !std::isfinite(widthMeters) ||
         !std::isfinite(angleDeg) || !std::isfinite(_surveyAltitude) || !std::isfinite(_surveySpacing) ||
@@ -115,14 +116,14 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
         _vehicleAutomationAllowed
             ? mvm->vehicles()
             : ((mvm->selectedVehicles()->count() > 0) ? mvm->selectedVehicles() : mvm->vehicles());
-    QList<Vehicle*> targets;
+    QList<QPointer<Vehicle>> targets;
     for (int i = 0; i < model->count(); i++) {
         Vehicle* vehicle = qobject_cast<Vehicle*>(model->get(i));
         if (vehicle && (!_vehicleAutomationAllowed || _vehicleAutomationAllowed(vehicle->id()))) {
             targets.append(vehicle);
         }
     }
-    std::sort(targets.begin(), targets.end(), [](const Vehicle* a, const Vehicle* b) { return a->id() < b->id(); });
+    std::sort(targets.begin(), targets.end(), [](const auto& a, const auto& b) { return a->id() < b->id(); });
 
     const int vehicleCount = targets.count();
     if (vehicleCount == 0) {
@@ -135,16 +136,20 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
         return false;
     }
 
-    for (Vehicle* vehicle : targets) {
-        if (!vehicle || !vehicle->missionManager() || vehicle->missionManager()->inProgress()) {
+    const auto previousBatch = _batchId;
+    for (const auto& vehicle : targets) {
+        if (!vehicle || !vehicle->missionManager() || vehicle->missionManager()->inProgress() ||
+            (allowed && !allowed(vehicle->id())) || !vehicle || busy() || previousBatch != _batchId) {
             emit plannerFeedback(tr("任务规划失败：目标任务管理器忙碌"));
             return false;
         }
     }
     ++_batchId;
+    const auto batch = _batchId;
     _batchFailed = false;
     _verifiedCount = 0;
     _verifiedRevisions.clear();
+    _verifiedSnapshots.clear();
     _uploadStates.clear();
 
     // 沿垂直航线方向把区域均匀切分为 vehicleCount 个条带
@@ -197,6 +202,13 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     QList<QList<MissionItem*>> missions;
 
     for (int v = 0; v < vehicleCount; v++) {
+        const auto target = targets[v];
+        if (_batchId != batch || !target || (allowed && !allowed(target->id())) || _batchId != batch || !target ||
+            target->missionManager()->inProgress()) {
+            for (const auto& items : missions)
+                qDeleteAll(items);
+            return false;
+        }
         const double bandMin = -widthMeters / 2.0 + bandOfVehicle[v] * bandWidth;
         const double bandMax = bandMin + bandWidth;
         const QGeoCoordinate homeCoord = targets[v]->coordinate().isValid() ? targets[v]->coordinate() : center;
@@ -211,12 +223,15 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     }
     // Register every member before any synchronous rejection can complete the batch.
     for (int v = 0; v < vehicleCount; ++v)
-        _trackUpload(targets[v], missions[v]);
+        _trackUpload(targets[v], missions[v], allowed);
+    emit missionStatusChanged();
     for (int v = 0; v < vehicleCount; ++v) {
-        if (_batchFailed || !targets[v] || targets[v]->missionManager()->inProgress()) {
+        if (_batchId != batch || _batchFailed || !targets[v] || !_uploads.contains(targets[v]->id()) ||
+            targets[v]->missionManager()->inProgress() || (allowed && !allowed(targets[v]->id())) ||
+            _batchId != batch || !targets[v] || !_uploads.contains(targets[v]->id())) {
             qDeleteAll(missions[v]);
-            if (targets[v])
-                _finishUpload(targets[v]->id(), false, tr("上传批次未能完整派发"));
+            if (targets[v] && _batchId == batch)
+                _finishUpload(batch, targets[v]->id(), false, tr("上传批次未能完整派发"));
         } else {
             targets[v]->missionManager()->writeMissionItems(missions[v]);
         }
@@ -232,46 +247,8 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
     return true;
 }
 
-namespace {
-QList<QList<double>> missionSignature(const QList<MissionItem*>& items, bool hasHome)
-{
-    QList<QList<double>> result;
-    for (int i = hasHome ? 1 : 0; i < items.size(); ++i) {
-        const MissionItem* item = items[i];
-        if (!item)
-            return {};
-        int frame = item->frame();
-        if (frame == MAV_FRAME_GLOBAL_INT)
-            frame = MAV_FRAME_GLOBAL;
-        if (frame == MAV_FRAME_GLOBAL_RELATIVE_ALT_INT)
-            frame = MAV_FRAME_GLOBAL_RELATIVE_ALT;
-        result.append({double(item->command()), double(frame), item->param1(), item->param2(), item->param3(),
-                       item->param4(), item->param5(), item->param6(), item->param7(), double(item->autoContinue())});
-    }
-    return result;
-}
-
-bool sameMission(const QList<QList<double>>& expected, const QList<QList<double>>& actual)
-{
-    if (expected.size() != actual.size() || expected.isEmpty())
-        return false;
-    for (int i = 0; i < expected.size(); ++i) {
-        if (expected[i].size() != actual[i].size())
-            return false;
-        for (int p = 0; p < expected[i].size(); ++p) {
-            const double a = expected[i][p], b = actual[i][p];
-            if (std::isnan(a) && std::isnan(b))
-                continue;
-            const double tolerance = (p == 6 || p == 7) ? 1.1e-7 : 1e-4;
-            if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a - b) > tolerance)
-                return false;
-        }
-    }
-    return true;
-}
-}  // namespace
-
-void SwarmMissionPlanner::_trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items)
+void SwarmMissionPlanner::_trackUpload(Vehicle* vehicle, const QList<MissionItem*>& items,
+                                       std::function<bool(int)> allowed)
 {
     if (!vehicle || !vehicle->missionManager())
         return;
@@ -280,46 +257,57 @@ void SwarmMissionPlanner::_trackUpload(Vehicle* vehicle, const QList<MissionItem
     _uploads.insert(id, context);
     _uploadStates[QString::number(id)] = QStringLiteral("uploading");
     _missionStatus.remove(QString::number(id));
-    emit missionStatusChanged();
-    const auto expected = missionSignature(items, true);
+    const auto expected = SwarmMissionSnapshot::capture(items, true);
     QPointer<Vehicle> target(vehicle);
     QPointer<MissionManager> manager(vehicle->missionManager());
+    const auto batch = _batchId;
+    const auto current = [this, id, batch, target, manager, allowed] {
+        // Permission checks can emit signals which cancel this batch or remove the vehicle.
+        return batch == _batchId && _uploads.contains(id) && target && manager && (!allowed || allowed(id)) &&
+               batch == _batchId && _uploads.contains(id) && target && manager;
+    };
+    const auto finish = [this, id, batch](bool success, const QString& reason) {
+        _finishUpload(batch, id, success, reason);
+    };
     const bool sendsHome = vehicle->firmwarePlugin()->sendHomePositionToVehicle();
-    connect(vehicle, &QObject::destroyed, context, [this, id] { _finishUpload(id, false, tr("载具断开")); });
-    connect(manager, &MissionManager::error, context,
-            [this, id](int, const QString& reason) { _finishUpload(id, false, reason); });
+    connect(vehicle, &QObject::destroyed, context, [finish] { finish(false, tr("载具断开")); });
+    connect(manager, &MissionManager::error, context, [finish](int, const QString& reason) { finish(false, reason); });
     connect(
         manager, &MissionManager::sendComplete, context,
-        [this, id, manager, target, context, expected, sendsHome](bool error) {
-            if (error || !manager || !target) {
-                _finishUpload(id, false, tr("上传失败"));
+        [this, id, manager, context, expected, sendsHome, current, finish](bool error) {
+            if (error || !current()) {
+                finish(false, tr("上传失败"));
                 return;
             }
             _uploadStates[QString::number(id)] = QStringLiteral("reading_back");
-            emit missionStatusChanged();
             connect(
                 manager, &MissionManager::newMissionItemsAvailable, context,
-                [this, id, manager, expected, sendsHome](bool removed) {
-                    if (!manager || removed ||
-                        !sameMission(expected, missionSignature(manager->missionItems(), sendsHome))) {
-                        _finishUpload(id, false, tr("机载任务回读与上传内容不一致"));
+                [this, id, manager, expected, sendsHome, current, finish](bool removed) {
+                    if (removed || !current() ||
+                        !expected.equivalent(SwarmMissionSnapshot::capture(manager->missionItems(), sendsHome))) {
+                        finish(false, tr("机载任务回读与上传内容不一致"));
                         return;
                     }
                     const int count = manager->missionItems().size();
                     _verifiedRevisions[id] = manager->executionRevision();
+                    _verifiedSnapshots[id] = SwarmMissionSnapshot::capture(manager->missionItems(), sendsHome);
                     _missionStatus[QString::number(id)] = count;
                     emit missionUploaded(id, count);
-                    _finishUpload(id, true, {});
+                    finish(true, {});
                 },
                 Qt::SingleShotConnection);
             manager->loadFromVehicle();
+            emit missionStatusChanged();
         },
         Qt::SingleShotConnection);
-    QTimer::singleShot(120000, context, [this, id] { _finishUpload(id, false, tr("上传/回读超时")); });
+    QTimer::singleShot(120000, context, [finish] { finish(false, tr("上传/回读超时")); });
 }
 
-void SwarmMissionPlanner::_finishUpload(int vehicleId, bool success, const QString& reason, bool withdrawn)
+void SwarmMissionPlanner::_finishUpload(quint64 batch, int vehicleId, bool success, const QString& reason,
+                                        bool withdrawn)
 {
+    if (batch != _batchId)
+        return;
     QObject* context = _uploads.take(vehicleId);
     if (!context)
         return;
@@ -332,38 +320,127 @@ void SwarmMissionPlanner::_finishUpload(int vehicleId, bool success, const QStri
     _uploadStates[QString::number(vehicleId)] = withdrawn ? QStringLiteral("cancelled")
                                                 : success ? QStringLiteral("verified")
                                                           : QStringLiteral("failed");
+    const auto completedBatch = _batchId;
+    const bool complete = _uploads.isEmpty();
+    const bool batchSuccess = !_batchFailed && _verifiedCount > 0;
+    const QString batchReason = _verifiedCount == 0 && !_batchFailed ? tr("全部任务读写成员已退出") : reason;
     emit missionStatusChanged();
     if (!reason.isEmpty())
         emit plannerFeedback(tr("%1 号机：%2").arg(vehicleId).arg(reason));
-    if (_uploads.isEmpty())
-        emit batchFinished(_batchId, !_batchFailed && _verifiedCount > 0,
-                           _verifiedCount == 0 && !_batchFailed ? tr("全部上传成员已退出") : reason);
+    if (complete)
+        emit batchFinished(completedBatch, batchSuccess, batchReason);
 }
 
 void SwarmMissionPlanner::cancelTargets(const QList<int>& ids)
 {
+    const auto batch = _batchId;
     for (int id : ids)
-        _finishUpload(id, false, {}, true);
+        _finishUpload(batch, id, false, {}, true);
 }
 
-void SwarmMissionPlanner::clearAllMissions()
+bool SwarmMissionPlanner::clearAllMissions()
 {
-    cancelTargets(_uploads.keys());
-    MultiVehicleManager* mvm = MultiVehicleManager::instance();
-    QmlObjectListModel* vehicles = mvm->vehicles();
-    int clearedCount = 0;
-    for (int i = 0; i < vehicles->count(); i++) {
-        Vehicle* vehicle = qobject_cast<Vehicle*>(vehicles->get(i));
-        if (vehicle && (!_vehicleAutomationAllowed || _vehicleAutomationAllowed(vehicle->id()))) {
-            vehicle->missionManager()->removeAll();
-            clearedCount++;
+    QList<int> ids;
+    auto* model = MultiVehicleManager::instance()->vehicles();
+    for (int i = 0; i < model->count(); ++i) {
+        const auto* vehicle = qobject_cast<Vehicle*>(model->get(i));
+        if (vehicle && (!_vehicleAutomationAllowed || _vehicleAutomationAllowed(vehicle->id())))
+            ids.append(vehicle->id());
+    }
+    return readMissionBatch(ids, true, _vehicleAutomationAllowed);
+}
+
+bool SwarmMissionPlanner::readMissionBatch(const QList<int>& ids, bool clearFirst, std::function<bool(int)> allowed)
+{
+    if (busy() || ids.isEmpty())
+        return false;
+    QHash<int, QPointer<Vehicle>> targets;
+    const auto previousBatch = _batchId;
+    for (int id : ids) {
+        QPointer<Vehicle> vehicle = MultiVehicleManager::instance()->getVehicleById(id);
+        if (!vehicle || !vehicle->missionManager() || vehicle->missionManager()->inProgress() ||
+            (allowed && !allowed(id)) || !vehicle || busy() || previousBatch != _batchId || targets.contains(id))
+            return false;
+        targets[id] = vehicle;
+    }
+    ++_batchId;
+    _batchFailed = false;
+    _verifiedCount = 0;
+    _verifiedRevisions.clear();
+    _verifiedSnapshots.clear();
+    _uploadStates.clear();
+    // Register the entire batch first; even a synchronous first failure must not complete a partial batch.
+    for (int id : ids)
+        _uploads[id] = new QObject(this);
+    const auto batch = _batchId;
+    for (int id : ids) {
+        if (_batchId != batch || !_uploads.contains(id))
+            continue;
+        const auto target = targets.value(id);
+        QPointer<MissionManager> manager = target ? target->missionManager() : nullptr;
+        QObject* context = _uploads.value(id);
+        const auto current = [this, id, batch, target, manager, allowed] {
+            return batch == _batchId && _uploads.contains(id) && target && manager && (!allowed || allowed(id)) &&
+                   batch == _batchId && _uploads.contains(id) && target && manager;
+        };
+        const auto finish = [this, id, batch](bool success, const QString& reason) {
+            _finishUpload(batch, id, success, reason);
+        };
+        if (!current() || manager->inProgress()) {
+            finish(false, tr("任务读写目标或许可已变化"));
+            continue;
+        }
+        auto* timeout = new QTimer(context);
+        timeout->setSingleShot(true);
+        connect(timeout, &QTimer::timeout, context, [finish] { finish(false, tr("任务清空/回读超时")); });
+        connect(target, &QObject::destroyed, context, [finish] { finish(false, tr("载具断开")); });
+        connect(manager, &MissionManager::error, context,
+                [finish](int, const QString& reason) { finish(false, reason); });
+        const auto readBack = [this, id, target, manager, context, timeout, clearFirst, current, finish] {
+            if (!current() || manager->inProgress()) {
+                finish(false, tr("任务回读目标或许可已变化"));
+                return;
+            }
+            _uploadStates[QString::number(id)] = QStringLiteral("reading_back");
+            const bool hasHome = target->firmwarePlugin()->sendHomePositionToVehicle();
+            connect(
+                manager, &MissionManager::newMissionItemsAvailable, context,
+                [this, id, manager, hasHome, clearFirst, current, finish](bool removed) {
+                    if (removed || !current()) {
+                        finish(false, tr("任务回读失败或许可已变化"));
+                        return;
+                    }
+                    const auto snapshot = SwarmMissionSnapshot::capture(manager->missionItems(), hasHome);
+                    if (clearFirst && !snapshot.empty()) {
+                        finish(false, tr("飞控确认清空后回读仍有任务项"));
+                        return;
+                    }
+                    _verifiedSnapshots[id] = snapshot;
+                    _verifiedRevisions[id] = manager->executionRevision();
+                    _missionStatus[QString::number(id)] = manager->missionItems().size();
+                    finish(true, {});
+                },
+                Qt::SingleShotConnection);
+            timeout->start(120000);
+            manager->loadFromVehicle();
+        };
+        if (clearFirst) {
+            _uploadStates[QString::number(id)] = QStringLiteral("clearing");
+            connect(
+                manager, &MissionManager::removeAllComplete, context,
+                [finish, readBack](bool error) {
+                    if (error)
+                        finish(false, tr("飞控拒绝清空任务"));
+                    else
+                        readBack();
+                },
+                Qt::SingleShotConnection);
+            timeout->start(15000);
+            manager->removeAll();
+        } else {
+            readBack();
         }
     }
-    if (clearedCount == 0) {
-        emit plannerFeedback(tr("未清空任务：没有持有有效控制租约的无人机"));
-        return;
-    }
-    _missionStatus.clear();
     emit missionStatusChanged();
-    emit plannerFeedback(tr("已请求清空 %1 架无人机任务").arg(clearedCount));
+    return true;
 }

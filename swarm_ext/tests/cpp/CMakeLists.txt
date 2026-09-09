@@ -150,3 +150,18 @@ add_executable(tst_protocol tst_protocol.cc)
 target_include_directories(tst_protocol PRIVATE ${SWARM_SRC})
 target_link_libraries(tst_protocol PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME protocol COMMAND tst_protocol)
+
+add_executable(
+    tst_safety_resources
+    tst_safety_resources.cc
+    ${SWARM_SRC}/SwarmConstraintStore.cc
+    ${SWARM_SRC}/SwarmConstraintStore.h
+    ${SWARM_SRC}/SwarmConstraintChecker.cc
+    ${SWARM_SRC}/SwarmCOPModel.cc
+    ${SWARM_SRC}/SwarmCOPModel.h
+    ${SWARM_SRC}/SwarmTrackFusion.cc
+    ${SWARM_SRC}/SwarmEventDetector.cc
+)
+target_include_directories(tst_safety_resources PRIVATE ${SWARM_SRC})
+target_link_libraries(tst_safety_resources PRIVATE Qt6::Core Qt6::Network Qt6::Positioning Qt6::Qml Qt6::Test)
+add_test(NAME safety_resources COMMAND tst_safety_resources)

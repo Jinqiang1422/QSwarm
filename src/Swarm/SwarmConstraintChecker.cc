@@ -44,8 +44,10 @@ bool contains(const Polygon& polygon, const Point& p)
 
 bool containedBy(const Polygon& area, const Polygon& allowed)
 {
+    SwarmConstraintChecker::Config config;
+    config.includePolygons = {allowed};
     for (int i = 0; i < area.size(); ++i) {
-        if (!contains(allowed, area[i]) || crossesBoundary(area[i], area[(i + 1) % area.size()], allowed)) {
+        if (!SwarmConstraintChecker::segmentAllowed(area[i], area[(i + 1) % area.size()], config)) {
             return false;
         }
     }
@@ -91,6 +93,50 @@ Polygon coveragePolygon(const SwarmAction& action, double mapLat, double mapLon)
     return area;
 }
 }  // namespace
+
+bool SwarmConstraintChecker::segmentAllowed(const Point& from, const Point& to, const Config& cfg)
+{
+    if (!cfg.error.isEmpty() || !SwarmTypes::isFiniteLatLon(from.first, from.second) ||
+        !SwarmTypes::isFiniteLatLon(to.first, to.second) || std::abs(to.second - from.second) > 180.0)
+        return false;
+    for (const auto& polygon : cfg.excludePolygons)
+        if (contains(polygon, from) || contains(polygon, to) || crossesBoundary(from, to, polygon))
+            return false;
+    if (cfg.includePolygons.isEmpty())
+        return true;
+    const auto permitted = [&](const Point& point) {
+        return std::any_of(cfg.includePolygons.cbegin(), cfg.includePolygons.cend(),
+                           [&](const Polygon& polygon) { return contains(polygon, point); });
+    };
+    if (!permitted(from) || !permitted(to))
+        return false;
+    // Split at all boundary crossings. Testing every open interval handles concave and overlapping areas.
+    QList<double> cuts{0.0, 1.0};
+    const Point direction{to.first - from.first, to.second - from.second};
+    for (const auto& polygon : cfg.includePolygons) {
+        for (int i = 0; i < polygon.size(); ++i) {
+            const auto& a = polygon[i];
+            const auto& b = polygon[(i + 1) % polygon.size()];
+            const Point edge{b.first - a.first, b.second - a.second};
+            const double denominator = direction.first * edge.second - direction.second * edge.first;
+            if (std::abs(denominator) < 1e-18)
+                continue;
+            const double t =
+                ((a.first - from.first) * edge.second - (a.second - from.second) * edge.first) / denominator;
+            const double u =
+                ((a.first - from.first) * direction.second - (a.second - from.second) * direction.first) / denominator;
+            if (t > 0 && t < 1 && u >= 0 && u <= 1)
+                cuts.append(t);
+        }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    for (int i = 1; i < cuts.size(); ++i) {
+        const double t = (cuts[i - 1] + cuts[i]) / 2.0;
+        if (!permitted({from.first + direction.first * t, from.second + direction.second * t}))
+            return false;
+    }
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // 配置
@@ -395,7 +441,7 @@ QList<SwarmConstraintChecker::Violation> SwarmConstraintChecker::check(const QLi
     QList<Violation> out;
     const bool usesConstraints = std::any_of(plan.cbegin(), plan.cend(), [](const auto& action) {
         return action.type == QStringLiteral("takeoff") || action.type == QStringLiteral("plan_coverage") ||
-               action.type == QStringLiteral("start_formation");
+               action.type == QStringLiteral("start_formation") || action.type == QStringLiteral("start_mission");
     });
     if (usesConstraints && !cfg.error.isEmpty()) {
         out.append(

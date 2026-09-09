@@ -222,6 +222,9 @@ public:
     virtual void startMission(Vehicle* vehicle) const;
     void startMissionAsync(Vehicle* vehicle, QObject* context, std::function<bool()> allowed,
                            std::function<void(bool)> finished) const;
+    /// Conservative envelope for a mission RTL. Unsupported routes return false with an operator-facing reason.
+    virtual bool missionReturnPath(Vehicle* vehicle, const QGeoCoordinate& from, QList<QGeoCoordinate>& path,
+                                   double& dwellSeconds, QString& reason) const;
     virtual void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
                               std::function<void(bool)> finished) const;
 
