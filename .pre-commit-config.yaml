@@ -144,6 +144,8 @@ repos:
     rev: v0.49.0
     hooks:
       - id: markdownlint
+        # Its AVA development dependency also requires Node >=22.20 during hook installation.
+        language_version: 22.20.0
         exclude: ^(translations/|tools/skills/|docs/(zh|ko|tr|ru|ja|de|es|fa|fr|he|uk)/|CHANGELOG\.md)
 
   # Prose linting (documentation quality)
