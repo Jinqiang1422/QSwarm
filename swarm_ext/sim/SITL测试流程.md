@@ -357,14 +357,14 @@ QML delegate 数仍须由正常 GUI QGC 断言，headless 模式会明确报告 
 
 ### 9.5 一键严格回归（全场景 + 汇总报告）
 
-`strict_regression.py` 负责逐场景重建机队并汇总；01/02/07/08 同时启动测试构建的 headless QGC，
+`strict_regression.py` 负责逐场景重建机队并汇总；01/02/07/08/09/10/11/12 同时启动测试构建的 headless QGC，
 避免 QGC 与 pymavlink 同时绑定 14550。令牌必须由运行环境注入，不写入仓库：
 
 ```bash
 umask 077
 openssl rand -hex 24 > /tmp/qgc-swarm-token
 export QGC_SWARM_ACCEPTANCE_TOKEN_FILE=/tmp/qgc-swarm-token
-python3 strict_regression.py --px4-src ~/PX4-Autopilot --only 01,02,03,04,05,07,08
+python3 strict_regression.py --px4-src ~/PX4-Autopilot --only 01,02,03,04,05,07,08,09,10,11,12
 python3 strict_regression.py --dry-run
 
 # 场景 06 要求真实 QML 渲染，先启动正常 GUI QGC，再运行：

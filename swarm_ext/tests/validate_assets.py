@@ -35,6 +35,10 @@ class Issue:
     message: str
 
 
+def _relative(path: Path) -> str:
+    return str(path.relative_to(REPO_ROOT))
+
+
 def _load_json(path: Path, issues: list[Issue]) -> object | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -74,6 +78,143 @@ def _scenario_actions() -> set[str]:
 def _manager_actions() -> set[str]:
     source = (REPO_ROOT / "src" / "Swarm" / "SwarmManager.cc").read_text(encoding="utf-8")
     return set(re.findall(r'type == QStringLiteral\("([^"]+)"\)', source))
+
+
+RUN_ALL_PATH = SWARM_ROOT / "tests" / "run_all.py"
+SCENARIO_DIR = SWARM_ROOT / "sim" / "scenarios"
+# The two execution-tier TestSpecs and the run_all.py constant each must reference.
+COVERAGE_SPECS = {
+    "sitl.headless_acceptance": ("SITL_HEADLESS_SCENARIOS", False),
+    "sitl.qml_acceptance": ("SITL_QML_SCENARIOS", True),
+}
+
+
+def _spec_only_argument(tree: ast.AST, test_id: str) -> ast.expr | None:
+    """Return the --only argument node of the named TestSpec, or None if absent.
+
+    TestSpec's field order is test_id, layer, description, command, so the command
+    list is the fourth positional argument. Follows the source-AST scan that
+    _scenario_actions() already uses.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or getattr(node.func, "id", "") != "TestSpec":
+            continue
+        if len(node.args) < 4:
+            continue
+        first = node.args[0]
+        if not isinstance(first, ast.Constant) or first.value != test_id:
+            continue
+        command = node.args[3]
+        if not isinstance(command, ast.List):
+            return None
+        for index, element in enumerate(command.elts[:-1]):
+            if isinstance(element, ast.Constant) and element.value == "--only":
+                return command.elts[index + 1]
+    return None
+
+
+def _run_all_scenario_constants(issues: list[Issue]) -> dict[str, list[str]] | None:
+    """Load run_all.py and read both tier constants.
+
+    Imported inside the function on purpose: run_all inserts swarm_ext/sim into
+    sys.path and must not pollute the other validators. run_all's module level
+    depends only on the standard library and qgc_acceptance, never pymavlink --
+    this gate runs in the smoke profile and cannot drag in simulation deps.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_run_all_for_contract", RUN_ALL_PATH)
+    if spec is None or spec.loader is None:
+        issues.append(Issue("error", _relative(RUN_ALL_PATH), "无法加载模块以校验场景覆盖契约"))
+        return None
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolves TestSpec via sys.modules[__module__]; unregistered yields None.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    # Broad on purpose: any import-time side effect must surface as a contract failure.
+    except Exception as exc:
+        issues.append(Issue("error", _relative(RUN_ALL_PATH), f"导入失败，无法校验覆盖契约：{exc}"))
+        return None
+    finally:
+        sys.modules.pop(spec.name, None)
+    return {name: list(getattr(module, name, []) or []) for name, _ in COVERAGE_SPECS.values()}
+
+
+def validate_scenario_coverage(issues: list[Issue]) -> dict[str, int]:
+    """Every scenario file must actually run in L5 or L6, with the tier derived.
+
+    A scenario covered only by the L2 dry-run carries no execution evidence, which
+    is how 09 through 12 went untested.
+    """
+    asset = _relative(RUN_ALL_PATH)
+    expected: dict[str, list[str]] = {}
+    seen: dict[str, Path] = {}
+    for path in sorted(SCENARIO_DIR.glob("*.json")):
+        key = path.name.split("_", 1)[0]
+        if not (len(key) == 2 and key.isdigit()):
+            issues.append(
+                Issue(
+                    "error", _relative(path), f"场景文件名前缀必须是两位数字编号，实际为「{key}」"
+                )
+            )
+            continue
+        if key in seen:
+            issues.append(
+                Issue(
+                    "error",
+                    _relative(path),
+                    f"场景编号 {key} 与 {seen[key].name} 重复；--only 按前缀匹配，重复编号无法区分",
+                )
+            )
+            continue
+        seen[key] = path
+        scenario = _load_json(path, issues)
+        if not isinstance(scenario, dict):
+            continue
+        constant, _ = COVERAGE_SPECS[
+            "sitl.qml_acceptance" if scenario.get("requires_qml") else "sitl.headless_acceptance"
+        ]
+        expected.setdefault(constant, []).append(key)
+
+    tree = ast.parse(RUN_ALL_PATH.read_text(encoding="utf-8"))
+    for test_id, (constant, _) in COVERAGE_SPECS.items():
+        argument = _spec_only_argument(tree, test_id)
+        if argument is None:
+            issues.append(Issue("error", asset, f"{test_id} 的命令中找不到 --only 实参"))
+        elif isinstance(argument, ast.Constant):
+            issues.append(
+                Issue(
+                    "error",
+                    asset,
+                    f"{test_id} 的 --only 写死为字面量「{argument.value}」；"
+                    f"必须使用 {constant}（由 scenarios/*.json 推导），否则新增场景会静默漏测",
+                )
+            )
+
+    actual = _run_all_scenario_constants(issues)
+    if actual is not None:
+        for constant, wanted in expected.items():
+            have = actual.get(constant, [])
+            missing = sorted(set(wanted) - set(have))
+            unknown = sorted(set(have) - set(wanted))
+            if missing:
+                issues.append(
+                    Issue(
+                        "error",
+                        asset,
+                        f"{constant} 未覆盖场景 {','.join(missing)}；"
+                        "每个 scenarios/*.json 都必须归入 L5 或 L6，否则只有 dry-run 覆盖",
+                    )
+                )
+            if unknown:
+                issues.append(
+                    Issue("error", asset, f"{constant} 引用了不存在的场景 {','.join(unknown)}")
+                )
+    return {
+        "sitl_scenarios_l5": len(expected.get("SITL_HEADLESS_SCENARIOS", [])),
+        "sitl_scenarios_l6": len(expected.get("SITL_QML_SCENARIOS", [])),
+    }
 
 
 def validate_scenarios(issues: list[Issue]) -> dict[str, int]:
@@ -290,6 +431,7 @@ def run_validation() -> tuple[list[Issue], dict[str, int]]:
     issues: list[Issue] = []
     stats: dict[str, int] = {}
     for validator in (
+        validate_scenario_coverage,
         validate_scenarios,
         validate_templates,
         validate_source_inventory,

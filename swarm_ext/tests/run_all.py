@@ -22,6 +22,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWARM_ROOT = REPO_ROOT / "swarm_ext"
+SCENARIO_DIR = SWARM_ROOT / "sim" / "scenarios"
 sys.path.insert(0, str(SWARM_ROOT / "sim"))
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 from common.tool_version import pre_commit_hook_version, probe_version  # noqa: E402
@@ -229,6 +230,25 @@ def _source_paths(suffixes: set[str]) -> list[str]:
         for path in sorted(SWARM_ROOT.rglob("*"))
         if path.is_file() and path.suffix in suffixes and "__pycache__" not in path.parts
     ]
+
+
+def _scenario_ids(*, requires_qml: bool) -> list[str]:
+    """Sort scenarios/*.json into the L5 (headless) or L6 (GUI/QML) tier.
+
+    The tier is derived from the scenario file itself rather than written into a
+    TestSpec: a hardcoded list silently drops newly added scenarios to L2 dry-run
+    coverage only, which is how 09-12 went unexecuted. validate_assets.py asserts
+    that both the derivation and these constants stay in agreement.
+    """
+    return [
+        path.name.split("_", 1)[0]
+        for path in sorted(SCENARIO_DIR.glob("*.json"))
+        if bool(json.loads(path.read_text(encoding="utf-8")).get("requires_qml")) is requires_qml
+    ]
+
+
+SITL_HEADLESS_SCENARIOS = _scenario_ids(requires_qml=False)
+SITL_QML_SCENARIOS = _scenario_ids(requires_qml=True)
 
 
 def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
@@ -630,7 +650,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 "--keep-workdir",
                 args.keep_workdir,
                 "--only",
-                "01,02,03,04,05,07,08",
+                ",".join(SITL_HEADLESS_SCENARIOS),
                 "--out",
                 str(report_dir / "sitl-headless"),
             ],
@@ -662,7 +682,9 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
     else:
 
         def blocked_qml_prerequisite() -> tuple[bool, str]:
-            return False, "场景 06 需要 --qgc-mode managed-gui 或 external"
+            return False, (
+                f"场景 {'、'.join(SITL_QML_SCENARIOS)} 需要 --qgc-mode managed-gui 或 external"
+            )
 
         qml_prerequisite = blocked_qml_prerequisite
     specs.append(
@@ -674,7 +696,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 sys.executable,
                 "strict_regression.py",
                 "--only",
-                "06",
+                ",".join(SITL_QML_SCENARIOS),
                 "--qgc-mode",
                 args.qgc_mode,
                 "--qgc-host",
@@ -938,6 +960,8 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                     "--qgc-mode",
                     "managed-headless",
                     "--only",
+                    # Deliberately a single scenario repeated 20 times as a stability
+                    # soak; not part of the scenario coverage contract.
                     "03",
                     "--repeat",
                     "20",
