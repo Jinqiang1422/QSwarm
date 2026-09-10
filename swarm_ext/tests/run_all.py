@@ -23,6 +23,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWARM_ROOT = REPO_ROOT / "swarm_ext"
 sys.path.insert(0, str(SWARM_ROOT / "sim"))
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from common.tool_version import pre_commit_hook_version, probe_version  # noqa: E402
 from qgc_acceptance import acceptance_secret_file  # noqa: E402
 
 PROFILE_LEVEL = {"smoke": 0, "standard": 1, "full": 2, "qualification": 3}
@@ -110,6 +112,58 @@ def _docker_image(image: str) -> Prerequisite:
             check=False,
         )
         return (result.returncode == 0, image if result.returncode == 0 else f"缺少镜像：{image}")
+
+    return check
+
+
+# Host binary behind each L0 lint gate -> its hook id in .pre-commit-config.yaml.
+PINNED_LINT_TOOLS = {
+    "ruff": "ruff",
+    "ruff-format": "ruff",
+    "shellcheck": "shellcheck",
+    "clang-format": "clang-format",
+}
+
+
+def _version_text(parts: tuple[int, ...] | None) -> str:
+    return ".".join(str(part) for part in parts) if parts else "未知"
+
+
+def _pinned_tool(name: str, hook_id: str) -> Prerequisite:
+    """Require the host binary to match the version pinned in .pre-commit-config.yaml.
+
+    A mismatch is BLOCKED rather than FAIL: rule sets and formatter output differ
+    between versions, so a local verdict cannot stand in for CI's. Treating it as a
+    failure manufactures false failures (ruff 0.9 reports UP038, removed in 0.15);
+    treating it as a pass manufactures false passes (shellcheck 0.7 is missing every
+    check added in 0.8 through 0.11).
+    """
+
+    def check() -> tuple[bool, str]:
+        pinned = pre_commit_hook_version(hook_id)
+        if pinned is None:
+            return False, (
+                f"无法从 .pre-commit-config.yaml 解析 hook「{hook_id}」的固定版本；"
+                "无法确认与 CI 一致，判 BLOCKED。"
+            )
+        host = probe_version(name)
+        if host is None:
+            return False, (
+                f"无法读取宿主 {name} 版本（--version 失败或输出无法解析），判 BLOCKED。"
+            )
+        # probe_version drops a missing patch component and a pin may carry a fourth
+        # packaging revision, so compare on the shorter prefix (as ccache_helper does).
+        width = min(len(host), len(pinned))
+        if host[:width] != pinned[:width]:
+            # The repair hint quotes only the comparable prefix: shellcheck-py's fourth
+            # rev component is a packaging revision, not a shellcheck release.
+            return False, (
+                f"{name} 版本不匹配：宿主 {_version_text(host)} ≠ "
+                f".pre-commit-config.yaml 固定 {_version_text(pinned)}；"
+                f"规则集不同，结果不可信，判 BLOCKED。"
+                f"修复：安装 {name} {_version_text(pinned[:width])} 后重跑。"
+            )
+        return True, f"{name} {_version_text(host)}（匹配 .pre-commit-config.yaml）"
 
     return check
 
@@ -236,28 +290,34 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             "L0 源码契约",
             "Python lint 通过",
             ["ruff", "check", *python_files],
-            prerequisite=_executable("ruff"),
+            prerequisite=_all_prerequisites(_executable("ruff"), _pinned_tool("ruff", "ruff")),
         ),
         TestSpec(
             "source.ruff_format",
             "L0 源码契约",
             "Python 格式检查通过",
             ["ruff", "format", "--check", *python_files],
-            prerequisite=_executable("ruff"),
+            prerequisite=_all_prerequisites(
+                _executable("ruff"), _pinned_tool("ruff", "ruff-format")
+            ),
         ),
         TestSpec(
             "source.shellcheck",
             "L0 源码契约",
             "Shell 脚本静态检查通过",
             ["shellcheck", "-e", "SC1091", *shell_files],
-            prerequisite=_executable("shellcheck"),
+            prerequisite=_all_prerequisites(
+                _executable("shellcheck"), _pinned_tool("shellcheck", "shellcheck")
+            ),
         ),
         TestSpec(
             "source.clang_format",
             "L0 源码契约",
             "Swarm C++ 格式检查通过",
             ["clang-format", "--dry-run", "--Werror", *cpp_files],
-            prerequisite=_executable("clang-format"),
+            prerequisite=_all_prerequisites(
+                _executable("clang-format"), _pinned_tool("clang-format", "clang-format")
+            ),
         ),
         TestSpec(
             "source.vehicle_null_check",
@@ -986,6 +1046,21 @@ def _cache_value(cache_path: Path, key: str) -> str:
     return ""
 
 
+def _tool_pin_manifest() -> dict:
+    manifest = {}
+    for hook_id, tool in PINNED_LINT_TOOLS.items():
+        pinned = pre_commit_hook_version(hook_id)
+        host = probe_version(tool)
+        width = min(len(host or ()), len(pinned or ()))
+        manifest[hook_id] = {
+            "tool": tool,
+            "host": _version_text(host),
+            "pinned": _version_text(pinned),
+            "match": bool(width) and host[:width] == pinned[:width],
+        }
+    return manifest
+
+
 def _environment_manifest(args: argparse.Namespace) -> dict:
     cache_path = Path(args.build_dir).resolve() / "CMakeCache.txt"
     px4_source = Path(args.px4_src).expanduser().resolve()
@@ -1024,6 +1099,9 @@ def _environment_manifest(args: argparse.Namespace) -> dict:
             "clang_format": _first_line(["clang-format", "--version"]),
             "gstreamer": _capture(["pkg-config", "--modversion", "gstreamer-1.0"]),
         },
+        # Evidence behind the L0 lint version gates: a BLOCKED verdict can be
+        # reviewed from this file alone, without returning to the host.
+        "tool_pins": _tool_pin_manifest(),
         "qgc_build": {
             "directory": str(Path(args.build_dir).resolve()),
             "qt_root": _cache_value(cache_path, "Qt6Core_DIR"),

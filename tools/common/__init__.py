@@ -236,6 +236,7 @@ _LAZY_SYMBOLS: dict[str, str] = {
     "is_pr_event": "env",
     "is_verbose": "env",
     "runner_arch": "env",
+    "pre_commit_hook_version": "tool_version",
     "probe_version": "tool_version",
     "add_build_dir": "cli",
     "add_ci_flag": "cli",

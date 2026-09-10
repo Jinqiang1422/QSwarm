@@ -77,3 +77,31 @@ def test_fallback_version_derives_from_uv_lock(package: str) -> None:
         f"common.tool_version.uv_lock_version is broken or the constant's fallback is "
         f"shadowing the lock, so the fallback-install path would ship a stale binary."
     )
+
+
+def _config_rev(hook_id: str) -> str:
+    """Independently parse *hook_id*'s repo rev from .pre-commit-config.yaml."""
+    text = (TOOLS_DIR.parent / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    blocks = re.split(r"^\s*-\s+repo:", text, flags=re.M)
+    for block in blocks:
+        if not re.search(rf"^\s*-\s+id:\s*{re.escape(hook_id)}\s*$", block, re.M):
+            continue
+        rev = re.search(r"""^\s*rev:\s*['"]?v?([0-9][0-9.]*)['"]?\s*$""", block, re.M)
+        assert rev, f"hook {hook_id} found but its repo carries no rev"
+        return rev.group(1)
+    pytest.fail(f"hook {hook_id} not declared in .pre-commit-config.yaml")
+
+
+@pytest.mark.parametrize("hook_id", ["ruff", "ruff-format", "shellcheck", "clang-format"])
+def test_pre_commit_pins_resolve_for_gated_hooks(hook_id: str) -> None:
+    from common.tool_version import pre_commit_hook_version
+
+    derived = pre_commit_hook_version(hook_id)
+    pinned = tuple(int(part) for part in _config_rev(hook_id).split("."))
+
+    assert derived == pinned, (
+        f"{hook_id}: pre_commit_hook_version resolved {derived!r} but "
+        f".pre-commit-config.yaml pins {pinned!r}. swarm_ext/tests/run_all.py's "
+        f"_pinned_tool gate depends on these pins; when one stops resolving, the L0 "
+        f"lint gates all turn BLOCKED and the harness reports exit code 2."
+    )
