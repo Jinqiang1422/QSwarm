@@ -13,6 +13,9 @@ exclude = [
     ".venv",
     "**/.venv",
     "tools/skills",
+    # Local verification evidence: one-off probe scripts, not project sources.
+    "test_results",
+    "profile_output",
 ]
 
 [lint]

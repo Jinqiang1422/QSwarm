@@ -44,6 +44,16 @@ cpm_modules
 Testing/
 
 # ------------------------------------------------------------------------------
+# Local Verification Evidence
+# ------------------------------------------------------------------------------
+# swarm_ext acceptance and profiling artifacts: one-off probe scripts, logs and
+# report bundles regenerated per run and cited by swarm_ext/docs/reports/*.md.
+# Same rationale as Testing/ above -- large, machine-specific, never committed.
+# Anchored so a future source directory of the same name is not silently ignored.
+/test_results/
+/profile_output/
+
+# ------------------------------------------------------------------------------
 # Qt Generated Files
 # ------------------------------------------------------------------------------
 *_qmlcache.qrc
