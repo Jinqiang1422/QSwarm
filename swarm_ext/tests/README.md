@@ -47,6 +47,35 @@
 首次遇到 `BLOCKED` 时按提示安装对应版本，不要用 `--allow-blocked` 绕过。逐项的宿主/固定版本
 和比对结果记录在报告的 `environment.json` → `tool_pins`。
 
+### SITL 环境阻塞的判定与防掩盖边界
+
+直连 MAVLink 的场景（03/04/05）在广播 ARM 前先比对各机 `SYS_STATUS` 的传感器 `present`
+位：**参照系是机队自身的多数，不是固定的必需位清单**。个别实例比同伴少报传感器，说明
+它的 Gazebo 传感器桥没起来，属环境问题——`strict_regression.py` 退出码 3，`run_all.py`
+把该场景判 `BLOCKED`（整体仍退出 2），SUMMARY 用 `⛔` 标记。
+
+用多数而不是写死清单，是因为 PX4 上报哪些位随版本和机型变化：本机 SITL 实测**从不**上报
+`3D_ACCEL`，写死清单会把 8 架全健康的机队整体误判成阻塞（该退化已由
+`test_bit_no_peer_reports_is_not_required` 守住）。
+
+这条降级只在下列全部成立时生效，任何一条不满足都仍判 FAIL：
+
+1. 只看 `present` 位，不看 `health`，更不看 `MAV_SYS_STATUS_PREARM_CHECK`。
+   `present` 齐全而 `health` 无＝真实预检失败；用预检位做门等价于「解锁一定成功」，
+   会给所有真实解锁缺陷发免罪符。
+2. 必须有正向 `SYS_STATUS` 证据。在线但一条都没收到时维持改动前行为，不判阻塞。
+3. 必须有对照。机队不足 2 架、或全体同样退化时没有多数可依，一律不判阻塞。
+4. 只作用于直连 MAVLink 的 `Fleet.arm_all`。经 QGC 中介的场景里 QGC 本身是被测对象，
+   其 `readiness_timeout` 继续判 FAIL，不做降级。
+5. 只作用于 `arm_all` 一个动作，不是全场景兜底。
+6. `cleanup_errors`（容器/端口残留）一票否决降级——那是 harness 自身缺陷。
+7. `report.json` 保留逐机 `present/enabled/health` 位图、`expected_sensors` 和缺失传感器名，
+   可离线复核。
+8. `BLOCKED` 永远不等于 `PASS`；`--allow-blocked` 必须显式给出。
+
+离线回归见 `sim/test_arm_readiness.py`（9 条，含「预检不过不得降级」「无证据不得阻塞」
+「无对照不得阻塞」「同伴都不报的位不得要求」四条负例）。
+
 ### 场景执行覆盖契约
 
 L5/L6 实际执行哪些场景由 `sim/scenarios/*.json` 的 `requires_qml` 推导，不写死在 `run_all.py`

@@ -35,6 +35,19 @@ from qgc_acceptance import (
 )
 
 HEARTBEAT_TIMEOUT_SEC = 5.0  # 超过该时长未收到心跳视为离线
+# 8 机在同一个 Gazebo 世界里错峰启动，末位实例进入可解锁状态明显晚于首位。
+ARM_RETRY_TIMEOUT_SEC = 180.0
+PREFLIGHT_SENSOR_TIMEOUT_SEC = 45.0  # 等待各机 SYS_STATUS 报告物理传感器就位的窗口
+# 候选位限定为 Gazebo 传感器桥直接提供的物理传感器。不含 GPS（定位收敛属正常等待）
+# 和 AHRS/EKF（收敛期 present 语义不稳），避免把正常启动过程误判为环境阻塞。
+CANDIDATE_SENSOR_ENUMS = {
+    "MAV_SYS_STATUS_SENSOR_3D_GYRO": "陀螺",
+    "MAV_SYS_STATUS_SENSOR_3D_ACCEL": "加速度计",
+    "MAV_SYS_STATUS_SENSOR_3D_MAG": "磁罗盘",
+    "MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE": "气压计",
+}
+# 参与多数判定所需的最少机数。机队只有 1 架时没有对照，一律不判阻塞。
+SENSOR_QUORUM_MIN_VEHICLES = 2
 
 
 def _finite_float(value, default: float = math.nan) -> float:
@@ -57,6 +70,7 @@ class Fleet:
         self.rel_alt = {}  # sysid -> 相对高度（米）
         self.amsl_alt = {}  # sysid -> AMSL 高度（米）
         self.position = {}  # sysid -> (lat, lon)
+        self.sys_status = {}  # sysid -> SYS_STATUS 传感器位图
         self.last_condition_detail = {}
 
     def remember(self, msg) -> None:
@@ -69,6 +83,15 @@ class Fleet:
             self.rel_alt[sid] = msg.relative_alt / 1000.0
             self.amsl_alt[sid] = msg.alt / 1000.0
             self.position[sid] = (msg.lat / 1e7, msg.lon / 1e7)
+        elif mtype == "SYS_STATUS":
+            # 三个位图都留存：判定只用 present，enabled/health 供人工复核时区分
+            # 「传感器不存在」和「传感器在但预检不过」。
+            self.sys_status[sid] = {
+                "present": int(msg.onboard_control_sensors_present),
+                "enabled": int(msg.onboard_control_sensors_enabled),
+                "health": int(msg.onboard_control_sensors_health),
+                "timestamp": time.time(),
+            }
 
     def pump(self, duration: float = 0.0) -> None:
         """处理积压消息并（可选）等待 duration 秒。"""
@@ -96,6 +119,80 @@ class Fleet:
             if len(self.online_ids()) >= fleet:
                 return True
         return False
+
+    def _sensor_bits(self) -> dict:
+        m = self.mavutil.mavlink
+        return {
+            getattr(m, name): label
+            for name, label in CANDIDATE_SENSOR_ENUMS.items()
+            if hasattr(m, name)
+        }
+
+    def _sensor_readiness_snapshot(self, bits: dict, timeout: float) -> dict:
+        """按机队多数判定各机是否缺失同伴普遍具备的物理传感器。
+
+        参照系取机队自身而不是固定位清单：PX4 上报哪些 present 位随版本和机型变化
+        （实测本机 SITL 从不上报 3D_ACCEL），写死清单会把健康机队整体误判为阻塞。
+        以多数为参照则是自校准的，且正好刻画了要抓的现象——个别实例的传感器桥没起来。
+        """
+        online = self.online_ids()
+        reported = {sid: self.sys_status[sid] for sid in online if sid in self.sys_status}
+        # 没有正向证据时绝不判阻塞：在线但一条 SYS_STATUS 都没收到（流配置、丢包）
+        # 应当维持改动前的行为，由后续 ACK 判定。
+        evidence = bool(online) and len(reported) == len(online)
+        quorum = evidence and len(reported) >= SENSOR_QUORUM_MIN_VEHICLES
+        expected = (
+            {
+                bit
+                for bit in bits
+                if sum(1 for status in reported.values() if status["present"] & bit) * 2
+                > len(reported)
+            }
+            if quorum
+            else set()
+        )
+        per_vehicle = {}
+        missing_vehicles = []
+        for sid in online:
+            status = reported.get(sid)
+            if status is None:
+                per_vehicle[sid] = {"present": None, "enabled": None, "health": None}
+                continue
+            missing = sorted(bits[bit] for bit in expected if not status["present"] & bit)
+            per_vehicle[sid] = {
+                "present": status["present"],
+                "enabled": status["enabled"],
+                "health": status["health"],
+                "missing": missing,
+            }
+            if missing:
+                missing_vehicles.append(sid)
+        return {
+            "pass": evidence and not missing_vehicles,
+            "evidence": evidence,
+            "quorum": quorum,
+            "expected_sensors": sorted(bits[bit] for bit in expected),
+            "online": online,
+            "per_vehicle": per_vehicle,
+            "missing_vehicles": sorted(missing_vehicles),
+            "timeout_sec": round(max(0.0, timeout), 1),
+        }
+
+    def wait_sensors_present(self, timeout: float) -> dict:
+        """等待各机 SYS_STATUS 报告出与同伴一致的物理传感器 present 位，返回取证字典。
+
+        只看 present 位（传感器存在与否），不看 health 位，更不看 MAV_SYS_STATUS_PREARM_CHECK：
+        present 比同伴少＝该实例的 Gazebo 传感器桥没起来，属环境问题；present 齐全而 health
+        无＝真实预检失败，仍按失败处理。用预检位做门等价于「解锁一定成功」，
+        会把 PX4/QGC 缺陷伪装成环境阻塞。
+        """
+        bits = self._sensor_bits()
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            result = self._sensor_readiness_snapshot(bits, timeout)
+            if result["pass"] or time.time() >= deadline:
+                return result
+            self.pump(1.0)
 
     def wait_all_airborne(self, min_alt: float, timeout: float, expected_count: int) -> bool:
         deadline = time.time() + timeout
@@ -209,10 +306,26 @@ class Fleet:
             "pass": bool(targets) and not pending and not missing_position,
         }
 
-    def arm_all(self, retry_timeout: float = 60.0) -> dict:
-        """对仿真启动期的临时拒绝做有限重试；硬拒绝不会被掩盖。"""
+    def arm_all(self, retry_timeout: float = ARM_RETRY_TIMEOUT_SEC) -> dict:
+        """对仿真启动期的临时拒绝做有限重试；硬拒绝不会被掩盖。
+
+        广播前先过传感器就绪门，且共用同一个 deadline，不额外增加墙钟时间。
+        """
         m = self.mavutil.mavlink
         deadline = time.time() + retry_timeout
+        readiness = self.wait_sensors_present(
+            min(PREFLIGHT_SENSOR_TIMEOUT_SEC, max(0.0, deadline - time.time()))
+        )
+        if readiness["evidence"] and not readiness["pass"]:
+            # 机队起不来，重试到超时也只是浪费；立即返回且不下发 ARM。
+            return {
+                "pass": False,
+                "environment_block": True,
+                "environment_block_reason": "preflight_sensors_missing",
+                "sensor_readiness": readiness,
+                "targets": readiness["online"],
+                "attempts": [],
+            }
         attempts = []
         while True:
             result = self.broadcast(m.MAV_CMD_COMPONENT_ARM_DISARM, p1=1.0, p2=0.0)
@@ -234,11 +347,13 @@ class Fleet:
                     if not disarm["pass"]:
                         result["pass"] = False
                         result["attempts"] = attempts
+                        result["sensor_readiness"] = readiness
                         return result
                     self.pump(1.0)
                     result = self.broadcast(m.MAV_CMD_COMPONENT_ARM_DISARM, p1=1.0, p2=0.0)
                     result["resync_disarm"] = disarm
                 result["attempts"] = attempts
+                result["sensor_readiness"] = readiness
                 return result
 
             hard_rejected = {
@@ -248,6 +363,7 @@ class Fleet:
             }
             if hard_rejected or time.time() >= deadline:
                 result["attempts"] = attempts
+                result["sensor_readiness"] = readiness
                 return result
             self.pump(min(3.0, max(0.0, deadline - time.time())))
 
@@ -477,7 +593,7 @@ class QGCFleet:
         }
         return len(vehicles) >= expected_count and not armed and not high
 
-    def arm_all(self, retry_timeout: float = 60.0) -> dict:
+    def arm_all(self, retry_timeout: float = ARM_RETRY_TIMEOUT_SEC) -> dict:
         """Wait for QGC/PX4 readiness, then retry transiently rejected arm requests."""
         deadline = time.monotonic() + max(0.0, retry_timeout)
         attempts = []
@@ -695,8 +811,19 @@ def run_scenario(
         if action == "wait_all_online":
             record(desc, fleet.wait_all_online(fleet_size, step.get("timeout_sec", 120)))
         elif action == "arm_all":
-            result = fleet.arm_all(float(step.get("retry_timeout_sec", 60)))
+            result = fleet.arm_all(float(step.get("retry_timeout_sec", ARM_RETRY_TIMEOUT_SEC)))
             record(desc, result["pass"], result)
+            if result.get("environment_block"):
+                report["environment_block"] = True
+                report["environment_block_reason"] = result["environment_block_reason"]
+                missing = ",".join(
+                    str(sid) for sid in result["sensor_readiness"]["missing_vehicles"]
+                )
+                report["error"] = (
+                    f"环境阻塞：sysid {missing} 的 SYS_STATUS 未报告必需传感器 present"
+                    "（Gazebo 传感器桥未启动），非 QGC 解锁缺陷"
+                )
+                break
         elif action == "takeoff_all":
             if isinstance(fleet, QGCFleet):
                 result = fleet.takeoff_all(float(step.get("altitude", 30)))

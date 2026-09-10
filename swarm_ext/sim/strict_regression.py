@@ -21,6 +21,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_scenario as rs
 
+# 1 means a real failure and argparse's parser.error() already owns 2, so an
+# environment block exits 3.
+EXIT_ENVIRONMENT_BLOCKED = 3
+
 
 def _stop_process(process: subprocess.Popen | None, container_name: str) -> None:
     if container_name:
@@ -178,8 +182,15 @@ def _wait_mavlink(expected_vehicles: int, timeout_sec: float, sitl: subprocess.P
     raise TimeoutError(f"SITL 在 {timeout_sec:.0f}s 内仅发现 {len(seen)}/{expected_vehicles} 架")
 
 
+def _counts(rows: list[dict]) -> dict[str, int]:
+    return {
+        result: sum(row["result"] == result for row in rows)
+        for result in ("PASS", "FAIL", "BLOCKED")
+    }
+
+
 def _summary(rows: list[dict], qgc_mode: str, sitl_backend: str, keep_workdir: str) -> str:
-    passed = sum(row["result"] == "PASS" for row in rows)
+    counts = _counts(rows)
     lines = [
         "# 严格 SITL/QGC 场景回归",
         "",
@@ -187,13 +198,15 @@ def _summary(rows: list[dict], qgc_mode: str, sitl_backend: str, keep_workdir: s
         f"- SITL 后端：`{sitl_backend}`",
         f"- QGC 模式：`{qgc_mode}`",
         f"- 工作目录保留：`{keep_workdir}`",
-        f"- 场景：{len(rows)} · **PASS {passed} / FAIL {len(rows) - passed}**",
+        f"- 场景：{len(rows)} · **PASS {counts['PASS']} / FAIL {counts['FAIL']} / "
+        f"BLOCKED {counts['BLOCKED']}**",
         "",
         "| 轮次 | 场景 | 名称 | 结果 | 耗时(s) | 说明 |",
         "|---:|---|---|---|---:|---|",
     ]
+    marks = {"PASS": "✅ PASS", "BLOCKED": "⛔ BLOCKED", "FAIL": "❌ FAIL"}
     for row in rows:
-        mark = "✅ PASS" if row["result"] == "PASS" else "❌ FAIL"
+        mark = marks[row["result"]]
         detail = str(row.get("error", "")).replace("|", "\\|").replace("\n", " ")
         lines.append(
             f"| {row['iteration']} | {row['stem']} | {row['name']} | {mark} | "
@@ -444,12 +457,15 @@ def main() -> None:
             report_path.write_text(
                 json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            # cleanup_errors vetoes the downgrade: a leaked container or port is a
+            # defect in the harness itself and must not hide behind an env block.
+            blocked = bool(report.get("environment_block")) and not cleanup_errors
             rows.append(
                 {
                     "iteration": iteration,
                     "stem": stem,
                     "name": scenario["name"],
-                    "result": "PASS" if report.get("pass") else "FAIL",
+                    "result": "PASS" if report.get("pass") else ("BLOCKED" if blocked else "FAIL"),
                     "total_sec": report["total_sec"],
                     "error": error,
                     "report": str(report_path),
@@ -465,6 +481,7 @@ def main() -> None:
                 "sitl_backend": args.sitl_backend,
                 "repeat": args.repeat,
                 "keep_workdir": args.keep_workdir,
+                "counts": _counts(rows),
                 "results": rows,
             },
             ensure_ascii=False,
@@ -475,7 +492,11 @@ def main() -> None:
     summary = _summary(rows, args.qgc_mode, args.sitl_backend, args.keep_workdir)
     (output_dir / "SUMMARY.md").write_text(summary, encoding="utf-8")
     print("\n" + summary)
-    raise SystemExit(0 if all(row["result"] == "PASS" for row in rows) else 1)
+    if any(row["result"] == "FAIL" for row in rows):
+        raise SystemExit(1)
+    if any(row["result"] == "BLOCKED" for row in rows):
+        raise SystemExit(EXIT_ENVIRONMENT_BLOCKED)
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

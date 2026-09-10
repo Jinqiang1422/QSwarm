@@ -51,6 +51,10 @@ class TestSpec:
     required: bool = True
     prerequisite: Prerequisite | None = None
     environment: dict[str, str] = field(default_factory=dict)
+    # Exit codes the command uses to report an environment block rather than a
+    # failure; anything else stays FAIL. BLOCKED never counts as PASS.
+    blocked_exit_codes: frozenset[int] = frozenset()
+    blocked_detail: str = ""
 
 
 @dataclass
@@ -250,6 +254,13 @@ def _scenario_ids(*, requires_qml: bool) -> list[str]:
 SITL_HEADLESS_SCENARIOS = _scenario_ids(requires_qml=False)
 SITL_QML_SCENARIOS = _scenario_ids(requires_qml=True)
 
+# strict_regression.py exits 3 when a scenario could not run because the simulated
+# fleet never reported its sensors, as opposed to failing an assertion.
+SITL_BLOCKED_EXIT_CODES = frozenset({3})
+SITL_BLOCKED_DETAIL = (
+    "SITL 环境预检未通过：机载传感器未上报 present，非 QGC 缺陷；详见子报告 SUMMARY.md"
+)
+
 
 def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
     python_files = _source_paths({".py"})
@@ -349,7 +360,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
         TestSpec(
             "python.acceptance_metrics",
             "L1 Python/算法",
-            "编队几何、距离与 COP 真值匹配",
+            "编队几何、距离、COP 真值与解锁就绪门判定",
             [
                 sys.executable,
                 "-m",
@@ -357,6 +368,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 "-v",
                 "test_qgc_acceptance.py",
                 "test_task_verdict.py",
+                "test_arm_readiness.py",
             ],
             cwd=SWARM_ROOT / "sim",
         ),
@@ -659,6 +671,8 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             min_profile="full",
             prerequisite=sitl_prerequisite,
             environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+            blocked_exit_codes=SITL_BLOCKED_EXIT_CODES,
+            blocked_detail=SITL_BLOCKED_DETAIL,
         )
     )
     if args.qgc_mode == "managed-gui":
@@ -717,6 +731,8 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
             min_profile="full",
             prerequisite=qml_prerequisite,
             environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+            blocked_exit_codes=SITL_BLOCKED_EXIT_CODES,
+            blocked_detail=SITL_BLOCKED_DETAIL,
         )
     )
 
@@ -977,6 +993,8 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 min_profile="qualification",
                 prerequisite=sitl_prerequisite,
                 environment={"QGC_ACCEPTANCE_IMAGE": args.container_image},
+                blocked_exit_codes=SITL_BLOCKED_EXIT_CODES,
+                blocked_detail=SITL_BLOCKED_DETAIL,
             ),
         ]
     )
@@ -1016,8 +1034,13 @@ def _run_spec(spec: TestSpec, logs_dir: Path) -> TestResult:
             timeout=spec.timeout_sec,
         )
         output = result.stdout or ""
-        status = PASS if result.returncode == 0 else FAIL
-        detail = "" if status == PASS else f"退出码 {result.returncode}"
+        if result.returncode == 0:
+            status, detail = PASS, ""
+        elif result.returncode in spec.blocked_exit_codes:
+            status = BLOCKED
+            detail = spec.blocked_detail or f"环境阻塞（退出码 {result.returncode}）"
+        else:
+            status, detail = FAIL, f"退出码 {result.returncode}"
     except subprocess.TimeoutExpired as exc:
         output = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
         status = FAIL
