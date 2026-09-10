@@ -13,6 +13,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
+from numbers import Real
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -255,6 +256,11 @@ def validate_scenarios(issues: list[Issue]) -> dict[str, int]:
             if isinstance(action, str) and action.startswith("qgc_") and not requires_qgc:
                 issues.append(
                     Issue("error", relative, f"steps[{index}] 使用 {action} 但未声明 requires_qgc")
+                )
+            retry = step.get("retry_timeout_sec")
+            if retry is not None and (not isinstance(retry, Real) or retry <= 0):
+                issues.append(
+                    Issue("error", relative, f"steps[{index}] 的 retry_timeout_sec 必须为正数")
                 )
         criteria = scenario.get("pass_criteria", {})
         if criteria and not isinstance(criteria, dict):

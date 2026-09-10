@@ -5,7 +5,7 @@
   "description": "起飞后以 1 号机为长机组成楔形编队，僚机位置收敛后保持 30 秒，验证编队控制与长机失效保护",
   "steps": [
     {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
-    {"t": 0,  "action": "arm_all", "retry_timeout_sec": 180},
+    {"t": 0,  "action": "arm_all"},
     {"t": 3,  "action": "takeoff_all", "altitude": 35},
     {"t": 0,  "action": "wait_all_airborne", "min_altitude": 30, "timeout_sec": 180},
     {"t": 0,  "action": "qgc_start_formation", "leader_id": 1, "type": "wedge",

@@ -5,7 +5,7 @@
   "description": "解锁起飞 → 区域覆盖规划上传 → 开始任务 → 等待全部完成 → 返航上锁，验证集群任务闭环",
   "steps": [
     {"t": 0,  "action": "wait_all_online", "timeout_sec": 120},
-    {"t": 0,  "action": "arm_all", "retry_timeout_sec": 180},
+    {"t": 0,  "action": "arm_all"},
     {"t": 3,  "action": "takeoff_all", "altitude": 30},
     {"t": 0,  "action": "wait_all_airborne", "min_altitude": 25, "timeout_sec": 180},
     {"t": 0,  "action": "qgc_plan_coverage", "length_m": 120, "width_m": 80,
