@@ -32,6 +32,20 @@
 | `swarm_ext/tests/audit_release_artifact.py` | 两条发布锁断言 | B |
 | `swarm_ext/docs/用户使用手册.md`、`FEATURES.md`、`README.md` | 文档同步 | B |
 
+**新测试文件必须自注册。** `add_qgc_test(<Name> LABELS ...)` 只登记 ctest 条目，
+真正让测试二进制认得该用例的是 `.cc` 末尾的宏——参照 `test/Swarm/SwarmSafetyTest.cc`：
+
+```cpp
+UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)
+```
+
+漏掉它会得到一个「ctest 里有、二进制里没有」的空壳测试。宏参数里的 label 要与
+`add_qgc_test` 的 `LABELS` 一致。
+
+**测试的 `ignoreLogMessage` 正则要覆盖被测路径真实发出的消息。** 这些测试跑在严格模式下，
+任何未登记的日志都会判失败。新增用例时先跑一次，把真实报错里的消息文本按**最窄**范围补进
+正则——放太宽会削弱严格模式、掩盖无关噪声。
+
 **注意：** 本计划把新测试的标签定为 `Integration Vehicle`（外加 Part B 的 `SwarmLocked`），
 而不是 spec §8.2 写的 `Unit`。原因：这些用例需要 `VehicleTest` 提供的 MockLink 飞行器才能让
 `parseAndValidate` 产出带目标机的动作。Spec 的标签写法应以本计划为准。
@@ -224,7 +238,7 @@ bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString& taskName
 - [ ] **Step 5: 编译**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -385,7 +399,7 @@ add_qgc_test(SwarmTaskEditTest LABELS Integration Vehicle)
 - [ ] **Step 4: 跑测试确认失败**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -442,7 +456,7 @@ QVariantList SwarmAIAgent::pendingTaskModel() const
 - [ ] **Step 6: 跑测试确认通过**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 cd build && ctest -R SwarmTaskEditTest --output-on-failure
@@ -1068,7 +1082,7 @@ QString SwarmManager::deliveryNotice() const
 
 ```bash
 # 解锁（现有构建目录，选项默认 ON）
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -1171,7 +1185,7 @@ endif()
 - [ ] **Step 2: 配置锁定构建目录**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/source --user "$(id -u):$(id -g)" \
   --entrypoint /opt/Qt/6.11.1/gcc_64/bin/qt-cmake qgc-ubuntu-docker:latest \
   -S /project/source -B /project/build-locked -G Ninja \
@@ -1186,7 +1200,7 @@ Expected: 配置成功
 - [ ] **Step 3: 构建并运行锁定用例**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
@@ -1325,7 +1339,7 @@ void SwarmAIAgent::setRequireConfirm(bool require)
 - [ ] **Step 5: 跑测试确认通过**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
@@ -1424,7 +1438,7 @@ Run: `grep -n "receivedMavCommandCount\|clearReceivedMavCommandCounts" src/Comms
 - [ ] **Step 2: 跑测试**
 
 ```bash
-docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
