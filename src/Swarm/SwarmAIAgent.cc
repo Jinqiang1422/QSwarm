@@ -827,11 +827,13 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
         if (type == QStringLiteral("start_swarm_task")) {
             QString taskName;
             QList<SwarmTaskController::Stage> stages;
+            QJsonArray stagesJson;
             QStringList warnings;
-            if (_handleTaskJson(obj, taskName, stages, warnings)) {
+            if (_handleTaskJson(obj, taskName, stages, stagesJson, warnings)) {
                 _pendingTask = true;
                 _pendingTaskName = taskName;
                 _pendingStages = stages;
+                _pendingStagesJson = stagesJson;
             }
             for (const QString& w : warnings) {
                 _appendChat(tr("系统"), w);
@@ -868,7 +870,8 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
 // 多阶段任务 JSON → Stage 列表（动作经统一管线校验）
 // ---------------------------------------------------------------------------
 bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString& taskName,
-                                   QList<SwarmTaskController::Stage>& stages, QStringList& warnings)
+                                   QList<SwarmTaskController::Stage>& stages, QJsonArray& stagesJsonOut,
+                                   QStringList& warnings)
 {
     taskName = taskObj.value(QStringLiteral("task_name")).toString(tr("未命名任务"));
     const QJsonArray stagesJson = taskObj.value(QStringLiteral("stages")).toArray();
@@ -882,6 +885,7 @@ bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString& taskName
         warnings.append(tr("start_swarm_task 没有有效阶段，已忽略"));
         return false;
     }
+    stagesJsonOut = stagesJson;
     return true;
 }
 
@@ -917,6 +921,7 @@ void SwarmAIAgent::_runTaskTemplate(const QJsonObject& args)
     _pendingTask = true;
     _pendingTaskName = templateName;
     _pendingStages = stages;
+    _pendingStagesJson = stagesJson;
     _appendChat(tr("AI"), tr("已按模板「%1」生成 %2 阶段任务计划。").arg(templateName).arg(stages.count()));
 }
 
@@ -973,6 +978,7 @@ void SwarmAIAgent::_handleCandidates(const QJsonObject& args)
             }
             if (cand.stages.isEmpty())
                 continue;
+            cand.stagesJson = stagesJson;
             cand.isTask = true;
             cand.taskName = tplName;
             for (const SwarmTaskController::Stage& s : std::as_const(cand.stages)) {
@@ -1036,6 +1042,7 @@ void SwarmAIAgent::selectCandidate(int index)
         _pendingTask = true;
         _pendingTaskName = cand.taskName;
         _pendingStages = cand.stages;
+        _pendingStagesJson = cand.stagesJson;
         emit planPendingChanged();
         emit planChanged();
         _appendChat(tr("系统"), tr("已选择候选任务「%1」，请确认执行。").arg(cand.taskName));
@@ -1201,6 +1208,7 @@ void SwarmAIAgent::confirmPlan()
         const QStringList summary = planSummary();
         _pendingTask = false;
         _pendingStages.clear();
+        _pendingStagesJson = QJsonArray();
         emit planPendingChanged();
         emit planChanged();
         _appendChat(tr("系统"), tr("操作员已确认，多阶段任务启动。"));
@@ -1235,6 +1243,7 @@ void SwarmAIAgent::rejectPlan()
     _pendingPlan.clear();
     _pendingTask = false;
     _pendingStages.clear();
+    _pendingStagesJson = QJsonArray();
     emit planPendingChanged();
     emit planChanged();
     _appendChat(tr("系统"), tr("操作员已放弃该计划。"));

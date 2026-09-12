@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QObject>
 #include <QtCore/QStringList>
@@ -167,7 +168,7 @@ private:
     void _handleResponse(const QByteArray& body);
     void _handleActionsJson(const QJsonArray& actionsJson, const QString& replyText);
     bool _handleTaskJson(const QJsonObject& taskObj, QString& taskName, QList<SwarmTaskController::Stage>& stages,
-                         QStringList& warnings);
+                         QJsonArray& stagesJsonOut, QStringList& warnings);
     void _runTaskTemplate(const QJsonObject& args);
     void _handleCandidates(const QJsonObject& args);  ///< WP2.2 多候选方案
     void _queueOrExecute(const QList<SwarmAction>& plan);
@@ -191,6 +192,7 @@ private:
     bool _pendingTask = false;
     QString _pendingTaskName;
     QList<SwarmTaskController::Stage> _pendingStages;  ///< 待确认多阶段任务
+    QJsonArray _pendingStagesJson;                     ///< 与 _pendingStages 对应的 JSON 原文，编辑的作用对象
     QStringList _chatLog;
     double _lastMapCenterLat = 0.0;
     double _lastMapCenterLon = 0.0;
@@ -201,6 +203,7 @@ private:
         bool isTask = false;
         QList<SwarmAction> plan;                   ///< 动作型候选
         QList<SwarmTaskController::Stage> stages;  ///< 模板/任务型候选
+        QJsonArray stagesJson;                     ///< 与 stages 对应的 JSON 原文
         QString taskName;
     };
 
