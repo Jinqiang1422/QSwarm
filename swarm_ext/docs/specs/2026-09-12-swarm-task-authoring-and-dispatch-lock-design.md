@@ -169,12 +169,17 @@ Q_INVOKABLE void updatePendingStageCondition(int stageIndex, const QString& cond
 2. `set_selection` 动作直接拒绝（沿用 `:1082` 策略与文案）。
 3. 在 `_pendingStagesJson` 的**副本**上合并编辑值。
 4. `parseStages(副本, 地图中心, warnings)` 整体重解析。
-5. 结果为空、或阶段数与编辑前不一致、或 `warnings` 非空 → **拒绝编辑**，
-   保留原 `_pendingStagesJson` / `_pendingStages`，把 warnings 回报给操作员。
+5. 结果为空 → **拒绝编辑**，保留原 `_pendingStagesJson` / `_pendingStages`，
+   把 warnings 回报给操作员。
 6. 通过 → 提交副本，`emit planChanged()`，审计记录一条编辑事件。
 
-第 5 步的三重判据是为了避免 fail-closed 之外的边界：`parseStages` 对非法条件整体失败
-（§2.3），但对其他问题只产生 warning 仍返回结果——这类情况一律视为编辑不成立。
+**判据只需看「结果是否为空」**：`parseStages` 的每一条 warning 后面都跟着 `return {}`
+（条件类型、条件参数范围、`duration` 超时协调、动作非数组、`parseAndValidate` 产生的告警、
+`all_airborne` 与起飞高度矛盾、非 `manual`/`duration` 阶段无动作），因此成功返回时
+`warnings` 必为空、阶段数必等于输入数。额外再查 warnings 或阶段数是冗余的。
+
+这同时说明：初始被接受的任务本身就是零 warning 解析出来的，不存在「基线告警」，
+编辑时不需要跟历史 warnings 做差集。
 
 ### 5.4 审计
 
