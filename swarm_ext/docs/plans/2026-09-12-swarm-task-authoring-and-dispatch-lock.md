@@ -42,6 +42,12 @@ UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)
 漏掉它会得到一个「ctest 里有、二进制里没有」的空壳测试。宏参数里的 label 要与
 `add_qgc_test` 的 `LABELS` 一致。
 
+**测试里绝不能写死机号。** `MockLink` 的系统号从 **128** 起分配（进程内递增），
+所以 `vehicle_ids: [1]` 这类字面量永远不匹配在线飞行器，`parseAndValidate` 会以
+「机号 N 不在线，整个计划已拒绝」整体拒掉任务，测试还没走到被测路径就失败了。
+一律用 `vehicle()->id()`，与 `SwarmRegressionTest` / `SwarmExecutionTest` /
+`SwarmSafetyTest` 的既有写法一致。
+
 **测试的 `ignoreLogMessage` 正则要覆盖被测路径真实发出的消息。** 这些测试跑在严格模式下，
 任何未登记的日志都会判失败。新增用例时先跑一次，把真实报错里的消息文本按**最窄**范围补进
 正则——放太宽会削弱严格模式、掩盖无关噪声。
