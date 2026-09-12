@@ -36,6 +36,11 @@
 而不是 spec §8.2 写的 `Unit`。原因：这些用例需要 `VehicleTest` 提供的 MockLink 飞行器才能让
 `parseAndValidate` 产出带目标机的动作。Spec 的标签写法应以本计划为准。
 
+**容器构建的挂载：** 源码目录必须挂成**可写**（`-v "$PWD:/project/source"`，不加 `:ro`）。
+`build/ccache-launcher` 把 `CCACHE_DIR` 指向 `/project/source/.ccache`，只读挂载会让 ccache
+在写临时文件时报 `Read-only file system` 而构建失败。`run_all.py` 的 `qgc.build`
+（`qgc_mounts`，`:497`）用的也是可写挂载。只有纯执行测试的步骤可以用 `:ro`。
+
 ---
 
 # Part A：待确认任务可编辑
@@ -207,7 +212,7 @@ bool SwarmAIAgent::_handleTaskJson(const QJsonObject& taskObj, QString& taskName
 - [ ] **Step 5: 编译**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build:/project/build" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -368,7 +373,7 @@ add_qgc_test(SwarmTaskEditTest LABELS Integration Vehicle)
 - [ ] **Step 4: 跑测试确认失败**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build:/project/build" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -425,7 +430,7 @@ QVariantList SwarmAIAgent::pendingTaskModel() const
 - [ ] **Step 6: 跑测试确认通过**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build:/project/build" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 cd build && ctest -R SwarmTaskEditTest --output-on-failure
@@ -1051,7 +1056,7 @@ QString SwarmManager::deliveryNotice() const
 
 ```bash
 # 解锁（现有构建目录，选项默认 ON）
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build:/project/build" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
   -w /project/build --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build --config Debug --parallel 20
 ```
@@ -1154,7 +1159,7 @@ endif()
 - [ ] **Step 2: 配置锁定构建目录**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/source --user "$(id -u):$(id -g)" \
   --entrypoint /opt/Qt/6.11.1/gcc_64/bin/qt-cmake qgc-ubuntu-docker:latest \
   -S /project/source -B /project/build-locked -G Ninja \
@@ -1169,7 +1174,7 @@ Expected: 配置成功
 - [ ] **Step 3: 构建并运行锁定用例**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
@@ -1308,7 +1313,7 @@ void SwarmAIAgent::setRequireConfirm(bool require)
 - [ ] **Step 5: 跑测试确认通过**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
@@ -1407,7 +1412,7 @@ Run: `grep -n "receivedMavCommandCount\|clearReceivedMavCommandCounts" src/Comms
 - [ ] **Step 2: 跑测试**
 
 ```bash
-docker run --rm -v "$PWD:/project/source:ro" -v "$PWD/build-locked:/project/build-locked" \
+docker run --rm -v "$PWD:/project/source" -v "$PWD/build-locked:/project/build-locked" \
   -w /project/build-locked --user "$(id -u):$(id -g)" --entrypoint /usr/bin/cmake \
   qgc-ubuntu-docker:latest --build /project/build-locked --config Debug --parallel 20
 cd build-locked && xvfb-run -a ctest -L SwarmLocked --output-on-failure
