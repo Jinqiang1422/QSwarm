@@ -36,6 +36,18 @@
 而不是 spec §8.2 写的 `Unit`。原因：这些用例需要 `VehicleTest` 提供的 MockLink 飞行器才能让
 `parseAndValidate` 产出带目标机的动作。Spec 的标签写法应以本计划为准。
 
+**每个改 C++ 的任务，提交前必须跑格式检查**（计划各任务的步骤里不再重复写）：
+
+```bash
+clang-format -i <本任务改过的 .h/.cc>
+clang-format --dry-run --Werror <同上>   # 预期无输出
+```
+
+宿主的 clang-format 22.1.5 与 `.pre-commit-config.yaml` 钉住的版本一致。
+漏掉这步会让 `source.clang_format` 这道 L0 门禁失败。
+格式化后确认只动了本任务新增的行——若 clang-format 想重排既有代码，停下来上报，
+不要把无关的重排混进提交。
+
 **容器构建的挂载：** 源码目录必须挂成**可写**（`-v "$PWD:/project/source"`，不加 `:ro`）。
 `build/ccache-launcher` 把 `CCACHE_DIR` 指向 `/project/source/.ccache`，只读挂载会让 ccache
 在写临时文件时报 `Read-only file system` 而构建失败。`run_all.py` 的 `qgc.build`
