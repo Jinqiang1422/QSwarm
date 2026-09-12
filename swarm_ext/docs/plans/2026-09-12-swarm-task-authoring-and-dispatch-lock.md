@@ -362,16 +362,16 @@ void SwarmTaskEditTest::pendingTaskModelMustExposeStagesActionsAndCondition()
 `_handleActionsJson` 是私有的，测试需要一个入口。`src/Swarm/SwarmAIAgent.h` 的 public 区加：
 
 ```cpp
-#ifdef QGC_BUILD_TESTING
+#ifdef QGC_UNITTEST_BUILD
     /// 测试入口：直接喂入模型返回的动作数组，绕过网络请求。
     void handleActionsJsonForTest(const QJsonArray& actionsJson) { _handleActionsJson(actionsJson, QString()); }
 #endif
 ```
 
-`QGC_BUILD_TESTING` 宏是否已对该目标定义，用以下命令确认；若未定义，改用
-`#ifndef QT_NO_DEBUG` 之外的既有测试宏，以仓库现状为准：
-
-Run: `grep -rn "QGC_BUILD_TESTING" src/Swarm/ src/*.cc CMakeLists.txt | head`
+**宏名是 `QGC_UNITTEST_BUILD`，不是 `QGC_BUILD_TESTING`。** 后者只是 CMake 选项
+（`cmake/CustomOptions.cmake:50`），源码里没有任何 `#ifdef` 用它；前者由仓库根
+`CMakeLists.txt:347` 的 `add_compile_definitions(QGC_UNITTEST_BUILD)` 目录级定义，
+是 `src/Swarm/SwarmManager.cc`（:43、:263、:287、:403）既有的测试钩子写法。
 
 - [ ] **Step 3: 注册测试目标**
 
@@ -837,7 +837,7 @@ void SwarmTaskEditTest::pendingTaskEditMustBeAudited()
 `src/Swarm/SwarmTaskController.h` public 区加：
 
 ```cpp
-#ifdef QGC_BUILD_TESTING
+#ifdef QGC_UNITTEST_BUILD
     /// 测试入口：读取已启动任务某阶段的超时值，用于校验编辑是否真的生效。
     int stageTimeoutSecForTest(int index) const
     {
