@@ -14,6 +14,10 @@ private slots:
     void init() override;
     void cleanup() override;
     void pendingTaskModelMustExposeStagesActionsAndCondition();
+    void editingStageActionMustRevalidateAndApply();
+    void invalidStageActionEditMustLeaveTaskUnchanged();
+    void editingSetSelectionMustBeRejected();
+    void outOfRangeStageOrActionIndexMustBeRejected();
 
 private:
     void _stagePendingTask();

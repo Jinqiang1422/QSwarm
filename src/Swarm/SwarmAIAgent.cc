@@ -1151,6 +1151,74 @@ void SwarmAIAgent::updatePendingAction(int index, const QString& paramsJson)
     _appendChat(tr("系统"), tr("第 %1 项动作参数已更新：%2").arg(index + 1).arg(revalidated.first().description));
 }
 
+// ---------------------------------------------------------------------------
+// 多阶段任务：逐项编辑动作参数
+// ---------------------------------------------------------------------------
+bool SwarmAIAgent::_applyPendingStagesJson(const QJsonArray& candidate, QString* error)
+{
+    QStringList warnings;
+    const QList<SwarmTaskController::Stage> parsed = _swarmManager->taskController()->parseStages(
+        candidate, QGeoCoordinate(_lastMapCenterLat, _lastMapCenterLon), warnings);
+    // parseStages 严格 fail-closed：每条 warning 后面都跟着 return {}，
+    // 因此「结果非空」即代表全部校验通过，不必另外检查 warnings 或阶段数。
+    if (parsed.isEmpty()) {
+        if (error) {
+            *error = warnings.isEmpty() ? tr("阶段重新校验失败") : warnings.join(QStringLiteral("；"));
+        }
+        return false;
+    }
+    _pendingStagesJson = candidate;
+    _pendingStages = parsed;
+    return true;
+}
+
+void SwarmAIAgent::updatePendingStageAction(int stageIndex, int actionIndex, const QString& paramsJson)
+{
+    if (!_pendingTask || stageIndex < 0 || stageIndex >= _pendingStagesJson.count()) {
+        emit agentFeedback(tr("阶段序号无效"));
+        return;
+    }
+    QJsonObject stageObj = _pendingStagesJson.at(stageIndex).toObject();
+    QJsonArray actions = stageObj.value(QStringLiteral("actions")).toArray();
+    if (actionIndex < 0 || actionIndex >= actions.count()) {
+        emit agentFeedback(tr("动作序号无效"));
+        return;
+    }
+    QJsonObject actionObj = actions.at(actionIndex).toObject();
+    if (actionObj.value(QStringLiteral("type")).toString() == QStringLiteral("set_selection")) {
+        emit agentFeedback(tr("修改目标机请重新生成计划，以保持后续动作的目标一致"));
+        return;
+    }
+    const QJsonObject edited = QJsonDocument::fromJson(paramsJson.toUtf8()).object();
+    if (edited.isEmpty()) {
+        emit agentFeedback(tr("参数 JSON 解析失败，请检查格式"));
+        return;
+    }
+    const QJsonObject before = actionObj;
+    // 与 updatePendingAction 一致：动作参数是合并语义，只覆盖给出的键。
+    for (auto it = edited.constBegin(); it != edited.constEnd(); ++it)
+        actionObj.insert(it.key(), it.value());
+    actions[actionIndex] = actionObj;
+    stageObj[QStringLiteral("actions")] = actions;
+    QJsonArray candidate = _pendingStagesJson;
+    candidate[stageIndex] = stageObj;
+
+    QString error;
+    if (!_applyPendingStagesJson(candidate, &error)) {
+        emit agentFeedback(tr("编辑未生效：%1").arg(error));
+        return;
+    }
+    emit planChanged();
+    SwarmAuditLogger::instance()->log(
+        QStringLiteral("plan"), QStringLiteral("pending_task_edited"),
+        {{QStringLiteral("stage_index"), stageIndex},
+         {QStringLiteral("action_index"), actionIndex},
+         {QStringLiteral("field"), QStringLiteral("action")},
+         {QStringLiteral("before"), QString::fromUtf8(QJsonDocument(before).toJson(QJsonDocument::Compact))},
+         {QStringLiteral("after"), QString::fromUtf8(QJsonDocument(actionObj).toJson(QJsonDocument::Compact))}});
+    _appendChat(tr("系统"), tr("阶段 %1 第 %2 项动作参数已更新").arg(stageIndex + 1).arg(actionIndex + 1));
+}
+
 void SwarmAIAgent::_queueOrExecute(const QList<SwarmAction>& plan)
 {
     if (plan.isEmpty()) {

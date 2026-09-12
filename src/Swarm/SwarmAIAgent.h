@@ -133,6 +133,9 @@ public:
     /// 编辑后重新过统一校验，不通过则不生效
     Q_INVOKABLE void updatePendingAction(int index, const QString& paramsJson);
 
+    /// 编辑待确认任务中某个阶段的某个动作参数；参数与原值合并后整体重校验。
+    Q_INVOKABLE void updatePendingStageAction(int stageIndex, int actionIndex, const QString& paramsJson);
+
     /// WP3.5 态势问答：携带最新态势摘要向模型提问（事实须标注来源 [遥测]/[感知]/[推测]）
     Q_INVOKABLE void askSituation(const QString& question, double mapCenterLat, double mapCenterLon);
 
@@ -184,6 +187,9 @@ private:
     void _setBusy(bool busy);
     void _appendChat(const QString& who, const QString& text);
     void _sendSituationSummary();  ///< WP3.5 周期态势摘要
+
+    /// 用候选 JSON 整体重跑 parseStages，通过才提交。失败时原状态逐字节不变。
+    bool _applyPendingStagesJson(const QJsonArray& candidate, QString* error);
 
     SwarmManager* _swarmManager = nullptr;
     QNetworkAccessManager* _nam = nullptr;
