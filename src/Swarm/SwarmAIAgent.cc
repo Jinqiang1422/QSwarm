@@ -1071,6 +1071,36 @@ QStringList SwarmAIAgent::pendingPlanParamsJson() const
     return out;
 }
 
+QVariantList SwarmAIAgent::pendingTaskModel() const
+{
+    QVariantList stagesOut;
+    if (!_pendingTask)
+        return stagesOut;
+    for (const SwarmTaskController::Stage& stage : _pendingStages) {
+        QVariantList actionsOut;
+        for (const SwarmAction& action : stage.actions) {
+            actionsOut.append(QVariantMap{
+                {QStringLiteral("type"), action.type},
+                {QStringLiteral("description"), action.description},
+                {QStringLiteral("paramsJson"),
+                 QString::fromUtf8(
+                     QJsonDocument(QJsonObject::fromVariantMap(action.params)).toJson(QJsonDocument::Compact))},
+                // 改目标机会让后续动作的目标一致性失效，沿用 updatePendingAction 的既有策略。
+                {QStringLiteral("editable"), action.type != QStringLiteral("set_selection")},
+            });
+        }
+        stagesOut.append(QVariantMap{
+            {QStringLiteral("name"), stage.name},
+            {QStringLiteral("conditionKind"), stage.conditionKind},
+            {QStringLiteral("conditionParamsJson"),
+             QString::fromUtf8(
+                 QJsonDocument(QJsonObject::fromVariantMap(stage.conditionParams)).toJson(QJsonDocument::Compact))},
+            {QStringLiteral("actions"), actionsOut},
+        });
+    }
+    return stagesOut;
+}
+
 // ---------------------------------------------------------------------------
 // WP2.3 计划可编辑
 // ---------------------------------------------------------------------------

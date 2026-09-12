@@ -56,6 +56,8 @@ class SwarmAIAgent : public QObject
     Q_PROPERTY(double responseTimeSec READ responseTimeSec NOTIFY responseTimeSecChanged)
     /// 待确认计划各动作的参数 JSON 文本（WP2.3 计划编辑框初始值）
     Q_PROPERTY(QStringList pendingPlanParamsJson READ pendingPlanParamsJson NOTIFY planChanged)
+    /// 待确认多阶段任务的结构化只读模型：各阶段名称/完成条件/动作列表（供逐项编辑 UI 使用）
+    Q_PROPERTY(QVariantList pendingTaskModel READ pendingTaskModel NOTIFY planChanged)
     /// WP3.5：周期态势摘要开关与间隔（秒）
     Q_PROPERTY(bool situationSummaryEnabled READ situationSummaryEnabled WRITE setSituationSummaryEnabled NOTIFY
                    situationSummaryChanged)
@@ -119,6 +121,8 @@ public:
 
     QStringList pendingPlanParamsJson() const;
 
+    QVariantList pendingTaskModel() const;
+
     /// 选择第 index 个候选方案（WP2.2 多候选），进入正常确认/执行流程
     Q_INVOKABLE void selectCandidate(int index);
 
@@ -142,6 +146,11 @@ public:
     int situationIntervalSec() const { return _situationIntervalSec; }
 
     void setSituationIntervalSec(int sec);
+
+#ifdef QGC_UNITTEST_BUILD
+    /// 测试入口：直接喂入模型返回的动作数组，绕过网络请求。
+    void handleActionsJsonForTest(const QJsonArray& actionsJson) { _handleActionsJson(actionsJson, QString()); }
+#endif
 
 signals:
     void apiBaseUrlChanged();

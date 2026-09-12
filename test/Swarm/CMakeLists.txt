@@ -6,3 +6,6 @@ add_qgc_test(SwarmRegressionTest LABELS Integration Vehicle)
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE SwarmSafetyTest.cc SwarmSafetyTest.h)
 add_qgc_test(SwarmSafetyTest LABELS Integration Vehicle)
+
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE SwarmTaskEditTest.cc SwarmTaskEditTest.h)
+add_qgc_test(SwarmTaskEditTest LABELS Integration Vehicle)
