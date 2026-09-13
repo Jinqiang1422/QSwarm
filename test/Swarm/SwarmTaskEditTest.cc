@@ -20,7 +20,7 @@ void SwarmTaskEditTest::init()
     ignoreLogMessage(
         "API.QGCApplication.AppMessage", QtDebugMsg,
         QRegularExpression("(集群任务|阶段 |阶段「|已生成多阶段任务计划|[0-9]+ 号机：|编辑未生效|阶段序号无效|"
-                           "动作序号无效|修改目标机)"));
+                           "动作序号无效|修改目标机|参数未发生变化)"));
     _manager = std::make_unique<SwarmManager>();
     _manager->setAutonomyLevel(2);
 }
@@ -139,6 +139,65 @@ void SwarmTaskEditTest::outOfRangeStageOrActionIndexMustBeRejected()
     agent->updatePendingStageAction(-1, 0, QStringLiteral(R"({"altitude": 45})"));
 
     QCOMPARE(agent->pendingTaskModel(), before);
+}
+
+void SwarmTaskEditTest::editingStageConditionMustApply()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    agent->updatePendingStageCondition(
+        0, QStringLiteral(R"({"kind": "all_airborne", "min_altitude": 25, "timeout_sec": 900})"));
+
+    const QJsonObject cond =
+        QJsonDocument::fromJson(
+            agent->pendingTaskModel().at(0).toMap().value("conditionParamsJson").toString().toUtf8())
+            .object();
+    QCOMPARE(cond.value("timeout_sec").toInt(), 900);
+}
+
+void SwarmTaskEditTest::changingConditionToManualMustApply()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    agent->updatePendingStageCondition(0, QStringLiteral(R"({"kind": "manual", "timeout_sec": 600})"));
+
+    QCOMPARE(agent->pendingTaskModel().at(0).toMap().value("conditionKind").toString(), QStringLiteral("manual"));
+}
+
+void SwarmTaskEditTest::invalidConditionEditMustLeaveTaskUnchanged()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    const QVariantList before = agent->pendingTaskModel();
+
+    // timeout_sec 下界是 1；未知 kind 也必须被拒。
+    agent->updatePendingStageCondition(0, QStringLiteral(R"({"kind": "all_airborne", "timeout_sec": 0})"));
+    QCOMPARE(agent->pendingTaskModel(), before);
+
+    agent->updatePendingStageCondition(0, QStringLiteral(R"({"kind": "no_such_kind"})"));
+    QCOMPARE(agent->pendingTaskModel(), before);
+}
+
+void SwarmTaskEditTest::typoKeyEditMustReportNoChange()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    const QVariantList before = agent->pendingTaskModel();
+
+    QSignalSpy feedbackSpy(agent, &SwarmAIAgent::agentFeedback);
+    QVERIFY(feedbackSpy.isValid());
+    // 注意：动作参数编辑（updatePendingStageAction）走 parseAndValidate，未知键会被
+    // validateActionInput 硬拒绝（"未知参数：X"），已经如实报错，不会谎称成功——那条路径
+    // 不需要本机制兜底。真正会静默吞掉未知键的是完成条件：parseStages 对 complete_when
+    // 只挑几个认识的键读，不认识的键（这里 min_altitudee 拼错了 min_altitude）不校验也
+    // 不报错，直接被忽略。其余键原样重提交，让重解析结果与编辑前逐字段相同，验证不会被
+    // 误报成功。
+    agent->updatePendingStageCondition(
+        0, QStringLiteral(R"({"kind": "all_airborne", "min_altitude": 25, "timeout_sec": 600, "min_altitudee": 999})"));
+
+    QCOMPARE(agent->pendingTaskModel(), before);
+    QCOMPARE(feedbackSpy.count(), 1);
+    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("参数未发生变化，请检查键名"));
 }
 
 UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)

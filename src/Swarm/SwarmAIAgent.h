@@ -136,6 +136,9 @@ public:
     /// 编辑待确认任务中某个阶段的某个动作参数；参数与原值合并后整体重校验。
     Q_INVOKABLE void updatePendingStageAction(int stageIndex, int actionIndex, const QString& paramsJson);
 
+    /// 编辑待确认任务中某个阶段的完成条件；整个 complete_when 对象被替换后重校验。
+    Q_INVOKABLE void updatePendingStageCondition(int stageIndex, const QString& conditionJson);
+
     /// WP3.5 态势问答：携带最新态势摘要向模型提问（事实须标注来源 [遥测]/[感知]/[推测]）
     Q_INVOKABLE void askSituation(const QString& question, double mapCenterLat, double mapCenterLon);
 
@@ -188,8 +191,14 @@ private:
     void _appendChat(const QString& who, const QString& text);
     void _sendSituationSummary();  ///< WP3.5 周期态势摘要
 
-    /// 用候选 JSON 整体重跑 parseStages，通过才提交。失败时原状态逐字节不变。
-    bool _applyPendingStagesJson(const QJsonArray& candidate, QString* error);
+    /// 将解析后的阶段列表转换为 pendingTaskModel() 的只读形态；供该属性读取，也供
+    /// _commitPendingStagesEdit 在提交前比较编辑是否为空操作复用，避免两处各写一份。
+    static QVariantList _stagesToVariantList(const QList<SwarmTaskController::Stage>& stages);
+
+    /// 提交编辑后的候选阶段 JSON：重跑 parseStages 校验通过、且与编辑前确有差异才落盘、
+    /// 记审计、发通知；校验失败或与编辑前等价（如键名拼错被静默忽略）则如实反馈，不提交。
+    bool _commitPendingStagesEdit(const QJsonArray& candidate, int stageIndex, int actionIndex, const QString& field,
+                                  const QJsonObject& before, const QJsonObject& after, const QString& chatText);
 
     SwarmManager* _swarmManager = nullptr;
     QNetworkAccessManager* _nam = nullptr;

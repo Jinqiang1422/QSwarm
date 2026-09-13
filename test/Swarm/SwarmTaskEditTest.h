@@ -18,6 +18,10 @@ private slots:
     void invalidStageActionEditMustLeaveTaskUnchanged();
     void editingSetSelectionMustBeRejected();
     void outOfRangeStageOrActionIndexMustBeRejected();
+    void editingStageConditionMustApply();
+    void changingConditionToManualMustApply();
+    void invalidConditionEditMustLeaveTaskUnchanged();
+    void typoKeyEditMustReportNoChange();
 
 private:
     void _stagePendingTask();
