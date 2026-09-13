@@ -34,7 +34,6 @@ enum class TestLabel
     Joystick = 1 << 9,        ///< Joystick/controller tests
     AnalyzeView = 1 << 10,    ///< Log analysis and geo-tagging tests
     Terrain = 1 << 11,        ///< Terrain query and tile tests
-    SwarmLocked = 1 << 12,    ///< Tests that only build under QGC_SWARM_AI_AUTODISPATCH=OFF
 };
 Q_DECLARE_FLAGS(TestLabels, TestLabel)
 Q_DECLARE_OPERATORS_FOR_FLAGS(TestLabels)

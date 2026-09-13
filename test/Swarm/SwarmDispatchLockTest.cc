@@ -50,4 +50,4 @@ void SwarmDispatchLockTest::lockedBuildMustReportNoAutodispatch()
     QVERIFY(!_manager->deliveryNotice().isEmpty());
 }
 
-UT_REGISTER_TEST(SwarmDispatchLockTest, TestLabel::Integration, TestLabel::Vehicle, TestLabel::SwarmLocked)
+UT_REGISTER_TEST(SwarmDispatchLockTest, TestLabel::Integration, TestLabel::Vehicle)
