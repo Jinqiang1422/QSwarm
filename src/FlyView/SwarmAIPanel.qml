@@ -420,9 +420,12 @@ Rectangle {
                                 Layout.fillWidth: true
                             }
 
-                            // 面板固定宽度仅 24 个字号单位，标签与输入框/按钮共处一行会挤爆；
-                            // 沿用同文件内 flat-plan 编辑器（:373-391）的做法——标签独占一行，
-                            // 编辑控件另起一行，并同样收在 editParamsToggle 开关之后。
+                            // 面板固定宽度仅约 24 个字号单位：标签、输入框、按钮三者各自独占一行。
+                            // 曾经的做法是标签单独一行、输入框与按钮共享下一行（同文件内 flat-plan
+                            // 编辑器 :373-391 仍是这样），但实测两者的最小宽度之和（约 157px）本来
+                            // 就超过这一列的可用宽度（约 132px）——不是谁在这一行里挤了谁，是这一行
+                            // 放不下两样东西，Layout.fillWidth 只决定多余空间怎么分，决定不了这一点。
+                            // 因此这里三者都单独成行，并统一收在 editParamsToggle 开关之后。
                             Repeater {
                                 model: stageDelegate.modelData.actions
                                 delegate: ColumnLayout {
@@ -436,24 +439,23 @@ Rectangle {
                                         wrapMode:   Text.Wrap
                                         Layout.fillWidth: true
                                     }
-                                    RowLayout {
-                                        visible: editParamsToggle.checked
-                                        spacing: _margin / 2
-                                        QGCTextField {
-                                            id:               actionParamField
-                                            objectName:       "swarmStageActionField"
-                                            text:             modelData.paramsJson
-                                            enabled:          modelData.editable
-                                            placeholderText:  qsTr("参数 JSON，如 {\"altitude\": 40}")
-                                            Layout.fillWidth: true
-                                        }
-                                        QGCButton {
-                                            objectName: "swarmStageActionApply"
-                                            text:      modelData.editable ? qsTr("应用") : qsTr("不可改")
-                                            enabled:   modelData.editable
-                                            onClicked: _ai.updatePendingStageAction(stageDelegate.stageIndex, index,
-                                                                                    actionParamField.text)
-                                        }
+                                    QGCTextField {
+                                        id:               actionParamField
+                                        objectName:       "swarmStageActionField"
+                                        visible:          editParamsToggle.checked
+                                        text:             modelData.paramsJson
+                                        enabled:          modelData.editable
+                                        placeholderText:  qsTr("{\"altitude\": 40}")
+                                        Layout.fillWidth: true
+                                    }
+                                    QGCButton {
+                                        objectName: "swarmStageActionApply"
+                                        visible:    editParamsToggle.checked
+                                        text:       modelData.editable ? qsTr("应用") : qsTr("不可改")
+                                        enabled:    modelData.editable
+                                        Layout.alignment: Qt.AlignRight
+                                        onClicked: _ai.updatePendingStageAction(stageDelegate.stageIndex, index,
+                                                                                actionParamField.text)
                                     }
                                 }
                             }
@@ -462,41 +464,43 @@ Rectangle {
                                 Layout.fillWidth: true
                                 spacing: 0
                                 QGCLabel {
-                                    text:       qsTr("完成条件 %1").arg(stageDelegate.modelData.conditionKind)
+                                    // "可加入 kind 切换条件类型" 提示放在这里而非输入框占位符：这一行
+                                    // 换行、占满整列宽度，放得下；占位符只有一行且字段本身要给参数值
+                                    // 留出可读空间，塞不下这句话，硬塞只会撑大隐式宽度、显示不出来。
+                                    text:       qsTr("完成条件 %1（可加入 \"kind\" 切换条件类型）").arg(stageDelegate.modelData.conditionKind)
                                     wrapMode:   Text.Wrap
                                     Layout.fillWidth: true
                                 }
-                                RowLayout {
+                                QGCTextField {
+                                    id:               conditionField
+                                    objectName:       "swarmStageConditionField"
+                                    visible:          editParamsToggle.checked
+                                    text:             stageDelegate.modelData.conditionParamsJson
+                                    placeholderText:  qsTr("{\"timeout_sec\": 600}")
+                                    Layout.fillWidth: true
+                                }
+                                QGCButton {
+                                    objectName: "swarmStageConditionApply"
                                     visible: editParamsToggle.checked
-                                    spacing: _margin / 2
-                                    QGCTextField {
-                                        id:               conditionField
-                                        objectName:       "swarmStageConditionField"
-                                        text:             stageDelegate.modelData.conditionParamsJson
-                                        placeholderText:  qsTr("完成条件参数 JSON；可加入 \"kind\" 切换条件类型，如 {\"timeout_sec\": 600}")
-                                        Layout.fillWidth: true
-                                    }
-                                    QGCButton {
-                                        objectName: "swarmStageConditionApply"
-                                        text: qsTr("应用")
-                                        onClicked: {
-                                            var payload = conditionField.text
-                                            var edited = null
-                                            try {
-                                                edited = JSON.parse(payload)
-                                            } catch (e) {
-                                                edited = null
-                                            }
-                                            // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
-                                            // 否则改成 manual 这类换档操作永远做不到。
-                                            if (edited !== null && edited.kind === undefined) {
-                                                edited.kind = stageDelegate.modelData.conditionKind
-                                                payload = JSON.stringify(edited)
-                                            }
-                                            // 解析失败时原样下送，由 C++ 侧既有守卫统一给出
-                                            // “完成条件 JSON 解析失败，请检查格式”，不在 QML 里另开一条提示通道。
-                                            _ai.updatePendingStageCondition(stageDelegate.stageIndex, payload)
+                                    text: qsTr("应用")
+                                    Layout.alignment: Qt.AlignRight
+                                    onClicked: {
+                                        var payload = conditionField.text
+                                        var edited = null
+                                        try {
+                                            edited = JSON.parse(payload)
+                                        } catch (e) {
+                                            edited = null
                                         }
+                                        // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
+                                        // 否则改成 manual 这类换档操作永远做不到。
+                                        if (edited !== null && edited.kind === undefined) {
+                                            edited.kind = stageDelegate.modelData.conditionKind
+                                            payload = JSON.stringify(edited)
+                                        }
+                                        // 解析失败时原样下送，由 C++ 侧既有守卫统一给出
+                                        // “完成条件 JSON 解析失败，请检查格式”，不在 QML 里另开一条提示通道。
+                                        _ai.updatePendingStageCondition(stageDelegate.stageIndex, payload)
                                     }
                                 }
                             }
