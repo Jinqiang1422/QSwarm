@@ -162,6 +162,15 @@ void SwarmTaskEditTest::changingConditionToManualMustApply()
     agent->updatePendingStageCondition(0, QStringLiteral(R"({"kind": "manual", "timeout_sec": 600})"));
 
     QCOMPARE(agent->pendingTaskModel().at(0).toMap().value("conditionKind").toString(), QStringLiteral("manual"));
+
+    // 整体替换语义的关键证据：旧 all_airborne 条件的 min_altitude:25 必须被丢弃。若实现
+    // 退化成合并（从旧 complete_when 起步、插入编辑键），min_altitude 会原样存活、这条
+    // 用例也会照样通过——只看 conditionKind 测不出替换和合并的区别。
+    const QJsonObject cond =
+        QJsonDocument::fromJson(
+            agent->pendingTaskModel().at(0).toMap().value("conditionParamsJson").toString().toUtf8())
+            .object();
+    QVERIFY(!cond.contains(QStringLiteral("min_altitude")));
 }
 
 void SwarmTaskEditTest::invalidConditionEditMustLeaveTaskUnchanged()
