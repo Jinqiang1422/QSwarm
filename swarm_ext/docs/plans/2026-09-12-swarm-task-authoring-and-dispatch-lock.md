@@ -42,6 +42,23 @@ UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)
 漏掉它会得到一个「ctest 里有、二进制里没有」的空壳测试。宏参数里的 label 要与
 `add_qgc_test` 的 `LABELS` 一致。
 
+**启动了任务状态机的测试必须在 `cleanup()` 里中止它。** `startTask()` 会
+`_persistState()`，把 RUNNING 记录写进 `tasks.json`（`QStandardPaths::AppDataLocation`，
+整个测试二进制进程共享）。`shutdown()` 只停定时器、不清文件，于是**下一个**用例的
+`init()` 构造 `SwarmTaskController` 时会读到残留记录并发出
+「检测到重启前未完成任务…」，在严格日志模式下把无关用例判失败。
+在 `cleanup()` 里 `if (running()) taskController()->abort(...)`，它经 `_finish()`
+清空持久化文件。Task 9/11 会启动任务，同样适用。
+
+**`ctest` 必须在容器内跑。** 构建目录里烘进的是容器内路径（`/project/build`），
+在宿主直接跑 `ctest` 会报 `Cannot create directory /project/build/Testing/Temporary`：
+
+```bash
+docker run --rm --init -v "$PWD:/project/source" -v "$PWD/build:/project/build" \
+  -w /project/build --user "$(id -u):$(id -g)" --entrypoint /bin/bash \
+  qgc-ubuntu-docker:latest -lc "xvfb-run -a ctest -R <Name> --output-on-failure"
+```
+
 **每条测试都必须能判别。** 本计划里已经有三条测试写成了「实现坏掉也照样通过」：
 Task 4 的 `set_selection` 拒绝用例（载荷机号本身离线，删掉守卫也会被别的检查拒掉）、
 Task 5 的 `typoKeyEditMustReportNoChange`（前提搞错了路径）、
