@@ -67,14 +67,6 @@ void SwarmTaskEditorUITest::init()
                      QRegularExpression(QStringLiteral("已生成多阶段任务计划")));
     ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
                      QRegularExpression(QStringLiteral("已放弃 AI 行动计划")));
-    // _testEditRoundTripsThroughUI() deliberately drives clickButtonScrolled() into the
-    // known, QEXPECT_FAIL'd stage-apply-button-unreachable defect (see that test's STATUS
-    // comment). scrollIntoView()'s own settle-timeout logs this warning (UnitTest.cc)
-    // before reporting the QTest::qFail() that QEXPECT_FAIL converts to XFAIL; strict log
-    // mode would otherwise still flag the warning as unregistered even though the failure
-    // itself is expected and accounted for.
-    ignoreLogMessage("Test.UnitTest", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("Timeout waiting for condition \"scrollIntoView settled\"")));
 }
 
 void SwarmTaskEditorUITest::cleanup()
@@ -155,14 +147,23 @@ bool SwarmTaskEditorUITest::_waitForContentHeightSettled(const QString& flickabl
 // that reintroducing a wide sibling into the field's line drops this ratio from ~96% to
 // ~43%, comfortably crossing the 80% threshold used here.
 //
-// LIMITATION (be honest about what this does NOT verify): the ">0.8" ratio has no upper
-// bound, so it does not itself catch the field *overflowing* the panel -- and it does:
-// the field's own settled width (157px) exceeds swarmAIPanelFlickable's (138px) even in
-// the current, intentionally-restructured layout, which trivially satisfies ">80%" while
-// still being too wide to fit. Do not read a pass here as "the width is verified sound".
-// That overflow is what _testEditRoundTripsThroughUI's QEXPECT_FAIL documents instead --
-// this assertion only guards against a *sibling* squeezing the field back down, which is
-// the specific mechanism of Task 7's original bug.
+// UPDATE (Task 7c): the ">0.8" ratio above has no upper bound by itself and would not have
+// caught the *overflow* mechanism this test previously documented as an unfixed defect --
+// the field's own implicit width could inflate past swarmAIPanelFlickable's clip width while
+// still trivially satisfying ">80%". Task 7c found and fixed the actual root cause: two
+// QGCLabels in this same shared planColumn (the flat-plan summary line and the stage
+// condition-kind hint, both wrapMode: Text.Wrap with no width cap) reported their full
+// *unwrapped* text as implicitWidth, which a single-column ColumnLayout used to override
+// anchors.fill's ~132px available width and drag every sibling row -- including this field --
+// out past the flickable's clip bounds. The fix (SwarmAIPanel.qml) gives every such QGCLabel
+// and QGCTextField in the plan-confirm area a Layout.maximumWidth (measurement showed
+// Layout.minimumWidth alone has no effect on this inflation) so no single row can ever force
+// the column wider than the panel. The second assertion below turns that fix into a
+// regression guard: the field must not just be *wide enough* (first assertion) but also never
+// wider than the flickable that clips it -- exactly the property whose absence let Task 7's
+// bug ship unnoticed. Verified to discriminate: temporarily removing the QGCTextField/QGCLabel
+// Layout.maximumWidth overrides reproduces the original failure (field width 157px vs
+// flickable width 138px) and fails this new assertion; restoring them passes it.
 void SwarmTaskEditorUITest::_testStageActionFieldIsVisibleAndWide()
 {
     runWithMockLink(
@@ -192,6 +193,17 @@ void SwarmTaskEditorUITest::_testStageActionFieldIsVisibleAndWide()
                                                "of the panel's usable width (%2px) -- something is squeezing it")
                                     .arg(field->width())
                                     .arg(flickable->width())));
+            // Upper bound: the field must never be wider than the flickable that clips it --
+            // Task 7's original bug (field width 157px vs flickable width 138px) satisfied the
+            // ">0.8" lower bound above while still overflowing the clip region and making the
+            // apply button unreachable. See the block comment above this test for how this was
+            // verified to discriminate.
+            QVERIFY2(field->width() <= flickable->width(),
+                     qPrintable(QStringLiteral("Stage action edit field (%1px) is wider than "
+                                               "swarmAIPanelFlickable (%2px) -- it overflows the panel's "
+                                               "clip region even though it passes the ratio check above")
+                                    .arg(field->width())
+                                    .arg(flickable->width())));
         });
 }
 
@@ -201,29 +213,32 @@ void SwarmTaskEditorUITest::_testStageActionFieldIsVisibleAndWide()
 // a real click must land for this to prove an operator can actually reach and press the
 // button, not merely that the handler code works.
 //
-// STATUS: this is a KNOWN, DOCUMENTED DEFECT, not a flaky or half-finished test. Two
-// separate fix attempts were tried and both failed to make the button reachable. First,
-// adding Layout.fillWidth: true to a shared RowLayout only changed what that row *asked
-// its parent for*, not what it *needed* -- the field's implicit width (then driven by a
-// long placeholderText) plus the button already exceeded the available column on their
-// own, so the row overflowed regardless of how correctly it was constrained. Second, the
-// field and button were moved to separate lines (the restructure this file's QML change
-// still carries -- a genuine improvement, see the block comment on assertion 1) and both
-// placeholderText strings were shortened to short JSON examples, eliminating row-sharing
-// entirely. That did not fix it either: measured with the field's *pristine* text
-// ({"altitude":30}, 15 chars) and again after editing to {"altitude": 45} (17 chars), the
-// field's own implicit width is 157px in both cases -- against swarmAIPanelFlickable's
-// 138px. The field alone, now with nothing sharing its line, already exceeds the panel's
-// available width for ordinary JSON content. The same 157px-vs-138px overflow was measured
-// on the pre-existing flat-plan editor (SwarmAIPanel.qml:379-392, untouched by this
-// change), so this is a shipped, pre-existing defect that predates all of this work, not
-// something introduced here. Fixing the panel's width/layout is a product decision left to
-// the repo owner (a wrapping QGCLabel's *unwrapped* natural width forcing the column wide
-// is the likely mechanism, per the coordinator's own read of QGCTextField/QGCLabel -- not
-// verified here). QEXPECT_FAIL below records this as an expected failure rather than
-// hiding it (uncommitted red test) or masking it (reverting to a non-UI click substitute):
-// if this button ever becomes genuinely clickable, Qt reports XPASS and fails the test,
-// forcing whoever fixed it to notice and remove the marker.
+// STATUS (Task 7c): FIXED. Two earlier fix attempts (recorded in git history) failed to
+// make this button reachable: first, adding Layout.fillWidth: true to a shared RowLayout
+// only changed what that row *asked its parent for*, not what it *needed*; second, moving
+// the field and button to separate lines (still the structure today) removed row-sharing
+// but the field's own implicit width (157px, against swarmAIPanelFlickable's 138px) still
+// overflowed the panel on its own. Both attempts assumed the QGCTextField itself was the
+// forcing element. Direct measurement (walking planColumn's children and printing
+// implicitWidth/width for each -- see the task report) disproved that: the QGCTextFields
+// were never the culprit (implicitWidth 60px, well under budget). The actual forcing
+// elements were two QGCLabels sharing the same planColumn -- the flat-plan editor's summary
+// line (SwarmAIPanel.qml, Repeater over _ai.planSummary) and the stage editor's completion-
+// condition hint -- both wrapMode: Text.Wrap with no width cap, so their implicitWidth
+// reported the full *unwrapped* line (289px and 217px respectively for this fixture's
+// content) and a single-column ColumnLayout used that, uncapped, to override anchors.fill's
+// ~132px available width, dragging every sibling row (including the field and the flat-plan
+// editor's paramField at SwarmAIPanel.qml ~:379-392, the same pre-existing defect) out past
+// the flickable's clip bounds with it. Also: Layout.minimumWidth, the property this test's
+// own prior investigation assumed would fix it, measurably does nothing here; the property
+// that actually caps a row's contribution to the shared column width is Layout.maximumWidth.
+// The fix (SwarmAIPanel.qml) gives every wrapping QGCLabel and QGCTextField in the plan-
+// confirm area (including the flat-plan editor, explicitly in scope per the task) a
+// Layout.maximumWidth, and splits the one button row whose own combined width (~157px) was
+// the next-largest offender into two rows so no control is truncated. A real
+// QTest::mouseClick() (via clickButtonScrolled()) now lands on this button; the
+// QEXPECT_FAIL that used to guard this known failure has been removed -- leaving it in
+// place would make Qt report XPASS and fail the suite now that the click succeeds.
 void SwarmTaskEditorUITest::_testEditRoundTripsThroughUI()
 {
     runWithMockLink(
@@ -252,29 +267,9 @@ void SwarmTaskEditorUITest::_testEditRoundTripsThroughUI()
             QCOMPARE(field->property("text").toString(), newParams);
 
             QVERIFY(verifyEnabled(QStringLiteral("swarmStageActionApply"), true, QStringLiteral("stage apply button")));
-            // clickButtonScrolled() -> findVisibleItemScrolled() -> scrollIntoView() reports
-            // its own timeout via a raw QTest::qFail() call (QmlUITestBase.cc) when the item
-            // never settles inside the flickable -- that call is what actually consumes this
-            // QEXPECT_FAIL and gets reported as XFAIL below, *before* clickButtonScrolled()
-            // returns to this line. QEXPECT_FAIL is a one-shot marker: wrapping the call in
-            // our own QVERIFY/QVERIFY2 as well would run a *second*, now-unprotected
-            // verification of the same already-reported failure and turn the suite red again
-            // (confirmed empirically). So the result is captured and checked manually instead
-            // -- this is what gives Abort mode's "don't run the rest of this test slot against
-            // an unclicked button" behavior here, since Abort's automatic early-return only
-            // applies to the QCOMPARE/QVERIFY macro invocation that directly consumes the
-            // marker, not to code further up the call stack.
-            QEXPECT_FAIL("",
-                         "面板宽度不足以容纳编辑行：输入框所在列宽 157px 超过可视区 138px，"
-                         "「应用」按钮落在 clip 边界外，真实点击被吞掉。"
-                         "既有的扁平计划编辑器（SwarmAIPanel.qml:379-392）实测数字相同，"
-                         "属先于本次改动的缺陷。修复需另行决定面板布局。",
-                         Abort);
-            const bool clicked =
-                clickButtonScrolled(QStringLiteral("swarmStageActionApply"), QStringLiteral("swarmAIPanelFlickable"));
-            if (!clicked) {
-                return;
-            }
+            QVERIFY2(
+                clickButtonScrolled(QStringLiteral("swarmStageActionApply"), QStringLiteral("swarmAIPanelFlickable")),
+                "Could not click the stage apply button");
 
             const QVariantList model = agent->pendingTaskModel();
             QVERIFY2(!model.isEmpty(), "Pending task model is empty after apply");
