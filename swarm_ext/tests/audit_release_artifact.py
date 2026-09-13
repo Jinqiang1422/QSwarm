@@ -29,6 +29,22 @@ def _count_marker(binary: mmap.mmap, marker: bytes) -> int:
         offset += len(marker)
 
 
+# CMake spells "false" several ways across cache entries; a missing/blank value is
+# deliberately NOT treated as false-y here -- it means the cache predates the
+# QGC_SWARM_AI_AUTODISPATCH option entirely, which must fail the check rather than
+# silently pass as "locked".
+_CMAKE_FALSE_TOKENS = {"OFF", "0", "FALSE", "NO", "N", "IGNORE"}
+
+
+def _is_cmake_falsy(value: str) -> bool:
+    token = value.strip().upper()
+    if not token:
+        return False
+    if token.endswith("-NOTFOUND"):
+        return True
+    return token in _CMAKE_FALSE_TOKENS
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", required=True)
@@ -50,11 +66,22 @@ def main() -> int:
         b"QGC_SWARM_ACCEPTANCE_PORT",
         b"SwarmAcceptanceServer",
     ]
+    # Present only in a build compiled with QGC_SWARM_AI_AUTODISPATCH_DISABLED (see
+    # SwarmManager::deliveryNotice) -- unlike SwarmAutonomy::levelName's "L2 监督执行" /
+    # "L3 限定域自主" strings, which compile into both build flavors and therefore carry
+    # no discriminating power, this banner is conditionally compiled and only exists in
+    # the locked build's binary.
+    required_markers = [
+        "本版本要求所有 AI 动作经人工确认后执行，不提供自动下发".encode(),
+    ]
     with binary_path.open("rb") as binary_file:  # noqa: SIM117 -- Python 3.8
         with mmap.mmap(binary_file.fileno(), 0, access=mmap.ACCESS_READ) as binary:
             marker_hits = {
                 marker.decode("ascii"): _count_marker(binary, marker)
                 for marker in forbidden_markers
+            }
+            required_marker_hits = {
+                marker.decode("utf-8"): _count_marker(binary, marker) for marker in required_markers
             }
     symbol_hits = 0
     try:
@@ -73,11 +100,16 @@ def main() -> int:
             nm_process.wait()
     testing_enabled = _cache_value(cache_path, "QGC_BUILD_TESTING")
     build_type = _cache_value(cache_path, "CMAKE_BUILD_TYPE")
+    autodispatch = _cache_value(cache_path, "QGC_SWARM_AI_AUTODISPATCH")
+    autodispatch_locked = _is_cmake_falsy(autodispatch)
+    required_markers_present = all(hits > 0 for hits in required_marker_hits.values())
     passed = (
         testing_enabled == "OFF"
         and build_type == "Release"
         and not any(marker_hits.values())
         and symbol_hits == 0
+        and autodispatch_locked
+        and required_markers_present
     )
     payload = {
         "version": 1,
@@ -85,7 +117,10 @@ def main() -> int:
         "binary_size_bytes": binary_path.stat().st_size,
         "cmake_build_type": build_type,
         "qgc_build_testing": testing_enabled,
+        "qgc_swarm_ai_autodispatch": autodispatch,
+        "autodispatch_locked": autodispatch_locked,
         "forbidden_marker_hits": marker_hits,
+        "required_marker_hits": required_marker_hits,
         "acceptance_symbol_hits": symbol_hits,
         "pass": passed,
     }
@@ -94,7 +129,9 @@ def main() -> int:
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(
         f"{'PASS' if passed else 'FAIL'} release acceptance audit: "
-        f"testing={testing_enabled} markers={sum(marker_hits.values())} symbols={symbol_hits}"
+        f"testing={testing_enabled} markers={sum(marker_hits.values())} symbols={symbol_hits} "
+        f"autodispatch={autodispatch}(locked={autodispatch_locked}) "
+        f"required_markers={sum(required_marker_hits.values())}"
     )
     print(f"report={output_path}")
     return 0 if passed else 1

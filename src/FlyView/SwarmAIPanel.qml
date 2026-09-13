@@ -87,6 +87,22 @@ Rectangle {
                 spacing:        _margin
                 width:          parent.width
 
+                // 交付锁定提示：仅在 QGC_SWARM_AI_AUTODISPATCH 关闭的构建中非空（见 SwarmManager::
+                // deliveryNotice）。放在配置区顶部、常驻显示，不随下方自主等级等控件的隐藏而消失。
+                // 宽度处理：configColumn 是普通 Column（非 ColumnLayout），沿用本区块内其余换行
+                // QGCLabel 的既有写法——显式 width: parent.width，而非 Layout.fillWidth /
+                // Layout.maximumWidth（那两者只在 RowLayout/ColumnLayout 内生效，Column 会忽略
+                // Layout 附加属性）。Column 按子项的显式 width 分配空间、不会像单列 ColumnLayout
+                // 那样用子项未换行的 implicitWidth 覆盖父级宽度，因此这里不会重演 Task 7c 撑宽面板
+                // 导致按钮点不到的问题。
+                QGCLabel {
+                    text:       _swarm.deliveryNotice
+                    visible:    _swarm.deliveryNotice !== ""
+                    wrapMode:   Text.WordWrap
+                    color:      qgcPal.warningText
+                    width:      parent.width
+                }
+
                 QGCLabel { text: qsTr("◆ 大模型接口（OpenAI 兼容）"); font.bold: true }
                 QGCLabel { text: qsTr("接口地址") }
                 QGCTextField {
@@ -114,6 +130,9 @@ Rectangle {
                     spacing: _margin
                     QGCButton { text: qsTr("测试连接"); onClicked: _ai.testConnection() }
                     QGCCheckBox {
+                        // 交付锁定构建中该项被强制开启且不可关闭（见 deliveryNotice），显示一个
+                        // 用户改不动的开关只会造成困惑，故隐藏。
+                        visible: _swarm.aiAutodispatchAvailable
                         text:    qsTr("所有 AI 动作均需确认")
                         checked: _ai.requireConfirm
                         onClicked: _ai.requireConfirm = checked
@@ -126,10 +145,17 @@ Rectangle {
                 }
 
                 // ---------- 自主等级（WP1.3） ----------
-                QGCLabel { text: qsTr("◆ 自主等级"); font.bold: true }
+                // 交付锁定构建中自主等级被固定在 L2 且无法更改（见 deliveryNotice），下拉框和
+                // 说明文字对操作员没有实际意义，一并隐藏；标题一起隐藏以免留下空标题。
+                QGCLabel {
+                    text:       qsTr("◆ 自主等级")
+                    font.bold:  true
+                    visible:    _swarm.aiAutodispatchAvailable
+                }
                 RowLayout {
                     width:      parent.width
                     spacing: _margin
+                    visible:    _swarm.aiAutodispatchAvailable
                     QGCComboBox {
                         model:          [qsTr("L1 仅建议"), qsTr("L2 监督执行"), qsTr("L3 限定域自主")]
                         currentIndex:   _swarm.autonomyLevel - 1
@@ -145,7 +171,10 @@ Rectangle {
                 Flow {
                     width:              parent.width
                     spacing:            _margin
-                    visible:            _swarm.autonomyLevel === 3
+                    // 锁定构建里 autonomyLevel 恒为 2，本条件本就恒假；显式并上
+                    // aiAutodispatchAvailable，避免日后有人改动 autonomyLevel 的取值范围时
+                    // 意外把这个编辑器重新亮出来。
+                    visible:            _swarm.autonomyLevel === 3 && _swarm.aiAutodispatchAvailable
                     Repeater {
                         model: ["arm", "takeoff", "land", "rtl", "start_mission", "disarm", "start_formation"]
                         delegate: QGCCheckBox {
