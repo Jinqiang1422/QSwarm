@@ -1143,6 +1143,35 @@ Task 7b 的 UI 测试用真实鼠标点击失败，再回头量几何量证实�
 这一整类问题——按钮在裁剪区外、点击被静默吞掉——qmllint 干净、编译通过、人工读代码
 三样都抓不到。触及固定宽面板的 QML 改动，必须有能驱动真实点击的 UI 测试。
 
+## Task 7d: 消除 Swarm 测试的间歇失败
+
+`SwarmSafetyTest` 在组合套件里约每 4 轮失败 1 次，单独跑必过。复现抓到的实际原因：
+
+```
+FAIL!  : SwarmSafetyTest::policyRevocationMustStopQueuedAutomaticArm(confirmed-L3-to-L1)
+         Unexpected log messages (strict mode):
+QWARN  : "COMP_METADATA_TYPE_GENERAL" : failed to load metadata (primary and fallback) ""
+         - ComponentInformation.RequestMetaDataTypeStateMachine
+```
+
+**不是 Swarm 逻辑问题**：MockLink 不提供该组件元数据，本机网络受限，下载尝试是否在测试
+窗口内失败取决于时序，严格日志模式便判失败。
+
+`test/QmlUITests/QmlUITestBase.cc:140-145` 早已为这条告警注册了忽略（注释写明
+「ArduPilot MockLink 不提供 COMP_METADATA_TYPE_GENERAL」），但四个 Swarm 测试继承的是
+`VehicleTest` 而非 `QmlUITestBase`，拿不到这条登记。
+
+修法：按同一条窄正则在合适位置登记；放在哪里要权衡爆炸半径——`VehicleTest` 的使用范围
+远超 Swarm，若共享位置会让本该因此失败的测试一起哑掉，就逐个登记。
+
+**验证要求**：这个失败只有约 25% 概率出现，「跑一遍绿了」不构成证据。必须证明正则确实
+匹配到真实消息（让消息确定性地产生，或统计多轮里告警出现且被吸收）。
+
+### 教训
+
+安全测试的间歇失败不能当偶发带过——它训练人去重跑而不是去查。抓到复现、定位到具体
+消息、再按既有先例窄范围登记，才是正确处置。
+
 ## Part A 收尾检查
 
 - [ ] **回归**
