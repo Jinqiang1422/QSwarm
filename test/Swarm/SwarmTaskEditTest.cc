@@ -1,5 +1,6 @@
 #include "SwarmTaskEditTest.h"
 
+#include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -7,6 +8,7 @@
 #include <QtTest/QSignalSpy>
 
 #include "SwarmAIAgent.h"
+#include "SwarmAuditLogger.h"
 #include "SwarmManager.h"
 #include "SwarmTaskController.h"
 #include "Vehicle.h"
@@ -20,15 +22,22 @@ void SwarmTaskEditTest::init()
     ignoreLogMessage(
         "API.QGCApplication.AppMessage", QtDebugMsg,
         QRegularExpression("(集群任务|阶段 |阶段「|已生成多阶段任务计划|[0-9]+ 号机：|编辑未生效|阶段序号无效|"
-                           "动作序号无效|修改目标机|本次编辑未改变任何参数)"));
+                           "动作序号无效|修改目标机|本次编辑未改变任何参数|测试清理)"));
     _manager = std::make_unique<SwarmManager>();
     _manager->setAutonomyLevel(2);
 }
 
 void SwarmTaskEditTest::cleanup()
 {
-    if (_manager)
+    if (_manager) {
+        // 本套件里唯一会真正启动任务状态机的用例（confirmAfterEditMustStartTheEditedTask）
+        // 若不主动中止就直接 shutdown，_persistState 落盘的 RUNNING 记录会在下一条用例
+        // 构造 SwarmManager 时被当成“重启前未完成任务”恢复，向下一条本不该有任务的用例
+        // 泄露一条未登记的 taskFeedback。先中止清空持久化，再关闭。
+        if (_manager->taskController() && _manager->taskController()->running())
+            _manager->taskController()->abort(QStringLiteral("测试清理"));
         _manager->shutdown();
+    }
     _manager.reset();
     VehicleTest::cleanup();
 }
@@ -207,6 +216,35 @@ void SwarmTaskEditTest::typoKeyEditMustReportNoChange()
     QCOMPARE(agent->pendingTaskModel(), before);
     QCOMPARE(feedbackSpy.count(), 1);
     QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("本次编辑未改变任何参数"));
+}
+
+void SwarmTaskEditTest::confirmAfterEditMustStartTheEditedTask()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    agent->updatePendingStageCondition(
+        0, QStringLiteral(R"({"kind": "all_airborne", "min_altitude": 25, "timeout_sec": 777})"));
+    agent->confirmPlan();
+
+    SwarmTaskController* task = _manager->taskController();
+    QVERIFY(task->running());
+    QCOMPARE(task->stageCount(), 2);
+    QCOMPARE(task->stageTimeoutSecForTest(0), 777);
+}
+
+void SwarmTaskEditTest::pendingTaskEditMustBeAudited()
+{
+    _stagePendingTask();
+    const int before = _manager->auditEventCount();
+    _manager->aiAgent()->updatePendingStageAction(0, 0, QStringLiteral(R"({"altitude": 45})"));
+    QVERIFY(_manager->auditEventCount() > before);
+
+    const QString exported = _manager->exportAudit();
+    QVERIFY(!exported.isEmpty());
+    QFile file(exported);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString contents = QString::fromUtf8(file.readAll());
+    QVERIFY(contents.contains(QStringLiteral("pending_task_edited")));
 }
 
 UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)

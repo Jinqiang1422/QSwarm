@@ -22,6 +22,8 @@ private slots:
     void changingConditionToManualMustApply();
     void invalidConditionEditMustLeaveTaskUnchanged();
     void typoKeyEditMustReportNoChange();
+    void confirmAfterEditMustStartTheEditedTask();
+    void pendingTaskEditMustBeAudited();
 
 private:
     void _stagePendingTask();
