@@ -14,6 +14,9 @@ private slots:
     void init() override;
     void cleanup() override;
     void lockedBuildMustReportNoAutodispatch();
+    void autonomyLevelMustBePinnedToSupervised();
+    void persistedAutonomyLevelMustBeIgnored();
+    void requireConfirmMustBePinnedOn();
 
 private:
     std::unique_ptr<SwarmManager> _manager;

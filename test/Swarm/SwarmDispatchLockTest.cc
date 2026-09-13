@@ -1,7 +1,9 @@
 #include "SwarmDispatchLockTest.h"
 
 #include <QtCore/QRegularExpression>
+#include <QtCore/QSettings>
 
+#include "SwarmAIAgent.h"
 #include "SwarmManager.h"
 #include "SwarmTaskController.h"
 #include "Vehicle.h"
@@ -48,6 +50,33 @@ void SwarmDispatchLockTest::lockedBuildMustReportNoAutodispatch()
 {
     QVERIFY(!_manager->aiAutodispatchAvailable());
     QVERIFY(!_manager->deliveryNotice().isEmpty());
+}
+
+void SwarmDispatchLockTest::autonomyLevelMustBePinnedToSupervised()
+{
+    QCOMPARE(_manager->autonomyLevel(), 2);
+    _manager->setAutonomyLevel(3);
+    QCOMPARE(_manager->autonomyLevel(), 2);
+    _manager->setAutonomyLevel(1);
+    QCOMPARE(_manager->autonomyLevel(), 2);
+    QVERIFY(_manager->l3AllowedTypes().isEmpty());
+}
+
+void SwarmDispatchLockTest::persistedAutonomyLevelMustBeIgnored()
+{
+    QSettings().setValue(QStringLiteral("Swarm/autonomyLevel"), 3);
+    auto fresh = std::make_unique<SwarmManager>();
+    QCOMPARE(fresh->autonomyLevel(), 2);
+    QVERIFY(fresh->l3AllowedTypes().isEmpty());
+    fresh->shutdown();
+    QSettings().remove(QStringLiteral("Swarm/autonomyLevel"));
+}
+
+void SwarmDispatchLockTest::requireConfirmMustBePinnedOn()
+{
+    QVERIFY(_manager->aiAgent()->requireConfirm());
+    _manager->aiAgent()->setRequireConfirm(false);
+    QVERIFY(_manager->aiAgent()->requireConfirm());
 }
 
 UT_REGISTER_TEST(SwarmDispatchLockTest, TestLabel::Integration, TestLabel::Vehicle)

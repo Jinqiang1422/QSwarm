@@ -204,11 +204,15 @@ private:
     QNetworkAccessManager* _nam = nullptr;
     QNetworkReply* _reply = nullptr;
 
-    QString _apiBaseUrl;           // 默认 https://api.deepseek.com/v1（可在界面修改）
+    QString _apiBaseUrl;  // 默认 https://api.deepseek.com/v1（可在界面修改）
     QString _apiKey;
-    QString _modelName;            // 默认 deepseek-chat
+    QString _modelName;   // 默认 deepseek-chat
     bool _useFunctionCalling = true;
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    bool _requireConfirm = true;  ///< 交付构建：每个 AI 动作都必须人工确认，不可关闭。
+#else
     bool _requireConfirm = false;  ///< 可选：连低风险动作也逐项确认；强制规则独立生效。
+#endif
     bool _busy = false;
 
     QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断

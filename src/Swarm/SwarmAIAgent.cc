@@ -139,10 +139,16 @@ void SwarmAIAgent::setUseFunctionCalling(bool use)
 
 void SwarmAIAgent::setRequireConfirm(bool require)
 {
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 交付构建：确认开关钉死为开，不接受调用方关闭。
+    Q_UNUSED(require);
+    return;
+#else
     if (_requireConfirm != require) {
         _requireConfirm = require;
         emit requireConfirmChanged();
     }
+#endif
 }
 
 QStringList SwarmAIAgent::planSummary() const
