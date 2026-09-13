@@ -42,6 +42,16 @@ UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)
 漏掉它会得到一个「ctest 里有、二进制里没有」的空壳测试。宏参数里的 label 要与
 `add_qgc_test` 的 `LABELS` 一致。
 
+**每条测试都必须能判别。** 本计划里已经有三条测试写成了「实现坏掉也照样通过」：
+Task 4 的 `set_selection` 拒绝用例（载荷机号本身离线，删掉守卫也会被别的检查拒掉）、
+Task 5 的 `typoKeyEditMustReportNoChange`（前提搞错了路径）、
+Task 5 的 `changingConditionToManualMustApply`（只查 kind，合并实现也能过）。
+
+写完每条测试后自问：**把我刚加的那段实现删掉，这条测试会失败吗？**
+不确定就动手验证——临时改坏实现、跑一次、看它是否变红、再改回来。
+断言要落在能区分两种实现的那个观测点上（往往是具体的反馈文案或某个键的有无，
+而不是「状态没变」这种多条路径共享的结果）。
+
 **测试里绝不能写死机号。** `MockLink` 的系统号从 **128** 起分配（进程内递增），
 所以 `vehicle_ids: [1]` 这类字面量永远不匹配在线飞行器，`parseAndValidate` 会以
 「机号 N 不在线，整个计划已拒绝」整体拒掉任务，测试还没走到被测路径就失败了。
