@@ -675,6 +675,26 @@ rejected edit leaves the task byte-identical."
 
 ## Task 5: 编辑阶段完成条件
 
+> **Task 4 质量审查追加的三项**（在本任务一并处理，避免把同一模式抄第三遍）：
+>
+> 1. **审计记录截断**。兄弟调用 `plan_edited` 用 `paramsJson.left(500)` 封顶，
+>    Task 4 新增的 `pending_task_edited` 没有。`plan_tactic`/`patrol` 动作带不定长
+>    `polygon` 数组，不封顶会产生无界审计条目。给 `before`/`after` 都加 `.left(500)`，
+>    Task 4 那处也一并补上。
+> 2. **抽取共享尾部**。本任务的函数与 `updatePendingStageAction` 形状几乎相同
+>    （同样的数据形状、同样调 `_applyPendingStagesJson`、同样的审计+聊天尾部，
+>    且没有 `set_selection` 概念）。抽一个私有辅助承担
+>    「提交候选 → 审计 → 聊天」这段，两个 stage 编辑函数共用。
+>    **不要**把 `updatePendingAction`（扁平计划路径）也拽进来——它的校验入口
+>    是 `parseAndValidate` + `planHasConstraintError`，与 stage 路径本质不同。
+> 3. **空操作要如实告知**。合并语义会把操作员写的任何键塞进 JSON，
+>    `parseAndValidate` 对不认识的键静默忽略，于是一个拼错的键会让界面提示
+>    「已更新」而实际什么都没变。在提交前比较重解析后的 `_pendingStages` 与编辑前
+>    是否相等，相等则提示「参数未发生变化，请检查键名」而不是报成功，
+>    且不记审计、不发 `planChanged`。这一条直接关系到「人工确认是否有意义」，
+>    是 Part A 的立身之本。两个 stage 编辑函数都要有。
+
+
 **Files:**
 - Modify: `src/Swarm/SwarmAIAgent.h`、`src/Swarm/SwarmAIAgent.cc`
 - Test: `test/Swarm/SwarmTaskEditTest.{h,cc}`
