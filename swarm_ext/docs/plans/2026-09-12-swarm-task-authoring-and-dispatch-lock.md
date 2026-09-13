@@ -1061,6 +1061,47 @@ confirming one was closer to a rubber stamp than a review."
 
 ---
 
+## Task 7b: 阶段编辑器的 QML UI 测试
+
+Task 7 的质量审查发现一个**只有跑起来才暴露**的 Critical 问题：面板固定宽 24 单位，
+而编辑行的标签独占 18 单位，编辑框与按钮会被挤到不可用。qmllint 干净、编译链接通过、
+人工读代码，三样都没抓到它。这个界面是 Part A 的操作员入口，不能只有静态证据。
+
+**Files:**
+- Create: `test/QmlUITests/SwarmTaskEditorUITest.{h,cc}`
+- Modify: `test/QmlUITests/CMakeLists.txt`
+- Modify: `src/FlyView/SwarmAIPanel.qml`（只加 `objectName`，不改行为）
+
+**已知事实（省去重复调研）：**
+
+- `SwarmAIPanel` 在 `FlyViewWidgetLayer.qml:80` 上有
+  `visible: QGroundControl.multiVehicleManager.vehicles.count > 0` —— 必须先接入飞行器。
+  `QmlUITestBase::runWithMockLink(factory, body)`（`QmlUITestBase.h:171`）提供 MockLink 飞行器。
+- `findVisibleItem(_rootItem, objectName)` 是本目录的既有查找方式
+  （见 `RemoteIDSettingsUITest.cc:66/87/227`），配合 `QTRY_VERIFY*_WITH_TIMEOUT` 轮询。
+- `SwarmSituationLayerUITest`（83 行）是本目录里唯一的 Swarm 样板：`startUI()` +
+  `qScopeGuard([this]{ stopUI(); })` + `UT_REGISTER_TEST(<Name>, TestLabel::Integration)`，
+  在 `CMakeLists.txt:33-34/54` 注册，标签 `Integration NoSanitizer TIMEOUT 120`。
+- 编辑行现在由 `editParamsToggle.checked` 门控（Task 7 的修复），测试必须先勾上它。
+- 后端用 `SwarmManager::instance()`（单例），不要另建 manager——UI 绑定的是单例。
+
+**要证明的事：**
+
+1. 面板里真的能找到阶段编辑框（`objectName` 需新加），且**可见、宽度非零**
+   ——这正是 Task 7 那个 Critical 会被抓住的地方。
+2. 改写编辑框文本、点「应用」之后，`pendingTaskModel()` 里对应的值真的变了。
+3. `set_selection` 的编辑框处于禁用态。
+
+**判别性要求：** 至少第 1、2 条要验证「把实现破坏掉会失败」。宽度断言建议直接查
+`item->width() > 0` 并且大于按钮宽度之类的可证伪量，而不是只查指针非空。
+
+**允许的范围内改动：** 给 Task 7 新增的控件加 `objectName`（如 `swarmStageActionField`、
+`swarmStageActionApply`、`swarmStageConditionField`、`swarmStageConditionApply`），
+形式参照本目录其它 UI 测试所依赖的命名。不得改任何行为。
+
+**若面板无法在测试里变为可见**（例如需要额外的工具栏交互），把你查到的事实写清楚并报
+BLOCKED，不要为了让测试通过而改产品代码的可见性条件。
+
 ## Part A 收尾检查
 
 - [ ] **回归**
