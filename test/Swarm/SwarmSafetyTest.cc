@@ -26,6 +26,14 @@ SwarmSafetyTest::~SwarmSafetyTest() = default;
 void SwarmSafetyTest::init()
 {
     VehicleTest::init();
+    // MockLink does not serve COMP_METADATA_TYPE_GENERAL; the primary/fallback download
+    // failure is environmental (this host has restricted network access), not a defect
+    // under test. Whether the attempt fails inside this test's strict-log capture window
+    // is timing-dependent, which otherwise makes an unrelated safety test flake. See
+    // QmlUITestBase::ignoreAPMMockLinkWarnings for the identical precedent.
+    ignoreLogMessage("ComponentInformation.RequestMetaDataTypeStateMachine", QtWarningMsg,
+                     QRegularExpression(QStringLiteral(
+                         "\"COMP_METADATA_TYPE_GENERAL\" : failed to load metadata \\(primary and fallback\\) \"\"")));
     QVERIFY(vehicle());
     ignoreLogMessage(
         "API.QGCApplication.AppMessage", QtDebugMsg,
