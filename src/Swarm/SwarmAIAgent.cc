@@ -1210,7 +1210,7 @@ void SwarmAIAgent::updatePendingStageAction(int stageIndex, int actionIndex, con
     }
     emit planChanged();
     SwarmAuditLogger::instance()->log(
-        QStringLiteral("plan"), QStringLiteral("pending_task_edited"),
+        QStringLiteral("dialog"), QStringLiteral("pending_task_edited"),
         {{QStringLiteral("stage_index"), stageIndex},
          {QStringLiteral("action_index"), actionIndex},
          {QStringLiteral("field"), QStringLiteral("action")},

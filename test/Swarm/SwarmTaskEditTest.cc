@@ -4,6 +4,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
+#include <QtTest/QSignalSpy>
 
 #include "SwarmAIAgent.h"
 #include "SwarmManager.h"
@@ -114,9 +115,17 @@ void SwarmTaskEditTest::editingSetSelectionMustBeRejected()
     QVERIFY(
         !agent->pendingTaskModel().at(0).toMap().value("actions").toList().at(0).toMap().value("editable").toBool());
 
+    // 用信号内容而非仅状态不变来断言：机号 1/2 本身也不在线，若把 set_selection 守卫
+    // 删掉，编辑仍会被 parseAndValidate 的“机号不在线”挡住、状态照样不变——那样这条
+    // 用例就测不出守卫本身有没有生效。必须核对具体的反馈文案才能把两者区分开。
+    QSignalSpy feedbackSpy(agent, &SwarmAIAgent::agentFeedback);
+    QVERIFY(feedbackSpy.isValid());
     const QVariantList before = agent->pendingTaskModel();
     agent->updatePendingStageAction(0, 0, QStringLiteral(R"({"vehicle_ids": [1, 2]})"));
     QCOMPARE(agent->pendingTaskModel(), before);
+    QCOMPARE(feedbackSpy.count(), 1);
+    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(),
+             QStringLiteral("修改目标机请重新生成计划，以保持后续动作的目标一致"));
 }
 
 void SwarmTaskEditTest::outOfRangeStageOrActionIndexMustBeRejected()
