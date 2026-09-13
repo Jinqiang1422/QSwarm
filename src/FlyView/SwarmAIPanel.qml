@@ -391,6 +391,88 @@ Rectangle {
                             }
                         }
                     }
+                    // ==================== 待确认任务：逐阶段编辑 ====================
+                    Repeater {
+                        model: _ai.pendingTaskModel
+                        delegate: ColumnLayout {
+                            id:                       stageDelegate
+                            required property var     modelData
+                            required property int     index
+                            // 阶段序号显式具名保存：内层 Repeater 自己的 required property int
+                            // index 会遮蔽这里的 index，直接用 index 或 parent.parent.index 都
+                            // 会拿到错误的（或随布局改动就会碎掉的）值，因此用带 id 限定的
+                            // stageDelegate.stageIndex 让内层显式引用外层这一份。
+                            readonly property int     stageIndex: index
+                            Layout.fillWidth: true
+                            spacing: ScreenTools.defaultFontPixelHeight / 4
+
+                            QGCLabel {
+                                text:      qsTr("阶段 %1「%2」").arg(stageDelegate.stageIndex + 1).arg(stageDelegate.modelData.name)
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: stageDelegate.modelData.actions
+                                delegate: RowLayout {
+                                    required property var modelData
+                                    required property int index
+                                    Layout.fillWidth: true
+
+                                    QGCLabel {
+                                        text: qsTr("动作 %1 %2").arg(index + 1).arg(modelData.type)
+                                        Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 18
+                                    }
+                                    QGCTextField {
+                                        id:               actionParamField
+                                        text:             modelData.paramsJson
+                                        enabled:          modelData.editable
+                                        Layout.fillWidth: true
+                                    }
+                                    QGCButton {
+                                        text:      modelData.editable ? qsTr("应用") : qsTr("不可改")
+                                        enabled:   modelData.editable
+                                        onClicked: _ai.updatePendingStageAction(stageDelegate.stageIndex, index,
+                                                                                actionParamField.text)
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                QGCLabel {
+                                    text: qsTr("完成条件 %1").arg(stageDelegate.modelData.conditionKind)
+                                    Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 18
+                                }
+                                QGCTextField {
+                                    id:               conditionField
+                                    text:             stageDelegate.modelData.conditionParamsJson
+                                    Layout.fillWidth: true
+                                }
+                                QGCButton {
+                                    text: qsTr("应用")
+                                    onClicked: {
+                                        var payload = conditionField.text
+                                        var edited = null
+                                        try {
+                                            edited = JSON.parse(payload)
+                                        } catch (e) {
+                                            edited = null
+                                        }
+                                        // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
+                                        // 否则改成 manual 这类换档操作永远做不到。
+                                        if (edited !== null && edited.kind === undefined) {
+                                            edited.kind = stageDelegate.modelData.conditionKind
+                                            payload = JSON.stringify(edited)
+                                        }
+                                        // 解析失败时原样下送，由 C++ 侧既有守卫统一给出
+                                        // “完成条件 JSON 解析失败，请检查格式”，不在 QML 里另开一条提示通道。
+                                        _ai.updatePendingStageCondition(stageDelegate.stageIndex, payload)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     RowLayout {
                         spacing: _margin
                         QGCButton { text: qsTr("确认执行"); onClicked: _ai.confirmPlan() }
