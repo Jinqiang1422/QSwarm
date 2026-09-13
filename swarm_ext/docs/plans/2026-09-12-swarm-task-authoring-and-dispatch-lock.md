@@ -1102,6 +1102,47 @@ Task 7 的质量审查发现一个**只有跑起来才暴露**的 Critical 问�
 **若面板无法在测试里变为可见**（例如需要额外的工具栏交互），把你查到的事实写清楚并报
 BLOCKED，不要为了让测试通过而改产品代码的可见性条件。
 
+## Task 7c: 修复面板编辑行溢出（按钮点不动）
+
+Task 7b 的 UI 测试用真实鼠标点击失败，再回头量几何量证实：编辑行溢出 `QGCFlickable`
+的裁剪边界，「应用」/「更新」按钮收不到点击。**出厂的扁平计划编辑器有同一缺陷**，
+实测数字相同。仓库所有者已授权一并修复。
+
+### 根因
+
+1. `_root.width` 固定为 `ScreenTools.defaultFontPixelWidth * 24`（`:24`），
+   `mainColumn` 是 `width: _root.width - _margin * 2` 的普通 `Column`（`:79-80`），
+   计划区 `Rectangle` 是 `width: parent.width`（`:350`），
+   `planColumn`（**`ColumnLayout`**）`anchors.fill: parent` 带 `_margin` 内缩——
+   容器链本身是正确约束的，可用宽约 132px。
+2. **`ColumnLayout` 不会把子项压到 `Layout.minimumWidth`（默认＝`implicitWidth`）以下。**
+   只要有一个子项的 implicitWidth 超过可用宽，整列最小宽度就被它顶起来，
+   所有 `Layout.fillWidth` 的兄弟项跟着一起拿到这个膨胀后的宽度。
+3. `QGCTextField` 的 implicitWidth ＝ `max(背景, 内容 + leftPadding + rightPadding)`。
+   背景只有 `ScreenTools.implicitTextFieldWidth` ＝ `defaultFontPixelWidth * 10`
+   （`ScreenTools.qml:109`），但 `QGCTextField.qml:21` 有
+   `rightPadding: _marginPadding + unitsHelpLayout.width`，且字段为空时内容宽取
+   `placeholderText`。
+4. **两个编辑器在同一个 `planColumn` 里**——这解释了为什么两处量出完全相同的 157px、
+   为什么只缩短阶段编辑器的 placeholder 无效（扁平编辑器那句长的仍在撑列），
+   以及为什么扁平编辑器「也有同样缺陷」：它其实是成因。
+
+### 修法
+
+给计划区里全部三个 `QGCTextField`（扁平编辑器的 `paramField`、`swarmStageActionField`、
+`swarmStageConditionField`）设显式 `Layout.minimumWidth`（约
+`ScreenTools.defaultFontPixelWidth * 8`），保留 `Layout.fillWidth: true`——
+让列能压缩它们，同时仍占满实际可用宽度。
+
+修好后必须摘掉 `SwarmTaskEditorUITest::_testEditRoundTripsThroughUI` 的 `QEXPECT_FAIL`
+（留着会变成 XPASS 而判失败），并给 `_testStageActionFieldIsVisibleAndWide` 补一条
+**上界**断言（字段宽不得超过 flickable 宽），防止将来再次膨胀。
+
+### 教训
+
+这一整类问题——按钮在裁剪区外、点击被静默吞掉——qmllint 干净、编译通过、人工读代码
+三样都抓不到。触及固定宽面板的 QML 改动，必须有能驱动真实点击的 UI 测试。
+
 ## Part A 收尾检查
 
 - [ ] **回归**
