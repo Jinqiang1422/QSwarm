@@ -1001,9 +1001,18 @@ suite would pass even if confirmPlan quietly started the pre-edit stages."
                                 QGCButton {
                                     text: qsTr("应用")
                                     onClicked: {
-                                        var merged = JSON.parse(conditionField.text)
-                                        merged.kind = modelData.conditionKind
-                                        _ai.updatePendingStageCondition(index, JSON.stringify(merged))
+                                        var edited
+                                        try {
+                                            edited = JSON.parse(conditionField.text)
+                                        } catch (e) {
+                                            _ai.reportEditParseError(qsTr("完成条件 JSON 解析失败，请检查格式"))
+                                            return
+                                        }
+                                        // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
+                                        // 否则改成 manual 这类换档操作永远做不到。
+                                        if (edited.kind === undefined)
+                                            edited.kind = modelData.conditionKind
+                                        _ai.updatePendingStageCondition(index, JSON.stringify(edited))
                                     }
                                 }
                             }
@@ -1011,9 +1020,18 @@ suite would pass even if confirmPlan quietly started the pre-edit stages."
                     }
 ```
 
-**说明：** 条件编辑框只暴露参数，`kind` 由上面的 `merged.kind` 带回，
-因此界面上改参数不会意外丢掉 kind。改 `kind` 本身（例如换成 `manual`）
-本轮通过直接编辑 JSON 完成——把 `kind` 写进参数框即可覆盖。
+**说明：** 条件编辑框显示的是参数对象。操作员只改参数时，`kind` 由当前值补回，
+不会意外丢失；想换档（例如改成 `manual`）就在框里直接写 `"kind": "manual"`，
+代码不会覆盖它。
+
+`JSON.parse` 在 QML 里遇到非法输入会**抛异常**，必须 try/catch，否则点「应用」会静默炸掉。
+C++ 侧的解析失败提示走不到这里——那条路径只在 JSON 合法但内容非法时才触发——所以
+需要一个把前端解析错误送进同一条反馈通道的入口（下方 `reportEditParseError`）。
+
+**嵌套 Repeater 的索引**：内层 delegate 里的 `index` 是动作序号，阶段序号要靠外层拿。
+`parent.parent.index` 这种写法既脆弱又依赖布局层级，实施时请改用 QML 的
+`required property` 配合显式传递（例如外层 delegate 暴露一个属性给内层绑定），
+并在报告里说明你用的方式。
 
 - [ ] **Step 2: qmllint 检查**
 
