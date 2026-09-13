@@ -1174,9 +1174,14 @@ bool SwarmAIAgent::_commitPendingStagesEdit(const QJsonArray& candidate, int sta
         return false;
     }
     // 合并语义会把任意键塞进 JSON，而 parseStages/parseAndValidate 对不认识的键静默
-    // 忽略；提交前比较重解析结果与编辑前是否等价，避免把“拼错键名、什么都没变”误报成功。
+    // 忽略；提交前比较重解析结果与编辑前是否等价，避免把“什么都没变”误报成功。
+    // 提示故意不点名原因：动作路径的未知键早就被 validateActionInput 硬拒绝在上一个
+    // 分支了（能走到这里说明键都合法，只是值和原来相同）；条件路径则可能是键名拼错被
+    // 静默忽略，也可能是操作员删掉了显式 timeout_sec、被 parseStages 的默认值正好补回
+    // 原值——这两种在条件路径下都会落到同一个“重解析结果不变”的判定，硬说是“键名有问题”
+    // 对第二种情况就是误导。
     if (_stagesToVariantList(parsed) == pendingTaskModel()) {
-        emit agentFeedback(tr("参数未发生变化，请检查键名"));
+        emit agentFeedback(tr("本次编辑未改变任何参数"));
         return false;
     }
     _pendingStagesJson = candidate;

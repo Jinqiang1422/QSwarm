@@ -20,7 +20,7 @@ void SwarmTaskEditTest::init()
     ignoreLogMessage(
         "API.QGCApplication.AppMessage", QtDebugMsg,
         QRegularExpression("(集群任务|阶段 |阶段「|已生成多阶段任务计划|[0-9]+ 号机：|编辑未生效|阶段序号无效|"
-                           "动作序号无效|修改目标机|参数未发生变化)"));
+                           "动作序号无效|修改目标机|本次编辑未改变任何参数)"));
     _manager = std::make_unique<SwarmManager>();
     _manager->setAutonomyLevel(2);
 }
@@ -206,7 +206,7 @@ void SwarmTaskEditTest::typoKeyEditMustReportNoChange()
 
     QCOMPARE(agent->pendingTaskModel(), before);
     QCOMPARE(feedbackSpy.count(), 1);
-    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("参数未发生变化，请检查键名"));
+    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("本次编辑未改变任何参数"));
 }
 
 UT_REGISTER_TEST(SwarmTaskEditTest, TestLabel::Integration, TestLabel::Vehicle)
