@@ -1001,18 +1001,22 @@ suite would pass even if confirmPlan quietly started the pre-edit stages."
                                 QGCButton {
                                     text: qsTr("应用")
                                     onClicked: {
-                                        var edited
+                                        var payload = conditionField.text
+                                        var edited = null
                                         try {
-                                            edited = JSON.parse(conditionField.text)
+                                            edited = JSON.parse(payload)
                                         } catch (e) {
-                                            _ai.reportEditParseError(qsTr("完成条件 JSON 解析失败，请检查格式"))
-                                            return
+                                            edited = null
                                         }
                                         // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
                                         // 否则改成 manual 这类换档操作永远做不到。
-                                        if (edited.kind === undefined)
+                                        if (edited !== null && edited.kind === undefined) {
                                             edited.kind = modelData.conditionKind
-                                        _ai.updatePendingStageCondition(index, JSON.stringify(edited))
+                                            payload = JSON.stringify(edited)
+                                        }
+                                        // 解析失败时原样下送，由 C++ 侧既有守卫统一给出
+                                        // “完成条件 JSON 解析失败，请检查格式”，不在 QML 里另开一条提示通道。
+                                        _ai.updatePendingStageCondition(index, payload)
                                     }
                                 }
                             }
@@ -1025,8 +1029,9 @@ suite would pass even if confirmPlan quietly started the pre-edit stages."
 代码不会覆盖它。
 
 `JSON.parse` 在 QML 里遇到非法输入会**抛异常**，必须 try/catch，否则点「应用」会静默炸掉。
-C++ 侧的解析失败提示走不到这里——那条路径只在 JSON 合法但内容非法时才触发——所以
-需要一个把前端解析错误送进同一条反馈通道的入口（下方 `reportEditParseError`）。
+但**不要**为此新增 C++ 接口：解析失败时把原文原样下送即可，
+`updatePendingStageCondition` 里 `QJsonDocument::fromJson` 对非法输入返回空对象，
+既有守卫会给出「完成条件 JSON 解析失败，请检查格式」。反馈仍然只有一条通道。
 
 **嵌套 Repeater 的索引**：内层 delegate 里的 `index` 是动作序号，阶段序号要靠外层拿。
 `parent.parent.index` 这种写法既脆弱又依赖布局层级，实施时请改用 QML 的
