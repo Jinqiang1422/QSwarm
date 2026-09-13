@@ -63,3 +63,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 if(QGC_BUILD_TESTING)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE SwarmAcceptanceServer.cc SwarmAcceptanceServer.h)
 endif()
+
+if(NOT QGC_SWARM_AI_AUTODISPATCH)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE QGC_SWARM_AI_AUTODISPATCH_DISABLED)
+endif()

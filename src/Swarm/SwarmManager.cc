@@ -369,6 +369,26 @@ QString SwarmManager::autonomyLevelDescription() const
     return SwarmAutonomy::levelDescription(static_cast<SwarmAutonomy::Level>(_autonomyLevel));
 }
 
+bool SwarmManager::aiAutodispatchAvailable() const
+{
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    return false;
+#else
+    return true;
+#endif
+}
+
+QString SwarmManager::deliveryNotice() const
+{
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 该串同时是发布审计的判别标记，见 swarm_ext/tests/audit_release_artifact.py。
+    // 必须是条件编译而非运行期分支，否则两种构建的二进制里都会有它，审计失去判别力。
+    return tr("本版本要求所有 AI 动作经人工确认后执行，不提供自动下发");
+#else
+    return QString();
+#endif
+}
+
 QString SwarmManager::auditSessionId() const
 {
     return SwarmAuditLogger::instance()->sessionId();

@@ -90,6 +90,8 @@ class SwarmManager : public QObject
     Q_PROPERTY(QString constraintsError READ constraintsError NOTIFY constraintsChanged)
     Q_PROPERTY(quint64 constraintRevision READ constraintRevision NOTIFY constraintsChanged)
     Q_PROPERTY(quint64 lastExecutionId READ lastExecutionId NOTIFY executionStatesChanged)
+    Q_PROPERTY(bool aiAutodispatchAvailable READ aiAutodispatchAvailable CONSTANT)
+    Q_PROPERTY(QString deliveryNotice READ deliveryNotice CONSTANT)
     Q_MOC_INCLUDE("SwarmCOPModel.h")
     Q_MOC_INCLUDE("SwarmPerceptionBridge.h")
 
@@ -164,6 +166,11 @@ public:
     /// 自主等级信息（供 QML 显示）
     Q_INVOKABLE QString autonomyLevelName() const;
     Q_INVOKABLE QString autonomyLevelDescription() const;
+
+    /// 构建能力上报：本构建是否放行 AI 自动下发（不含人工确认）。交付版恒为 false。
+    bool aiAutodispatchAvailable() const;
+    /// 交付横幅：交付版提示所有 AI 动作均需人工确认；非交付版为空串。
+    QString deliveryNotice() const;
 
     /// 审计接口（供 QML）：会话 ID / 事件数 / 导出当前会话（返回导出路径，失败为空串）
     Q_INVOKABLE QString auditSessionId() const;

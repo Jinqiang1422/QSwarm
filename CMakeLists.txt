@@ -43,6 +43,13 @@ option(QGC_VERBOSE_CONFIGURE "Prefix configure messages with module context labe
 set(CMAKE_MESSAGE_CONTEXT_SHOW ${QGC_VERBOSE_CONFIGURE})
 list(APPEND CMAKE_MESSAGE_CONTEXT qgc)
 
+# Delivery builds must not let AI-authored actions dispatch without per-plan operator
+# confirmation; test builds keep the levels the existing suite needs. Defaults to
+# QGC_BUILD_TESTING (set above via include(CustomOptions)), so this must stay after it.
+option(QGC_SWARM_AI_AUTODISPATCH
+       "Allow AI-authored actions to dispatch without per-plan operator confirmation"
+       ${QGC_BUILD_TESTING})
+
 # build-config.json is the source of truth; keep cmake_minimum_required(...) above in sync.
 if(CMAKE_VERSION VERSION_LESS QGC_CONFIG_CMAKE_MINIMUM)
     message(FATAL_ERROR "QGC: requires CMake ${QGC_CONFIG_CMAKE_MINIMUM}+, found ${CMAKE_VERSION}")
