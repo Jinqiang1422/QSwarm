@@ -8,7 +8,6 @@
 #include <QtTest/QSignalSpy>
 
 #include "SwarmAIAgent.h"
-#include "SwarmAuditLogger.h"
 #include "SwarmManager.h"
 #include "SwarmTaskController.h"
 #include "Vehicle.h"
@@ -229,6 +228,8 @@ void SwarmTaskEditTest::confirmAfterEditMustStartTheEditedTask()
     SwarmTaskController* task = _manager->taskController();
     QVERIFY(task->running());
     QCOMPARE(task->stageCount(), 2);
+    // 777 与 _stagePendingTask() 里的 600 不同：只有当 confirmPlan() 启动的是编辑后的
+    // 阶段而不是编辑前的，这条断言才会成立。
     QCOMPARE(task->stageTimeoutSecForTest(0), 777);
 }
 
