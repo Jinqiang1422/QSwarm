@@ -64,6 +64,7 @@ Rectangle {
 
     // ---------------------------------------------------------------- 主内容
     QGCFlickable {
+        objectName:             "swarmAIPanelFlickable"
         anchors.left:           parent.left
         anchors.right:          parent.right
         anchors.top:            headerRow.bottom
@@ -440,12 +441,14 @@ Rectangle {
                                         spacing: _margin / 2
                                         QGCTextField {
                                             id:               actionParamField
+                                            objectName:       "swarmStageActionField"
                                             text:             modelData.paramsJson
                                             enabled:          modelData.editable
                                             placeholderText:  qsTr("参数 JSON，如 {\"altitude\": 40}")
                                             Layout.fillWidth: true
                                         }
                                         QGCButton {
+                                            objectName: "swarmStageActionApply"
                                             text:      modelData.editable ? qsTr("应用") : qsTr("不可改")
                                             enabled:   modelData.editable
                                             onClicked: _ai.updatePendingStageAction(stageDelegate.stageIndex, index,
@@ -468,11 +471,13 @@ Rectangle {
                                     spacing: _margin / 2
                                     QGCTextField {
                                         id:               conditionField
+                                        objectName:       "swarmStageConditionField"
                                         text:             stageDelegate.modelData.conditionParamsJson
                                         placeholderText:  qsTr("完成条件参数 JSON；可加入 \"kind\" 切换条件类型，如 {\"timeout_sec\": 600}")
                                         Layout.fillWidth: true
                                     }
                                     QGCButton {
+                                        objectName: "swarmStageConditionApply"
                                         text: qsTr("应用")
                                         onClicked: {
                                             var payload = conditionField.text
@@ -503,9 +508,10 @@ Rectangle {
                         QGCButton { text: qsTr("确认执行"); onClicked: _ai.confirmPlan() }
                         QGCButton { text: qsTr("放弃");     onClicked: _ai.rejectPlan() }
                         QGCCheckBox {
-                            id:      editParamsToggle
-                            text:    qsTr("编辑参数")
-                            checked: false
+                            id:         editParamsToggle
+                            objectName: "swarmEditParamsToggle"
+                            text:       qsTr("编辑参数")
+                            checked:    false
                         }
                     }
                 }
