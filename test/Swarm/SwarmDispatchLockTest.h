@@ -17,6 +17,9 @@ private slots:
     void autonomyLevelMustBePinnedToSupervised();
     void persistedAutonomyLevelMustBeIgnored();
     void requireConfirmMustBePinnedOn();
+    void harmlessAiPlanMustNotAutoDispatch();
+    void confirmedAiPlanMustDispatch();
+    void operatorTaskMustStillRun();
 
 private:
     std::unique_ptr<SwarmManager> _manager;
