@@ -320,16 +320,28 @@ void SwarmManager::setCommandIntervalMs(int intervalMs)
 
 void SwarmManager::_loadSettings()
 {
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 交付构建：等级固定在 L2 监督执行，忽略持久化旧值——装过旧版本的机器升级后
+    // 不得带着 L3 启动。L3 白名单同时清空。
+    _autonomyLevel = static_cast<int>(SwarmAutonomy::Level::L2Supervised);
+    _l3AllowedTypes.clear();
+#else
     QSettings settings;
     _autonomyLevel = qBound(1, settings.value(QStringLiteral("Swarm/autonomyLevel"), 2).toInt(), 3);
     _l3AllowedTypes =
         settings
             .value(QStringLiteral("Swarm/l3AllowedTypes"), QVariant::fromValue(SwarmAutonomy::defaultL3AllowedTypes()))
             .toStringList();
+#endif
 }
 
 void SwarmManager::setAutonomyLevel(int level)
 {
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 交付构建：自主等级钉死在 L2，不接受调用方修改，也不落盘、不广播变更信号。
+    Q_UNUSED(level);
+    return;
+#else
     level = qBound(1, level, 3);
     if (_autonomyLevel != level) {
         _autonomyLevel = level;
@@ -341,10 +353,16 @@ void SwarmManager::setAutonomyLevel(int level)
         emit swarmCommandFeedback(
             tr("自主等级已切换为 %1").arg(SwarmAutonomy::levelName(static_cast<SwarmAutonomy::Level>(level))));
     }
+#endif
 }
 
 void SwarmManager::setL3AllowedTypes(const QStringList& types)
 {
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 交付构建：L3 白名单钉死为空，不接受调用方修改，也不落盘、不广播变更信号。
+    Q_UNUSED(types);
+    return;
+#else
     if (_l3AllowedTypes != types) {
         _l3AllowedTypes = types;
         ++_policyRevision;
@@ -352,6 +370,7 @@ void SwarmManager::setL3AllowedTypes(const QStringList& types)
         QSettings().setValue(QStringLiteral("Swarm/l3AllowedTypes"), QVariant::fromValue(types));
         emit l3AllowedTypesChanged();
     }
+#endif
 }
 
 QString SwarmManager::auditDir() const
@@ -367,6 +386,26 @@ QString SwarmManager::autonomyLevelName() const
 QString SwarmManager::autonomyLevelDescription() const
 {
     return SwarmAutonomy::levelDescription(static_cast<SwarmAutonomy::Level>(_autonomyLevel));
+}
+
+bool SwarmManager::aiAutodispatchAvailable() const
+{
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    return false;
+#else
+    return true;
+#endif
+}
+
+QString SwarmManager::deliveryNotice() const
+{
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    // 该串同时是发布审计的判别标记，见 swarm_ext/tests/audit_release_artifact.py。
+    // 必须是条件编译而非运行期分支，否则两种构建的二进制里都会有它，审计失去判别力。
+    return tr("本版本要求所有 AI 动作经人工确认后执行，不提供自动下发");
+#else
+    return QString();
+#endif
 }
 
 QString SwarmManager::auditSessionId() const

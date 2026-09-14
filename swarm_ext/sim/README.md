@@ -10,7 +10,7 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 | --- | --- |
 | `SITL测试流程.md` | **分层测试流程设计**：L1 机队/MAVLink 契约 + L2 QGC 应用逻辑，覆盖全部功能域与验收指标 |
 | `launch_swarm_sitl.sh` | 一键拉起 N 机 PX4 SITL（v2 修正版，默认 4 机，gz 后端，内置 Xvfb + 软件 GL + heartbeat 就绪探测 + 负载预警） |
-| `scenarios/*.json` | 8 个场景定义：时间线动作 + 故障注入 + 通过准则 |
+| `scenarios/*.json` | 12 个场景定义：时间线动作 + 故障注入 + 通过准则 |
 | `run_scenario.py` | 场景运行器：MAVLink 或 QGC 接口驱动、故障注入、几何/时延实测、JSON 报告 |
 | `regression.py` | **一键回归**：跑完全部场景 + 汇总 Markdown 报告(PASS/FAIL + 关键指标)，退出码可接 CI，`--dry-run` 自检 |
 | `strict_regression.py` | **严格回归**：逐场景重建 PX4/Gazebo 机群；托管 QGC 时也隔离 HOME，杜绝跨场景状态污染 |
@@ -52,6 +52,10 @@ SITL 启动链路已在官方 PX4 v1.15.4 源码构建上完成 1→4→8 递进
 | 06 | 感知链路馈送 | 断言 QGC 接收时延、COP 地理误差、模型航迹及实际 QML delegate 数 |
 | 07 | 控制租约与人工接管 | 自动验证 AI 抢占拒绝、操作员授权、人工接管释放与恢复 |
 | 08 | 多阶段任务编排 | 自动验证任务启动、人工阶段等待/继续、正常完成以及安全中止 |
+| 09 | 两机任务局部退出 | 一机退出后不再收到派发，后续阶段仍按剩余目标推进 |
+| 10 | L3 权限收紧 | 自动动作排队期间收紧白名单，验证在途动作被拦截 |
+| 11 | 航线上传后收紧限高 | 上传完成后调低高度上限，验证阶段被阻塞而非继续下发 |
+| 12 | 任务超时明确失败 | 条件不可能满足时任务判 Failed 并请求目标机上锁 |
 
 ## 使用
 
@@ -83,8 +87,13 @@ python3 run_scenario.py scenarios/05_emergency_stop.json --dry-run
 
 - 多机接入：每实例 `-i N` 启动（sysid=N+1），GCS 流统一发往 14550，QGC 按 sysid 自动接入。
 - `strict_regression.py` 为每个场景重启一套全新机队；连续复用模式只保留给快速 L1 冒烟。
-- 01/02/07/08 使用 QGC loopback 验收接口，因此 QGC 与 Python 驱动不会同时争抢 UDP 14550；
-  03/04/05 仍由 pymavlink 直接验证 MAVLink/PX4 契约。
+- 01/02/07/08/09/10/11/12 使用 QGC loopback 验收接口，因此 QGC 与 Python 驱动不会同时争抢
+  UDP 14550；03/04/05 仍由 pymavlink 直接验证 MAVLink/PX4 契约。
+- 解锁重试窗口是 `run_scenario.ARM_RETRY_TIMEOUT_SEC = 180`（单源，场景 JSON 不再各写一份）：
+  8 机在同一个 Gazebo 世界里错峰启动，末位实例进入可解锁状态明显晚于首位。个别场景仍可用
+  `retry_timeout_sec` 覆写。
+- 03/04/05 在广播 ARM 前先按机队多数比对 `SYS_STATUS` 传感器 `present` 位；比同伴少报的实例
+  判为环境阻塞（退出码 3），判据与防掩盖边界见 [测试说明](../tests/README.md)。
 - 接口只编入 `QGC_BUILD_TESTING` 构建并绑定 `127.0.0.1`。认证 Secret 必须来自 owner-only
   普通文件（`0600` 权限、16–512 UTF-8 字节、单行、非符号链接）；不接受环境变量中的明文 Secret。
 - headless QGC 可执行任务/编队/租约逻辑，但明确报告 `ui.qml_ready=false`；场景 06 的渲染硬门槛

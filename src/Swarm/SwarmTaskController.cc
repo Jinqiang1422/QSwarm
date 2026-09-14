@@ -124,7 +124,8 @@ QList<SwarmTaskController::Stage> SwarmTaskController::parseStages(const QJsonAr
         const QJsonObject when = stageObj.value(QStringLiteral("complete_when")).toObject();
         stage.conditionKind = when.value(QStringLiteral("kind")).toString();
         if (!kinds.contains(stage.conditionKind)) {
-            warnings.append(tr("阶段「%1」完成条件类型无效（%2），该阶段已忽略").arg(stage.name, stage.conditionKind));
+            warnings.append(
+                tr("阶段「%1」完成条件类型无效（%2），整个任务已拒绝").arg(stage.name, stage.conditionKind));
             return {};
         }
         for (const auto& key : {QStringLiteral("min_altitude"), QStringLiteral("seconds"),
@@ -188,7 +189,7 @@ QList<SwarmTaskController::Stage> SwarmTaskController::parseStages(const QJsonAr
         // duration / manual 阶段允许无动作（纯等待）；其余阶段必须有有效动作
         if (stage.actions.isEmpty() && stage.conditionKind != QStringLiteral("manual") &&
             stage.conditionKind != QStringLiteral("duration")) {
-            warnings.append(tr("阶段「%1」无有效动作，已忽略").arg(stage.name));
+            warnings.append(tr("阶段「%1」无有效动作，整个任务已拒绝").arg(stage.name));
             return {};
         }
         stages.append(stage);

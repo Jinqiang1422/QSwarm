@@ -13,6 +13,9 @@ exclude = [
     ".venv",
     "**/.venv",
     "tools/skills",
+    # Local verification evidence: one-off probe scripts, not project sources.
+    "test_results",
+    "profile_output",
 ]
 
 [lint]
@@ -59,6 +62,9 @@ known-first-party = ["qgc"]
 "tools/pseudo_loc.py" = ["RUF001"]
 # settings_qml/model.py's regex must match fullwidth + enumeration commas that translators use.
 "tools/generators/settings_qml/model.py" = ["RUF001", "RUF003"]
+# audit_release_artifact.py's marker must byte-match SwarmManager::deliveryNotice's exact
+# compiled string, fullwidth punctuation included.
+"swarm_ext/tests/audit_release_artifact.py" = ["RUF001"]
 
 [format]
 quote-style = "double"

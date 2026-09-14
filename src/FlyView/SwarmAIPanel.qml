@@ -64,6 +64,7 @@ Rectangle {
 
     // ---------------------------------------------------------------- 主内容
     QGCFlickable {
+        objectName:             "swarmAIPanelFlickable"
         anchors.left:           parent.left
         anchors.right:          parent.right
         anchors.top:            headerRow.bottom
@@ -85,6 +86,22 @@ Rectangle {
                 visible:        false
                 spacing:        _margin
                 width:          parent.width
+
+                // 交付锁定提示：仅在 QGC_SWARM_AI_AUTODISPATCH 关闭的构建中非空（见 SwarmManager::
+                // deliveryNotice）。放在配置区顶部、常驻显示，不随下方自主等级等控件的隐藏而消失。
+                // 宽度处理：configColumn 是普通 Column（非 ColumnLayout），沿用本区块内其余换行
+                // QGCLabel 的既有写法——显式 width: parent.width，而非 Layout.fillWidth /
+                // Layout.maximumWidth（那两者只在 RowLayout/ColumnLayout 内生效，Column 会忽略
+                // Layout 附加属性）。Column 按子项的显式 width 分配空间、不会像单列 ColumnLayout
+                // 那样用子项未换行的 implicitWidth 覆盖父级宽度，因此这里不会重演 Task 7c 撑宽面板
+                // 导致按钮点不到的问题。
+                QGCLabel {
+                    text:       _swarm.deliveryNotice
+                    visible:    _swarm.deliveryNotice !== ""
+                    wrapMode:   Text.WordWrap
+                    color:      qgcPal.warningText
+                    width:      parent.width
+                }
 
                 QGCLabel { text: qsTr("◆ 大模型接口（OpenAI 兼容）"); font.bold: true }
                 QGCLabel { text: qsTr("接口地址") }
@@ -113,6 +130,9 @@ Rectangle {
                     spacing: _margin
                     QGCButton { text: qsTr("测试连接"); onClicked: _ai.testConnection() }
                     QGCCheckBox {
+                        // 交付锁定构建中该项被强制开启且不可关闭（见 deliveryNotice），显示一个
+                        // 用户改不动的开关只会造成困惑，故隐藏。
+                        visible: _swarm.aiAutodispatchAvailable
                         text:    qsTr("所有 AI 动作均需确认")
                         checked: _ai.requireConfirm
                         onClicked: _ai.requireConfirm = checked
@@ -125,10 +145,17 @@ Rectangle {
                 }
 
                 // ---------- 自主等级（WP1.3） ----------
-                QGCLabel { text: qsTr("◆ 自主等级"); font.bold: true }
+                // 交付锁定构建中自主等级被固定在 L2 且无法更改（见 deliveryNotice），下拉框和
+                // 说明文字对操作员没有实际意义，一并隐藏；标题一起隐藏以免留下空标题。
+                QGCLabel {
+                    text:       qsTr("◆ 自主等级")
+                    font.bold:  true
+                    visible:    _swarm.aiAutodispatchAvailable
+                }
                 RowLayout {
                     width:      parent.width
                     spacing: _margin
+                    visible:    _swarm.aiAutodispatchAvailable
                     QGCComboBox {
                         model:          [qsTr("L1 仅建议"), qsTr("L2 监督执行"), qsTr("L3 限定域自主")]
                         currentIndex:   _swarm.autonomyLevel - 1
@@ -144,7 +171,10 @@ Rectangle {
                 Flow {
                     width:              parent.width
                     spacing:            _margin
-                    visible:            _swarm.autonomyLevel === 3
+                    // 锁定构建里 autonomyLevel 恒为 2，本条件本就恒假；显式并上
+                    // aiAutodispatchAvailable，避免日后有人改动 autonomyLevel 的取值范围时
+                    // 意外把这个编辑器重新亮出来。
+                    visible:            _swarm.autonomyLevel === 3 && _swarm.aiAutodispatchAvailable
                     Repeater {
                         model: ["arm", "takeoff", "land", "rtl", "start_mission", "disarm", "start_formation"]
                         delegate: QGCCheckBox {
@@ -359,11 +389,31 @@ Rectangle {
                     anchors.margins: _margin
                     spacing:        _margin / 2
 
+                    // Shared ceiling for every wrapping QGCLabel and QGCTextField below that sits
+                    // alone on its own row (Layout.fillWidth: true, nothing else sharing the row).
+                    // ColumnLayout has exactly one column, so EVERY row is forced as wide as ITS
+                    // OWN preferred size -- a Text item with wrapMode set but no width cap reports
+                    // its full *unwrapped* line as implicitWidth/Layout.preferredWidth, and that
+                    // alone (not Layout.minimumWidth, which measurement showed has no effect here)
+                    // is what a single-column ColumnLayout uses to override anchors.fill's ~132px
+                    // and inflate the whole column -- dragging every other row (including these
+                    // fields) out past swarmAIPanelFlickable's clip bounds with it. Set below the
+                    // panel's real available width (measured 132px, 22 * defaultFontPixelWidth)
+                    // with headroom so ordinary content never touches it. See Task 7c report.
+                    property real _planColumnMaxItemWidth: ScreenTools.defaultFontPixelWidth * 20
+
                     QGCLabel {
                         text:       _ai.planHasDangerous ? qsTr("⚠ AI 行动计划（含危险动作，请确认）")
                                                          : qsTr("AI 行动计划")
                         font.bold:  true
                         color:      _ai.planHasDangerous ? "#ff8080" : qgcPal.text
+                        wrapMode:   Text.Wrap
+                        Layout.fillWidth: true
+                        // The dangerous-plan variant of this text alone measured 136px unwrapped --
+                        // 1px under swarmAIPanelFlickable's 138px clip width with every other row in
+                        // this file capped, which is not a safe margin. Same cap, same reason as
+                        // planColumn._planColumnMaxItemWidth.
+                        Layout.maximumWidth: planColumn._planColumnMaxItemWidth
                     }
                     Repeater {
                         model: _ai.planSummary
@@ -374,6 +424,11 @@ Rectangle {
                                 text:       "  %1. %2".arg(index + 1).arg(modelData)
                                 wrapMode:   Text.Wrap
                                 Layout.fillWidth: true
+                                // See planColumn._planColumnMaxItemWidth: this line's own text was
+                                // measured forcing planColumn's implicitWidth to 290px (available
+                                // ~132px) before this cap was added -- the original overflow's actual
+                                // root cause, not the fields below.
+                                Layout.maximumWidth: planColumn._planColumnMaxItemWidth
                             }
                             RowLayout {
                                 visible:    editParamsToggle.checked
@@ -381,6 +436,11 @@ Rectangle {
                                 QGCTextField {
                                     id:                 paramField
                                     Layout.fillWidth:   true
+                                    // Floor: never squeezed unusably narrow. Ceiling: never the
+                                    // element that inflates the shared column (see
+                                    // planColumn._planColumnMaxItemWidth) even with long JSON content.
+                                    Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 8
+                                    Layout.maximumWidth: planColumn._planColumnMaxItemWidth
                                     text:               (_ai.pendingPlanParamsJson[index] !== undefined) ? _ai.pendingPlanParamsJson[index] : ""
                                     placeholderText:    qsTr("参数 JSON，如 {\"altitude\": 40}")
                                 }
@@ -391,15 +451,159 @@ Rectangle {
                             }
                         }
                     }
+                    // ==================== 待确认任务：逐阶段编辑 ====================
+                    // 注意（不可忽略的已知限制）：下面任一「应用」按钮成功提交都会触发
+                    // planChanged()，其会重新读取 pendingTaskModel() 并整体重建本 Repeater
+                    // 的子树。这意味着一次提交会把本阶段乃至其他阶段里所有“已输入但尚未应用”
+                    // 的文本框内容一并冲回上一次已提交的值，且没有任何提示——逐字段单独编辑、
+                    // 单独应用没问题，同时改动多个字段再统一应用会静默丢字。跨刷新保留未提交
+                    // 草稿需要额外的状态管理，超出本次改动范围，先在此记录以免日后被重新踩坑。
+                    Repeater {
+                        model: _ai.pendingTaskModel
+                        delegate: ColumnLayout {
+                            id:                       stageDelegate
+                            required property var     modelData
+                            required property int     index
+                            // 阶段序号显式具名保存：内层 Repeater 自己的 required property int
+                            // index 会遮蔽这里的 index，直接用 index 或 parent.parent.index 都
+                            // 会拿到错误的（或随布局改动就会碎掉的）值，因此用带 id 限定的
+                            // stageDelegate.stageIndex 让内层显式引用外层这一份。
+                            readonly property int     stageIndex: index
+                            Layout.fillWidth: true
+                            spacing: ScreenTools.defaultFontPixelHeight / 4
+
+                            QGCLabel {
+                                text:       qsTr("阶段 %1「%2」").arg(stageDelegate.stageIndex + 1).arg(stageDelegate.modelData.name)
+                                font.bold:  true
+                                wrapMode:   Text.Wrap
+                                Layout.fillWidth: true
+                                // Stage names come from the AI's own task_name/name fields, with no
+                                // length limit -- capped for the same reason as the flat-plan
+                                // summary label above (see planColumn._planColumnMaxItemWidth).
+                                Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                            }
+
+                            // 面板固定宽度仅约 24 个字号单位：标签、输入框、按钮三者各自独占一行。
+                            // 曾经的做法是标签单独一行、输入框与按钮共享下一行（同文件内 flat-plan
+                            // 编辑器 :373-391 仍是这样），改成三者各占一行是为了不让同一行里的两样
+                            // 东西互相挤占。但这不是 Task 7c 那次点不动的根因：实测 planColumn 的
+                            // implicitWidth 被撑到 290px（可用列宽仅 132px）；撑大它的是本文件内两处
+                            // 带 wrapMode: Text.Wrap、没有宽度上限的 QGCLabel（flat-plan 编辑器的摘要
+                            // 行、下方完成条件提示行）——Text 在没有宽度约束时 implicitWidth 报告的是
+                            // 整行不换行的自然宽度，而单列 ColumnLayout 会用这个未加限制的宽度覆盖
+                            // anchors.fill 给出的 ~132px，把同一 planColumn 里所有行（包括这里的输入
+                            // 框）一并撑宽、撑出 swarmAIPanelFlickable 的可视区。经实测验证，起作用的
+                            // 是 Layout.maximumWidth（加宽度上限），不是最初设想的 Layout.minimumWidth
+                            // ——minimumWidth 加了也测不出任何变化。真正的修复是给所有会换行的 QGCLabel
+                            // 和这几个输入框统一加 Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                            // （见该属性定义处的完整说明），minimumWidth 保留作为下限防御。详见 Task 7c 报告。
+                            Repeater {
+                                model: stageDelegate.modelData.actions
+                                delegate: ColumnLayout {
+                                    required property var modelData
+                                    required property int index
+                                    Layout.fillWidth: true
+                                    spacing: 0
+
+                                    QGCLabel {
+                                        text:       qsTr("动作 %1 %2").arg(index + 1).arg(modelData.type)
+                                        wrapMode:   Text.Wrap
+                                        Layout.fillWidth: true
+                                        Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                                    }
+                                    QGCTextField {
+                                        id:               actionParamField
+                                        objectName:       "swarmStageActionField"
+                                        visible:          editParamsToggle.checked
+                                        text:             modelData.paramsJson
+                                        enabled:          modelData.editable
+                                        placeholderText:  qsTr("{\"altitude\": 40}")
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 8
+                                        Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                                    }
+                                    QGCButton {
+                                        objectName: "swarmStageActionApply"
+                                        visible:    editParamsToggle.checked
+                                        text:       modelData.editable ? qsTr("应用") : qsTr("不可改")
+                                        enabled:    modelData.editable
+                                        Layout.alignment: Qt.AlignRight
+                                        onClicked: _ai.updatePendingStageAction(stageDelegate.stageIndex, index,
+                                                                                actionParamField.text)
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                QGCLabel {
+                                    // "可加入 kind 切换条件类型" 提示放在这里而非输入框占位符：这一行
+                                    // 换行、占满整列宽度，放得下；占位符只有一行且字段本身要给参数值
+                                    // 留出可读空间，塞不下这句话，硬塞只会撑大隐式宽度、显示不出来。
+                                    text:       qsTr("完成条件 %1（可加入 \"kind\" 切换条件类型）").arg(stageDelegate.modelData.conditionKind)
+                                    wrapMode:   Text.Wrap
+                                    Layout.fillWidth: true
+                                    // Measured 217px unwrapped for conditionKind "all_airborne" -- the
+                                    // second of the two labels that were actually inflating planColumn
+                                    // (see planColumn._planColumnMaxItemWidth).
+                                    Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                                }
+                                QGCTextField {
+                                    id:               conditionField
+                                    objectName:       "swarmStageConditionField"
+                                    visible:          editParamsToggle.checked
+                                    text:             stageDelegate.modelData.conditionParamsJson
+                                    placeholderText:  qsTr("{\"timeout_sec\": 600}")
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 8
+                                    Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                                }
+                                QGCButton {
+                                    objectName: "swarmStageConditionApply"
+                                    visible: editParamsToggle.checked
+                                    text: qsTr("应用")
+                                    Layout.alignment: Qt.AlignRight
+                                    onClicked: {
+                                        var payload = conditionField.text
+                                        var edited = null
+                                        try {
+                                            edited = JSON.parse(payload)
+                                        } catch (e) {
+                                            edited = null
+                                        }
+                                        // 参数框里没写 kind 时补回当前 kind；写了就尊重操作员的选择，
+                                        // 否则改成 manual 这类换档操作永远做不到。
+                                        if (edited !== null && edited.kind === undefined) {
+                                            edited.kind = stageDelegate.modelData.conditionKind
+                                            payload = JSON.stringify(edited)
+                                        }
+                                        // 解析失败时原样下送，由 C++ 侧既有守卫统一给出
+                                        // “完成条件 JSON 解析失败，请检查格式”，不在 QML 里另开一条提示通道。
+                                        _ai.updatePendingStageCondition(stageDelegate.stageIndex, payload)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Split across two rows rather than one three-item RowLayout: the combined
+                    // implicit width of 确认执行 + 放弃 + 编辑参数 (~157px) measured as the residual
+                    // forcing element once the two QGCLabels above were capped -- planColumn's only
+                    // available width is ~132px, so all three never fit on one line regardless of
+                    // Layout.fillWidth (which only distributes *extra* space, not a shortfall). Two
+                    // rows keep every control at its full, untruncated size instead of squeezing or
+                    // clipping button text. See planColumn._planColumnMaxItemWidth.
                     RowLayout {
                         spacing: _margin
                         QGCButton { text: qsTr("确认执行"); onClicked: _ai.confirmPlan() }
                         QGCButton { text: qsTr("放弃");     onClicked: _ai.rejectPlan() }
-                        QGCCheckBox {
-                            id:      editParamsToggle
-                            text:    qsTr("编辑参数")
-                            checked: false
-                        }
+                    }
+                    QGCCheckBox {
+                        id:         editParamsToggle
+                        objectName: "swarmEditParamsToggle"
+                        text:       qsTr("编辑参数")
+                        checked:    false
                     }
                 }
             }

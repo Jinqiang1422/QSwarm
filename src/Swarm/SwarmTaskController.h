@@ -137,6 +137,16 @@ public:
 
     Q_INVOKABLE bool confirmMissionCompletion(const QString& token);
 
+#ifdef QGC_UNITTEST_BUILD
+    /// 测试入口：读取已启动任务某阶段的超时值，用于校验编辑是否真的生效。
+    int stageTimeoutSecForTest(int index) const
+    {
+        return (index >= 0 && index < _stages.count())
+                   ? _stages.at(index).conditionParams.value(QStringLiteral("timeout_sec"), -1).toInt()
+                   : -1;
+    }
+#endif
+
 signals:
     void taskChanged();
     void taskFeedback(const QString& message);

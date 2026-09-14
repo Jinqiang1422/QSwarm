@@ -32,6 +32,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/FlyViewProximityRadarUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/SwarmSituationLayerUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/SwarmSituationLayerUITest.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/SwarmTaskEditorUITest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/SwarmTaskEditorUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/NTRIPSettingsUITest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/NTRIPSettingsUITest.h
         ${CMAKE_CURRENT_SOURCE_DIR}/RemoteIDSettingsUITest.cc
@@ -52,5 +54,6 @@ add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 240)
 add_qgc_test(FlyViewProximityRadarUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(SwarmSituationLayerUITest LABELS Integration NoSanitizer TIMEOUT 120)
+add_qgc_test(SwarmTaskEditorUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(NTRIPSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(RemoteIDSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)

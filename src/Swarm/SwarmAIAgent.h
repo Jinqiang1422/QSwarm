@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QObject>
 #include <QtCore/QStringList>
@@ -55,6 +56,8 @@ class SwarmAIAgent : public QObject
     Q_PROPERTY(double responseTimeSec READ responseTimeSec NOTIFY responseTimeSecChanged)
     /// 待确认计划各动作的参数 JSON 文本（WP2.3 计划编辑框初始值）
     Q_PROPERTY(QStringList pendingPlanParamsJson READ pendingPlanParamsJson NOTIFY planChanged)
+    /// 待确认多阶段任务的结构化只读模型：各阶段名称/完成条件/动作列表（供逐项编辑 UI 使用）
+    Q_PROPERTY(QVariantList pendingTaskModel READ pendingTaskModel NOTIFY planChanged)
     /// WP3.5：周期态势摘要开关与间隔（秒）
     Q_PROPERTY(bool situationSummaryEnabled READ situationSummaryEnabled WRITE setSituationSummaryEnabled NOTIFY
                    situationSummaryChanged)
@@ -118,6 +121,8 @@ public:
 
     QStringList pendingPlanParamsJson() const;
 
+    QVariantList pendingTaskModel() const;
+
     /// 选择第 index 个候选方案（WP2.2 多候选），进入正常确认/执行流程
     Q_INVOKABLE void selectCandidate(int index);
 
@@ -127,6 +132,12 @@ public:
     /// 编辑待确认计划第 index 项动作的参数（WP2.3 计划可编辑），paramsJson 为参数 JSON 文本；
     /// 编辑后重新过统一校验，不通过则不生效
     Q_INVOKABLE void updatePendingAction(int index, const QString& paramsJson);
+
+    /// 编辑待确认任务中某个阶段的某个动作参数；参数与原值合并后整体重校验。
+    Q_INVOKABLE void updatePendingStageAction(int stageIndex, int actionIndex, const QString& paramsJson);
+
+    /// 编辑待确认任务中某个阶段的完成条件；整个 complete_when 对象被替换后重校验。
+    Q_INVOKABLE void updatePendingStageCondition(int stageIndex, const QString& conditionJson);
 
     /// WP3.5 态势问答：携带最新态势摘要向模型提问（事实须标注来源 [遥测]/[感知]/[推测]）
     Q_INVOKABLE void askSituation(const QString& question, double mapCenterLat, double mapCenterLon);
@@ -141,6 +152,11 @@ public:
     int situationIntervalSec() const { return _situationIntervalSec; }
 
     void setSituationIntervalSec(int sec);
+
+#ifdef QGC_UNITTEST_BUILD
+    /// 测试入口：直接喂入模型返回的动作数组，绕过网络请求。
+    void handleActionsJsonForTest(const QJsonArray& actionsJson) { _handleActionsJson(actionsJson, QString()); }
+#endif
 
 signals:
     void apiBaseUrlChanged();
@@ -167,7 +183,7 @@ private:
     void _handleResponse(const QByteArray& body);
     void _handleActionsJson(const QJsonArray& actionsJson, const QString& replyText);
     bool _handleTaskJson(const QJsonObject& taskObj, QString& taskName, QList<SwarmTaskController::Stage>& stages,
-                         QStringList& warnings);
+                         QJsonArray& stagesJsonOut, QStringList& warnings);
     void _runTaskTemplate(const QJsonObject& args);
     void _handleCandidates(const QJsonObject& args);  ///< WP2.2 多候选方案
     void _queueOrExecute(const QList<SwarmAction>& plan);
@@ -175,15 +191,28 @@ private:
     void _appendChat(const QString& who, const QString& text);
     void _sendSituationSummary();  ///< WP3.5 周期态势摘要
 
+    /// 将解析后的阶段列表转换为 pendingTaskModel() 的只读形态；供该属性读取，也供
+    /// _commitPendingStagesEdit 在提交前比较编辑是否为空操作复用，避免两处各写一份。
+    static QVariantList _stagesToVariantList(const QList<SwarmTaskController::Stage>& stages);
+
+    /// 提交编辑后的候选阶段 JSON：重跑 parseStages 校验通过、且与编辑前确有差异才落盘、
+    /// 记审计、发通知；校验失败或与编辑前等价（如键名拼错被静默忽略）则如实反馈，不提交。
+    bool _commitPendingStagesEdit(const QJsonArray& candidate, int stageIndex, int actionIndex, const QString& field,
+                                  const QJsonObject& before, const QJsonObject& after, const QString& chatText);
+
     SwarmManager* _swarmManager = nullptr;
     QNetworkAccessManager* _nam = nullptr;
     QNetworkReply* _reply = nullptr;
 
-    QString _apiBaseUrl;           // 默认 https://api.deepseek.com/v1（可在界面修改）
+    QString _apiBaseUrl;  // 默认 https://api.deepseek.com/v1（可在界面修改）
     QString _apiKey;
-    QString _modelName;            // 默认 deepseek-chat
+    QString _modelName;   // 默认 deepseek-chat
     bool _useFunctionCalling = true;
+#ifdef QGC_SWARM_AI_AUTODISPATCH_DISABLED
+    bool _requireConfirm = true;  ///< 交付构建：每个 AI 动作都必须人工确认，不可关闭。
+#else
     bool _requireConfirm = false;  ///< 可选：连低风险动作也逐项确认；强制规则独立生效。
+#endif
     bool _busy = false;
 
     QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断
@@ -191,6 +220,7 @@ private:
     bool _pendingTask = false;
     QString _pendingTaskName;
     QList<SwarmTaskController::Stage> _pendingStages;  ///< 待确认多阶段任务
+    QJsonArray _pendingStagesJson;                     ///< 与 _pendingStages 对应的 JSON 原文，编辑的作用对象
     QStringList _chatLog;
     double _lastMapCenterLat = 0.0;
     double _lastMapCenterLon = 0.0;
@@ -201,6 +231,7 @@ private:
         bool isTask = false;
         QList<SwarmAction> plan;                   ///< 动作型候选
         QList<SwarmTaskController::Stage> stages;  ///< 模板/任务型候选
+        QJsonArray stagesJson;                     ///< 与 stages 对应的 JSON 原文
         QString taskName;
     };
 

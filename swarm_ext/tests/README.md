@@ -28,14 +28,60 @@
 |---|---|:---:|:---:|:---:|:---:|
 | L0 源码契约 | diff、格式、lint、场景/模板/CMake/Schema/XML 一致性 | ✓ | ✓ | ✓ | ✓ |
 | L1 Python/算法 | 感知、几何、COP 真值、LLM 数据集 dry-run | ✓ | ✓ | ✓ | ✓ |
-| L2 场景解析 | 8 个场景的动作识别和报告编排 | ✓ | ✓ | ✓ | ✓ |
+| L2 场景解析 | 12 个场景的动作识别和报告编排 | ✓ | ✓ | ✓ | ✓ |
 | L3 C++ 模块 | P1/P2/P3、战术、管线、租约、持久化、COP、容量门槛 |  | ✓ | ✓ | ✓ |
 | L4 QGC 集成 | 容器内增量构建、QGC Unit/Integration、进程生命周期 |  |  | ✓ | ✓ |
-| L5 SITL/QGC | 8 机覆盖、编队、故障、租约、任务人工门控与中止 |  |  | ✓ | ✓ |
+| L5 SITL/QGC | 8 机覆盖、编队、故障、租约、任务人工门控与中止；局部退出、L3 权限收紧、上传后限高收紧、任务超时判失败 |  |  | ✓ | ✓ |
 | L6 GUI/QML | runner 托管正常 GUI/Xvfb，验证 delegate、时延和地理误差 |  |  | ✓ | ✓ |
 | Q1 稳定性资格 | 生命周期 20 轮、Unit/Integration 50 轮、场景 03 20 轮 |  |  |  | ✓ |
 | Q2 发布资格 | 非测试 Release 构建及验收接口产物审计 |  |  |  | ✓ |
 | L7 外部模型 | 559 条自然语言指令在线评测 |  |  | 可选 | 可选 |
+
+### L0 lint 的工具版本要求
+
+`source.ruff`、`source.ruff_format`、`source.shellcheck`、`source.clang_format` 会先比对宿主
+工具版本与 `.pre-commit-config.yaml` 中固定的版本。不一致判 `BLOCKED`（退出码 2），不判 FAIL
+也不判 PASS：规则集不同的工具给出的结论不能代表 CI 判定。已实测的两类失真——ruff 0.9 报的
+`UP038` 在 0.15 已被移除（假失败），shellcheck 0.7 缺少 0.8–0.11 新增的全部检查（假通过）。
+
+首次遇到 `BLOCKED` 时按提示安装对应版本，不要用 `--allow-blocked` 绕过。逐项的宿主/固定版本
+和比对结果记录在报告的 `environment.json` → `tool_pins`。
+
+### SITL 环境阻塞的判定与防掩盖边界
+
+直连 MAVLink 的场景（03/04/05）在广播 ARM 前先比对各机 `SYS_STATUS` 的传感器 `present`
+位：**参照系是机队自身的多数，不是固定的必需位清单**。个别实例比同伴少报传感器，说明
+它的 Gazebo 传感器桥没起来，属环境问题——`strict_regression.py` 退出码 3，`run_all.py`
+把该场景判 `BLOCKED`（整体仍退出 2），SUMMARY 用 `⛔` 标记。
+
+用多数而不是写死清单，是因为 PX4 上报哪些位随版本和机型变化：本机 SITL 实测**从不**上报
+`3D_ACCEL`，写死清单会把 8 架全健康的机队整体误判成阻塞（该退化已由
+`test_bit_no_peer_reports_is_not_required` 守住）。
+
+这条降级只在下列全部成立时生效，任何一条不满足都仍判 FAIL：
+
+1. 只看 `present` 位，不看 `health`，更不看 `MAV_SYS_STATUS_PREARM_CHECK`。
+   `present` 齐全而 `health` 无＝真实预检失败；用预检位做门等价于「解锁一定成功」，
+   会给所有真实解锁缺陷发免罪符。
+2. 必须有正向 `SYS_STATUS` 证据。在线但一条都没收到时维持改动前行为，不判阻塞。
+3. 必须有对照。机队不足 2 架、或全体同样退化时没有多数可依，一律不判阻塞。
+4. 只作用于直连 MAVLink 的 `Fleet.arm_all`。经 QGC 中介的场景里 QGC 本身是被测对象，
+   其 `readiness_timeout` 继续判 FAIL，不做降级。
+5. 只作用于 `arm_all` 一个动作，不是全场景兜底。
+6. `cleanup_errors`（容器/端口残留）一票否决降级——那是 harness 自身缺陷。
+7. `report.json` 保留逐机 `present/enabled/health` 位图、`expected_sensors` 和缺失传感器名，
+   可离线复核。
+8. `BLOCKED` 永远不等于 `PASS`；`--allow-blocked` 必须显式给出。
+
+离线回归见 `sim/test_arm_readiness.py`（9 条，含「预检不过不得降级」「无证据不得阻塞」
+「无对照不得阻塞」「同伴都不报的位不得要求」四条负例）。
+
+### 场景执行覆盖契约
+
+L5/L6 实际执行哪些场景由 `sim/scenarios/*.json` 的 `requires_qml` 推导，不写死在 `run_all.py`
+里；`source.asset_contracts` 会断言这一点，并要求每个场景文件都归入 L5 或 L6。此前 L5 的场景
+列表是字面量，导致新增的 09–12 长期只有 L2 dry-run 覆盖。Q1 的场景 03 × 20 轮是稳定性压测，
+故意只取单一场景，不属于该契约。
 
 ## 使用
 

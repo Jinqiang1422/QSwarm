@@ -1,50 +1,47 @@
-# QGC 集群指挥控制扩展（QGroundControl Swarm Extension）
+# QGC 集群指挥控制扩展
 
-基于开源 QGroundControl 的集群无人机指挥控制扩展，覆盖：
+本仓库已集成多机监控与批量指挥、编队、矩形区域覆盖、AI 计划审查、多阶段任务和感知态势。无需再次按历史补丁说明复制源文件。交付构建（`QGC_SWARM_AI_AUTODISPATCH=OFF`，非测试构建的默认值）不提供模型免确认自动下发：所有 AI 动作都要操作员逐条确认后才执行，纯人工、纯大模型、人工+大模型三种编排模式仍均可用；设计与边界依据见[任务编排与下发锁设计](docs/specs/2026-09-12-swarm-task-authoring-and-dispatch-lock-design.md)。
 
-- **多机实时监控**：同屏监视多架无人机状态，点选分组
-- **集群一键指令**：全体/分组的解锁、起飞、降落、返航、暂停、开始任务
-- **编队飞行**：长机-僚机模式，楔形/纵队/横队/环形，间距与高度分层可调
-- **集群任务规划**：矩形区域自动条带划分 + 割草机航线，一键上传
-- **大模型任务接口**：自然语言 → 任务理解 → 规划 → 分配（Function Calling，支持离线 Ollama）
-- **任务状态机**：多阶段任务编排，监控 MISSION_CURRENT 自动推进
-- **任务模板库**：常用多阶段任务存为 JSON 模板（内置 4 套），人工/AI 按名引用
-- **统一任务管线**：AI 规划与人工 Plan 视图设计同一套系统
+## 使用文档
 
-## 目录结构
+- [完整使用手册](docs/用户使用手册.md)：24 章，涵盖基础 QGC、集群、AI、感知、日志与故障排查。
+- [离线阅读版](docs/用户使用手册.html)：支持目录、章节筛选和打印。
+- [PDF 打印版](docs/用户使用手册.pdf)：用于分发和留档。
+- [功能分析与核验](docs/功能分析与手册核验.md)：功能依据、操作差异和剩余问题。
+- [当前功能矩阵](docs/FEATURES.md)、[版本验证摘要](docs/reports/2026-09-07-execution-safety-validation.md)。
 
-```
-├── src/
-│   ├── Swarm/                     # C++ 扩展模块（拷入 qgroundcontrol/src/Swarm/）
-│   │   ├── SwarmManager           # 集群指令 + 统一动作管线（parseAndValidate/executeActions）
-│   │   ├── SwarmAction.h          # 统一动作结构（AI/状态机/人工共用）
-│   │   ├── FormationController    # 编队控制（长机-僚机）
-│   │   ├── SwarmMissionPlanner    # 区域覆盖任务规划（与 Plan 视图同一 writeMissionItems 通道）
-│   │   ├── SwarmAIAgent           # 大模型接口（Function Calling + JSON 回退）
-│   │   ├── SwarmTaskController    # 任务状态机（多阶段编排）
-│   │   └── SwarmTaskLibrary       # 任务模板库（JSON 模板，人工/AI 引用）
-│   └── FlyView/                   # QML 面板（拷入 qgroundcontrol/src/FlyView/）
-│       ├── SwarmControlPanel.qml  # 集群监控/指令/编队/任务规划面板
-│       └── SwarmAIPanel.qml       # AI 对话/计划确认/任务状态机/模板库面板
-├── templates/                     # 内置任务模板参考副本（运行时自动落盘到用户目录）
-├── QGC集群指挥控制二次开发方案.md      # 总体设计（架构/SITL/安全/验证）
-├── 大模型集群任务接口扩展方案.md        # AI 接口设计（tools/状态机/统一管线）
-├── 集成补丁说明.md                     # 6 处追加式集成补丁
-└── README.md
-```
+软件支持四种编队和三种覆盖分配算法。九套模板资产不代表九种完整业务闭环均可直接使用：接力值守模板在当前严格选机规则下存在冲突；停止编队、任务中止、飞控暂停及返航也有不同语义，操作前阅读手册。
 
-## 快速开始
+## 构建与验证
 
-1. 按《集成补丁说明.md》把 `src/Swarm/`、`src/FlyView/*.qml` 集成进 QGroundControl 源码树（6 处追加式改动）；
-2. 编译：`cmake --preset default && cmake --build build/default -j$(nproc)`；
-3. 启动 PX4 SITL 多机仿真（3 架）与改造后的 QGC，按主方案第 8 章验证集群功能；
-4. 配置大模型端点（默认 DeepSeek，外场可切 Ollama 本地模型离线运行），按 AI 方案第 8 章验证文本指挥。
+在仓库根目录、已准备的开发环境中使用 canonical 工作流：
 
-## 基线版本
+~~~bash
+just configure
+just build
+~~~
 
-- QGroundControl master（v5.x，Qt6/CMake，单例管理器架构）
-- PX4 v1.14～v1.16（Gazebo / Gazebo Classic 多机仿真）
+运行环境和工具见 [开发工具说明](../tools/README.md)。集群测试入口：
+
+~~~bash
+python3 swarm_ext/tests/run_all.py --profile standard
+~~~
+
+完整步骤见 [测试说明](tests/README.md)、[SITL 仿真说明](sim/README.md) 和 [感知服务说明](services/perception/README.md)。测试与模拟器应在隔离环境运行，结果不能替代现场设备验收。
+
+## 目录
+
+| 路径 | 内容 |
+| --- | --- |
+| ../src/Swarm | 集群控制、AI、约束、编队、任务、感知和审计实现 |
+| ../src/FlyView/Swarm*.qml | 定制面板与地图图层 |
+| ../test/Swarm | 真实 QGC/MockLink 执行链路回归 |
+| templates | 模板参考资产；应用实际读取用户数据目录中的 SwarmTemplates |
+| services/perception | 独立视频检测、跟踪和结构化航迹服务 |
+| sim | SITL 场景与验收驱动 |
+| tests | 分层验证工具、独立模块和模型契约检查 |
+| docs | 用户文档、开发记录、计划与验证摘要 |
 
 ## 许可
 
-与 QGroundControl 相同（Apache-2.0 / GPL-3.0 双许可，遵循上游）。
+遵循仓库根目录的 QGroundControl 许可文件。
