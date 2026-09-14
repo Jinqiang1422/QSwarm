@@ -1131,6 +1131,13 @@ void SwarmAIAgent::updatePendingAction(int index, const QString& paramsJson)
         emit agentFeedback(tr("修改目标机请重新生成计划，以保持后续动作的目标一致"));
         return;
     }
+    if (edited.contains(QStringLiteral("type"))) {
+        // 合并语义会把 "type" 也当成普通键覆盖掉，等于用参数编辑偷偷改了动作种类
+        // （比如把 pause 改成 rtl）。操作员确认前虽能在面板上看到改后的类型，但
+        // "参数编辑"这个入口本就不该能决定"这是什么动作"，必须显式拒绝并说明原因。
+        emit agentFeedback(tr("不能通过参数编辑更改动作类型，请重新生成计划"));
+        return;
+    }
     // 合并编辑参数后重新过统一校验（与 LLM 计划同一管线）
     const SwarmAction& old = _pendingPlan.at(index);
     QJsonObject actionJson;
@@ -1225,6 +1232,12 @@ void SwarmAIAgent::updatePendingStageAction(int stageIndex, int actionIndex, con
     const QJsonObject edited = QJsonDocument::fromJson(paramsJson.toUtf8()).object();
     if (edited.isEmpty()) {
         emit agentFeedback(tr("参数 JSON 解析失败，请检查格式"));
+        return;
+    }
+    if (edited.contains(QStringLiteral("type"))) {
+        // 与 updatePendingAction 一致：合并语义不得覆盖 "type"，否则参数编辑就能
+        // 把一个动作偷偷改成另一个（例如把 pause 改成 rtl）。
+        emit agentFeedback(tr("不能通过参数编辑更改动作类型，请重新生成计划"));
         return;
     }
     const QJsonObject before = actionObj;

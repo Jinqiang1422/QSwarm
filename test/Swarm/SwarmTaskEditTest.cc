@@ -144,6 +144,54 @@ void SwarmTaskEditTest::editingSetSelectionMustBeRejected()
              QStringLiteral("修改目标机请重新生成计划，以保持后续动作的目标一致"));
 }
 
+void SwarmTaskEditTest::typeChangeInStageActionEditMustBeRejected()
+{
+    _stagePendingTask();
+    SwarmAIAgent* agent = _manager->aiAgent();
+    const QVariantList before = agent->pendingTaskModel();
+
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("不能通过参数编辑更改动作类型")));
+
+    // 用信号内容而非仅状态不变来断言（同 editingSetSelectionMustBeRejected 的理由）：
+    // 若守卫被删掉，合并语义会静默把 takeoff 换成 rtl 并通过重校验，那样状态会变
+    // 化、但不会报错；只有核对具体反馈文案才能确认守卫本身生效，而不是别的校验路径
+    // 恰好也把这次编辑挡住了。
+    QSignalSpy feedbackSpy(agent, &SwarmAIAgent::agentFeedback);
+    QVERIFY(feedbackSpy.isValid());
+    agent->updatePendingStageAction(0, 0, QStringLiteral(R"({"type": "rtl"})"));
+
+    QCOMPARE(agent->pendingTaskModel(), before);
+    QCOMPARE(feedbackSpy.count(), 1);
+    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("不能通过参数编辑更改动作类型，请重新生成计划"));
+}
+
+void SwarmTaskEditTest::typeChangeInFlatPlanEditMustBeRejected()
+{
+    SwarmAIAgent* agent = _manager->aiAgent();
+    // pause 不属于危险动作，L2 下默认无需确认会直接下发；显式要求逐项确认，才能
+    // 让它像 _stagePendingTask() 一样先挂起，供本用例编辑。
+    agent->setRequireConfirm(true);
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("AI 已生成行动计划")));
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("不能通过参数编辑更改动作类型")));
+
+    agent->handleActionsJsonForTest(QJsonDocument::fromJson(QStringLiteral(R"([{"type": "pause"}])").toUtf8()).array());
+    QVERIFY(agent->planPending());
+    const QStringList before = agent->pendingPlanParamsJson();
+
+    QSignalSpy feedbackSpy(agent, &SwarmAIAgent::agentFeedback);
+    QVERIFY(feedbackSpy.isValid());
+    // 尝试把待确认的 pause 偷偷改成 rtl：合并语义如果不挡住 "type" 键，这步会
+    // 静默把动作换掉而不是报错拒绝。
+    agent->updatePendingAction(0, QStringLiteral(R"({"type": "rtl"})"));
+
+    QCOMPARE(agent->pendingPlanParamsJson(), before);
+    QCOMPARE(feedbackSpy.count(), 1);
+    QCOMPARE(feedbackSpy.takeFirst().at(0).toString(), QStringLiteral("不能通过参数编辑更改动作类型，请重新生成计划"));
+}
+
 void SwarmTaskEditTest::outOfRangeStageOrActionIndexMustBeRejected()
 {
     _stagePendingTask();

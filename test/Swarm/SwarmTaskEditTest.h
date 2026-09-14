@@ -17,6 +17,8 @@ private slots:
     void editingStageActionMustRevalidateAndApply();
     void invalidStageActionEditMustLeaveTaskUnchanged();
     void editingSetSelectionMustBeRejected();
+    void typeChangeInStageActionEditMustBeRejected();
+    void typeChangeInFlatPlanEditMustBeRejected();
     void outOfRangeStageOrActionIndexMustBeRejected();
     void editingStageConditionMustApply();
     void changingConditionToManualMustApply();
