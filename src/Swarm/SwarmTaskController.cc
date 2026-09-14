@@ -124,7 +124,8 @@ QList<SwarmTaskController::Stage> SwarmTaskController::parseStages(const QJsonAr
         const QJsonObject when = stageObj.value(QStringLiteral("complete_when")).toObject();
         stage.conditionKind = when.value(QStringLiteral("kind")).toString();
         if (!kinds.contains(stage.conditionKind)) {
-            warnings.append(tr("阶段「%1」完成条件类型无效（%2），整个任务已拒绝").arg(stage.name, stage.conditionKind));
+            warnings.append(
+                tr("阶段「%1」完成条件类型无效（%2），整个任务已拒绝").arg(stage.name, stage.conditionKind));
             return {};
         }
         for (const auto& key : {QStringLiteral("min_altitude"), QStringLiteral("seconds"),
