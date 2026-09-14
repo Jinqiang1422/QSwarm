@@ -1,0 +1,2261 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="QGroundControl 集群指挥平台完整使用手册，依据 e3226eccb，包含 24 章操作指南。">
+<title>QGC 集群指挥平台 · 完整使用手册</title><style>
+:root{color-scheme:light;--ink:#18293b;--muted:#53687c;--line:#d9e3eb;--blue:#17607d;--nav:#0e2435}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:25px}
+body{margin:0;background:#f1f5f8;color:var(--ink);font:16px/1.9 "Noto Sans CJK SC","Microsoft YaHei","PingFang SC",sans-serif}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+button,input{font:inherit}button{cursor:pointer;border:1px solid #c7d9e5;border-radius:7px;padding:8px 14px;background:white;color:var(--ink)}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #dda936;outline-offset:3px}
+.sidebar{position:fixed;inset:0 auto 0 0;width:286px;background:var(--nav);color:#e7eef4;padding:28px 18px;overflow:auto;z-index:3}
+.brand{font-size:20px;font-weight:700;letter-spacing:.02em}.edition{color:#a6bed0;font-size:12px;margin:8px 0 20px}
+.sidebar label{font-size:13px;color:#bad0df}.sidebar input{display:block;width:100%;border:1px solid #496376;background:#183347;color:white;border-radius:6px;padding:9px;margin:6px 0}
+.sidebar input::placeholder{color:#a9bece}.sidebar nav a{display:block;color:#c6d8e5;border-radius:5px;font-size:13px;line-height:1.6;padding:7px 9px;margin:2px 0}
+.sidebar nav a:hover,.sidebar nav a.active{background:#23485f;color:white;text-decoration:none}
+#search-status{font-size:12px;color:#b2c8d8;margin:6px 0 12px}.sidebar .hint{font-size:11px;color:#99b1c2}
+.shell{margin-left:286px}.page{max-width:1100px;margin:auto;background:white;min-height:100vh;padding:52px 64px 90px}
+.hero{border-bottom:2px solid #236888;padding-bottom:28px;margin-bottom:28px}.eyebrow{color:#23758c;font-size:12px;font-weight:700;letter-spacing:.18em}
+.hero h1{font-size:35px;line-height:1.45;margin:15px 0 18px;letter-spacing:-.02em}.subtitle{color:var(--muted);font-size:15px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.meta span{font-size:12px;border:1px solid var(--line);border-radius:4px;padding:3px 9px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.actions a{font-size:14px}
+.preface{font-size:14px;color:var(--muted)}.chapter{padding-top:28px;margin-top:20px;border-top:1px solid var(--line)}
+.chapter h2{font-size:26px;line-height:1.45;margin:18px 0 24px;color:#123c53}.chapter h3{font-size:19px;line-height:1.6;margin:34px 0 12px}
+p{margin:12px 0}ul,ol{padding-left:1.8em}li{margin:6px 0}strong{font-weight:700;color:#122f44}
+table{border-collapse:collapse;width:100%;font-size:13px;line-height:1.8;margin:18px 0 25px;table-layout:auto}
+th{background:#eaf2f7;color:#24475e;text-align:left;font-weight:700}td,th{padding:10px 12px;border:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+tbody tr:nth-child(even){background:#f8fafb}
+pre{padding:18px 20px;border:1px solid #d6e3eb;border-left:4px solid #287393;border-radius:5px;background:#f4f8fb;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;font-size:12px}
+code{font-family:"DejaVu Sans Mono","Noto Sans Mono CJK SC",monospace;font-size:.88em}p code,td code{background:#eff4f7;padding:2px 4px}
+.chapter[hidden],nav a[hidden]{display:none!important}.empty{padding:30px;background:#fff5df;border:1px solid #ead4a1}
+.mobile-toggle{display:none;position:fixed;right:15px;top:15px;z-index:5;background:#15394f;color:white}
+footer{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:20px;margin-top:45px}
+@media(max-width:1100px){.page{padding:40px 30px}.sidebar{width:252px}.shell{margin-left:252px}}
+@media(max-width:760px){.mobile-toggle{display:block}.sidebar{transform:translateX(-100%);width:280px;transition:transform .15s}.nav-open .sidebar{transform:translateX(0)}.shell{margin-left:0}.page{padding:58px 20px 45px}.hero h1{font-size:28px}.chapter h2{font-size:23px}table{font-size:12px}td,th{padding:7px 6px}}
+@page{size:A4;margin:17mm 15mm 19mm;@bottom-left{content:"QGC 集群指挥平台 · e3226eccb";font:8pt "Noto Sans CJK SC";color:#63788a}@bottom-right{content:counter(page) " / " counter(pages);font:8pt sans-serif;color:#63788a}}
+@media print{
+  html{scroll-behavior:auto}body{background:white;font-size:9pt;line-height:1.65;color:#18293b}
+  .sidebar,.actions,.mobile-toggle,.empty{display:none!important}.shell{margin:0}.page{padding:0;max-width:none;min-height:0}
+  .hero{break-after:page;padding-top:30mm;border:0}.hero h1{font-size:29pt}.subtitle{font-size:12pt}.meta{margin-top:14mm}.meta span{font-size:10pt}
+  .preface{font-size:9pt}.chapter,.chapter[hidden]{display:block!important;padding-top:4mm;margin-top:6mm}.chapter h2{font-size:17pt;margin:4mm 0 5mm;break-after:avoid}.chapter h3{font-size:11.5pt;margin:5mm 0 3mm;break-after:avoid}
+  p,li{orphans:3;widows:3}p{margin:2.5mm 0}li{margin:1.3mm 0}table{font-size:8pt;line-height:1.55;margin:3mm 0 5mm}td,th{padding:2mm 2.3mm}tr{break-inside:avoid}thead{display:table-header-group}
+  pre{font-size:8pt;line-height:1.5;padding:3mm;break-inside:avoid}a{color:#20516b;text-decoration:none}footer{font-size:8pt}
+}
+</style></head>
+<body>
+<button class="mobile-toggle" id="nav-toggle" aria-controls="sidebar" aria-expanded="false">目录</button>
+<aside class="sidebar" id="sidebar"><div class="brand">QGC / 使用手册</div>
+<div class="edition">版本 e3226eccb · 2026.09.07</div>
+<label for="chapter-search">查找相关章节</label><input id="chapter-search" type="search" placeholder="例如：起飞、上传、围栏" autocomplete="off">
+<div id="search-status" role="status" aria-live="polite">全部 24 章</div>
+<nav aria-label="章节目录"><a href="#scope" data-chapter="1">1. 软件功能与适用范围</a>
+<a href="#startup" data-chapter="2">2. 安装、启动与首次配置</a>
+<a href="#quick-start" data-chapter="3">3. 快速上手：先完成一次受控练习</a>
+<a href="#navigation" data-chapter="4">4. 界面导航与状态识别</a>
+<a href="#connections" data-chapter="5">5. 连接飞行器与多机管理</a>
+<a href="#vehicle-setup" data-chapter="6">6. 载具配置、校准与参数</a>
+<a href="#maps" data-chapter="7">7. 地图、离线地图与三维视图</a>
+<a href="#single-flight" data-chapter="8">8. 单机飞行与飞行监控</a>
+<a href="#mission-planning" data-chapter="9">9. 标准航线规划与上传</a>
+<a href="#swarm-control" data-chapter="10">10. 集群批量指挥</a>
+<a href="#formation" data-chapter="11">11. 编队飞行</a>
+<a href="#coverage" data-chapter="12">12. 集群区域覆盖</a>
+<a href="#ai-setup" data-chapter="13">13. AI 配置与自主等级</a>
+<a href="#ai-use" data-chapter="14">14. 自然语言任务、确认与候选方案</a>
+<a href="#tasks" data-chapter="15">15. 多阶段任务与模板库</a>
+<a href="#tactics" data-chapter="16">16. 协同规划建议</a>
+<a href="#perception" data-chapter="17">17. 视频、感知服务与共同态势图</a>
+<a href="#constraints" data-chapter="18">18. 围栏、约束与控制权</a>
+<a href="#logs" data-chapter="19">19. 日志、审计与飞后复盘</a>
+<a href="#advanced-settings" data-chapter="20">20. RTK、遥测与其他设置</a>
+<a href="#workflows" data-chapter="21">21. 典型作业流程</a>
+<a href="#troubleshooting" data-chapter="22">22. 故障排查</a>
+<a href="#maintenance" data-chapter="23">23. 数据备份、升级与已知限制</a>
+<a href="#appendix" data-chapter="24">24. 附录：参数、工具、术语与技术依据</a></nav><p class="hint">按 / 搜索章节，Esc 清除。<br>Ctrl/Cmd + F 查找页内文字。<br>本页不依赖外部网络资源。</p></aside>
+<div class="shell"><main class="page">
+<header class="hero"><div class="eyebrow">OPERATOR MANUAL / 2026</div>
+<h1>QGroundControl<br>集群指挥平台完整使用手册</h1>
+<p class="subtitle">从设备连接到飞后复盘，覆盖基础地面站、集群指挥、AI 任务与感知态势。</p>
+<div class="meta"><span>24 章</span><span>代码基线 e3226eccb</span><span>中文操作指南</span><span>2026-09-07</span></div>
+<div class="actions"><button id="print-button">打印完整手册</button><a href="用户使用手册.pdf">打开 PDF</a><a href="用户使用手册.md">Markdown 源文档</a><a href="功能分析与手册核验.md">功能分析与依据</a></div>
+</header>
+<div class="preface">
+<p>适用版本：本仓库提交 <strong>e3226eccb</strong>。编写日期：<strong>2026-09-07</strong>。面向操作员、任务规划人员、设备保障人员和系统管理员。</p>
+<p>本手册依据当前界面、执行代码、内置模板和仓库内 QGC 文档编写，涵盖基础地面站与定制集群扩展。菜单采用“中文说明 / 英文名称”并列，实际译文可能不同；功能是否出现取决于构建选项、飞控固件、机型及当前状态。当前改动的验证以 Linux 桌面测试构建和仿真为主，不能据此认定各平台、各机型和真机均已验收。</p>
+<p>配套材料：<a href="功能分析与手册核验.md">功能分析与手册核验</a>、<a href="reports/2026-09-07-execution-safety-validation.md">版本验证摘要</a>、<a href="FEATURES.md">功能矩阵</a>。</p>
+<p>阅读格式：<a href="用户使用手册.html">离线 HTML</a> 支持目录和章节筛选；<a href="用户使用手册.pdf">PDF 打印版</a> 适合分发留档。正文均来自本 Markdown 文件。</p>
+
+</div><p class="empty" id="no-results" hidden>没有匹配章节。请缩短关键词，或按 Esc 查看全部内容。</p>
+<section class="chapter" data-chapter="1"><p><a id="scope"></a></p>
+<h2 id="chapter-1-1">1. 软件功能与适用范围</h2>
+<h3 id="chapter-1-11">1.1 软件能完成什么</h3>
+<p>本软件以 QGroundControl 为基础，在单机地面站上增加多机批量指挥、AI 任务解析、集群覆盖、编队、多阶段任务和感知态势汇聚。</p>
+<table>
+<thead>
+<tr>
+<th>功能域</th>
+<th>可完成的工作</th>
+<th>使用入口或条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>连接与监控</td>
+<td>串口、UDP、TCP 等链路；位置、模式、电量和链路状态监控</td>
+<td>通信链路设置、飞行视图</td>
+</tr>
+<tr>
+<td>载具配置</td>
+<td>固件、机架、传感器、遥控器、电源、安全参数及参数文件</td>
+<td>载具配置，按固件显示</td>
+</tr>
+<tr>
+<td>单机飞行</td>
+<td>起飞、暂停、返航、降落、执行航线及固件支持的引导操作</td>
+<td>飞行视图，当前活动机</td>
+</tr>
+<tr>
+<td>标准任务规划</td>
+<td>航点、测绘、走廊和结构扫描等模式，围栏与集结点</td>
+<td>规划视图，按固件能力显示</td>
+</tr>
+<tr>
+<td>多机批量控制</td>
+<td>对选中机队执行起飞、暂停、返航等命令</td>
+<td>集群指挥控制面板</td>
+</tr>
+<tr>
+<td>编队</td>
+<td>楔形、纵队、横队、环形；长机跟随和高度分层</td>
+<td>集群面板或 AI</td>
+</tr>
+<tr>
+<td>集群区域覆盖</td>
+<td>矩形区域分条带，生成每架机的起飞—航点—返航任务</td>
+<td>集群面板、AI、模板</td>
+</tr>
+<tr>
+<td>AI 指挥</td>
+<td>自然语言转换为受控动作，计划审查、参数修改与多候选比较</td>
+<td>AI 集群指挥面板</td>
+</tr>
+<tr>
+<td>任务编排</td>
+<td>阶段条件、人工继续、超时中止、阻塞和重试</td>
+<td>任务状态机、模板库</td>
+</tr>
+<tr>
+<td>感知态势</td>
+<td>接收结构化目标航迹，融合、告警和地图显示</td>
+<td>独立感知服务与 AI 面板</td>
+</tr>
+<tr>
+<td>视频与相机</td>
+<td>显示视频、地面录像及载荷支持的拍照/录像控制</td>
+<td>视频设置、飞行视图</td>
+</tr>
+<tr>
+<td>复盘</td>
+<td>遥测、机载日志、曲线、地图、消息、AI 审计</td>
+<td>分析工具、审计导出</td>
+</tr>
+</tbody>
+</table>
+<h3 id="chapter-1-12">1.2 必须区分的几组概念</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>实际含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>活动机</td>
+<td>标准 QGC 单机设置和飞行操作当前对应的飞行器</td>
+</tr>
+<tr>
+<td>集群选中机</td>
+<td>集群面板高亮的机队；与活动机不是同一个概念</td>
+</tr>
+<tr>
+<td>计划绑定目标</td>
+<td>AI/任务解析时保存的机号，之后改变界面选择不会改变它</td>
+</tr>
+<tr>
+<td>保存计划</td>
+<td>写入电脑文件，尚不表示飞控收到计划</td>
+</tr>
+<tr>
+<td>上传计划</td>
+<td>把任务写入飞控；需等上传反馈并核对机载内容</td>
+</tr>
+<tr>
+<td>开始任务</td>
+<td>请求飞控执行已有任务；按钮点击不等于起飞或作业成功</td>
+</tr>
+<tr>
+<td>软件约束</td>
+<td>QGC 侧执行前检查，不是机载自主避障或飞控失效保护</td>
+</tr>
+<tr>
+<td>规划建议</td>
+<td>输出建议、点位或估算，不代表自动飞行闭环已实现</td>
+</tr>
+</tbody>
+</table>
+<p>集群扩展主要按多旋翼作业方式设计。基础 QGC 支持的固定翼、VTOL、车辆等类型，并不自动获得同等的集群编队和覆盖适用性。</p>
+<h3 id="chapter-1-13">1.3 本版需要提前知道的限制</h3>
+<ul>
+<li>“全不选”后，集群直接命令使用全体目标；它不是禁用集群控制的开关。</li>
+<li>“起飞”包含请求解锁的过程；不能把它当成只设置高度。</li>
+<li>“停止编队”仅停止持续生成目标点；要让飞机改变运动状态，还需明确请求暂停、返航或降落。</li>
+<li>“暂停”“返航”“降落”不自动结束任务状态机；运行中的编队和后续阶段仍需单独处理。</li>
+<li>“新会话”只清除对话，不撤销待确认计划，也不中止正在执行的任务。</li>
+<li>集群覆盖面板没有独立作业高度输入框，起飞高度框不控制覆盖高度。</li>
+<li>内置“多机接力值守”模板暂不可直接运行，原因见第 15 章。</li>
+<li>热力图累计的是机体位置采样，不是相机有效覆盖率；“任务完成”也不是全部图像采集成功的证明。</li>
+</ul></section>
+<section class="chapter" data-chapter="2"><p><a id="startup"></a></p>
+<h2 id="chapter-2-2">2. 安装、启动与首次配置</h2>
+<h3 id="chapter-2-21">2.1 使用准备</h3>
+<p>取得包含本仓库集群扩展的应用程序。普通上游 QGC 安装包不一定有“集群指挥控制”和“AI 集群指挥”面板。</p>
+<p>准备可用的图形桌面、输入设备、足够的数据存储空间，以及所用飞控链路的驱动和端口权限。模型服务、在线地图和网络 RTK 分别依赖各自网络；核心手动飞控通信不要求云端模型在线。真实感知另需 Python 环境、兼容的视频解码/推理依赖、模型和相机源。</p>
+<p>本手册不规定未经实测的最低 CPU、内存、GPU 或机队容量。先用实际机数、分辨率和日志规模在目标设备上验收。</p>
+<h3 id="chapter-2-22">2.2 启动程序</h3>
+<p>已安装版本使用系统应用入口启动。已有匹配运行环境的开发构建，在仓库根目录运行：</p>
+<pre><code class="language-bash">./build/Debug/QGroundControl
+</code></pre>
+<p>开发构建如果位于 Docker 中，应使用项目既有运行方式提供显示、Qt、视频和 USB/网络访问条件；不要把容器内依赖齐全理解为宿主可直接执行该二进制。源码构建入口为：</p>
+<pre><code class="language-bash">just configure
+just build
+</code></pre>
+<p>这些命令供保障或开发人员使用，可能下载子模块及构建依赖。详细环境见 <a href="../../tools/README.md">开发工具说明</a>。无图形界面的测试模式不能作为操作员控制台。</p>
+<h3 id="chapter-2-23">2.3 首次设置顺序</h3>
+<ol>
+<li>打开“应用设置 / Application Settings → 通用 / General”，选择语言、主题和适合屏幕的缩放比例。</li>
+<li>检查距离、高度和速度显示单位。<strong>集群面板明确标注“米”的输入，以及集群 JSON 参数，按米、米/秒和秒解释</strong>，不要照抄英制显示值。</li>
+<li>设置“应用加载/保存路径 / Application Load/Save Path”，确认目录可写且空间充足。</li>
+<li>在“通信链路 / Comm Links”配置设备接入。</li>
+<li>在“地图 / Maps”选择底图；离线作业前完成地图下载。</li>
+<li>根据任务启用遥测记录、视频和 RTK；不需要 AI 时无需填写模型账号。</li>
+<li>连接载具后完成必要的载具配置，再进入练习或任务流程。</li>
+</ol>
+<p>清除设置、重刷固件和“参数恢复默认”是不同操作。不要用恢复默认来代替定位连接问题。</p></section>
+<section class="chapter" data-chapter="3"><p><a id="quick-start"></a></p>
+<h2 id="chapter-3-3">3. 快速上手：先完成一次受控练习</h2>
+<p>首次接触软件时，先使用隔离的模拟载具熟悉界面。</p>
+<ol>
+<li>启动包含调试功能的构建，打开“应用设置 → Mock Link”，建立模拟载具。该页只在 Debug 条件下显示；正式构建没有此页时，使用准备好的 SITL 环境。</li>
+<li>回到飞行视图，确认地图、机号、模式和集群面板出现。</li>
+<li>点击集群行观察选中高亮；比较活动机标记与已选机数，理解“全不选”的含义。</li>
+<li>打开 AI 配置，将自主等级设为 <strong>L1 仅建议</strong>。有可用模型时，用明确的模拟机号请求一个简单计划，检查目标与参数；此时不能确认下发。</li>
+<li>如需演练实际流程，在模拟环境设为 L2，使用“快速出动待命”模板，核对参数后点“执行”。</li>
+<li>观察升空、人工等待及“继续”按钮。模板最后一阶段继续后，状态机会结束，<strong>飞机不会因此自动返航</strong>。</li>
+<li>使用“返航”结束模拟飞行，确认各机落地和上锁，再导出审计。</li>
+</ol>
+<p>Mock Link 适合熟悉界面和状态交互，不能证明飞行动力学、避障、视频精度或实机性能。SITL 操作由保障人员按 <a href="../sim/README.md">仿真说明</a> 准备。</p></section>
+<section class="chapter" data-chapter="4"><p><a id="navigation"></a></p>
+<h2 id="chapter-4-4">4. 界面导航与状态识别</h2>
+<h3 id="chapter-4-41">4.1 主入口</h3>
+<p>通过顶部工具栏及工具选择入口切换飞行、规划、载具配置、分析工具和应用设置。</p>
+<table>
+<thead>
+<tr>
+<th>界面</th>
+<th>主要用途</th>
+<th>对象范围</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>飞行 / Fly</td>
+<td>实时监控、引导飞行、相机和集群操作</td>
+<td>单机控件针对活动机，集群控件按各自目标</td>
+</tr>
+<tr>
+<td>规划 / Plan</td>
+<td>编辑、保存、上传和下载航线</td>
+<td>当前规划对应的活动机或离线机型</td>
+</tr>
+<tr>
+<td>载具配置 / Vehicle Configuration</td>
+<td>校准、固件、参数、遥控器和安全配置</td>
+<td>活动机</td>
+</tr>
+<tr>
+<td>分析工具 / Analyze Tools</td>
+<td>日志、协议消息、控制台及振动</td>
+<td>活动机或打开的日志</td>
+</tr>
+<tr>
+<td>应用设置 / Application Settings</td>
+<td>语言、地图、连接、视频、遥测等</td>
+<td>地面站应用</td>
+</tr>
+</tbody>
+</table>
+<p>顶部状态区显示当前载具状态、飞行模式及电池、定位、遥控和链路等指标；点开相应指示器查看细节。不同机型的指标不完全相同。</p>
+<h3 id="chapter-4-42">4.2 集群面板位置</h3>
+<p>接入至少一架载具后，飞行视图左侧工具条下方显示“集群指挥控制”，其下显示“AI 集群指挥”。标题栏“展开/收起”控制折叠，内容可滚动。</p>
+<p>这两个定制面板没有独立的总开关，标准“Multi-Vehicle Panel”设置控制的原生面板与它们不同。小屏幕上可先收起上方集群面板，为 AI 面板留出空间。</p>
+<p>AI 配置默认折叠。<strong>感知链路、周期摘要、告警、审计目录和围栏摘要均在“配置”展开区域内</strong>，不是每次都会直接露出。</p>
+<h3 id="chapter-4-43">4.3 判断操作是否成功</h3>
+<p>依次看三个层面：应用反馈是否受理、飞控是否确认、实际模式/位置/高度是否符合预期。以下显示不能互相替代：</p>
+<ul>
+<li>“计划开始执行”表示进入执行流程。</li>
+<li>“已提交上传请求”表示上传正在进行。</li>
+<li>“编队运行中”表示控制器在运行，不保证几何误差已收敛。</li>
+<li>“已完成”表示阶段条件已满足，不保证相机数据或任务成果完整。</li>
+</ul></section>
+<section class="chapter" data-chapter="5"><p><a id="connections"></a></p>
+<h2 id="chapter-5-5">5. 连接飞行器与多机管理</h2>
+<h3 id="chapter-5-51-usb">5.1 USB 与串口</h3>
+<ol>
+<li>接好供电、USB 或数传设备，等待系统识别端口。</li>
+<li>通信链路设置中检查自动连接选项；常见 Pixhawk、SiK 等设备可自动发现。</li>
+<li>未自动连接时，在链接列表点“添加 / Add”，填名称并选择 Serial。</li>
+<li>选择正确串口、波特率及设备需要的流控，保存后点“连接 / Connect”。</li>
+<li>等待心跳、参数和状态加载完成。出现机号不等于全部参数就绪。</li>
+</ol>
+<p>设备忙时检查是否被另一个 QGC、串口终端或烧录程序占用；端口不可读写时由保障人员处理驱动和系统权限。</p>
+<h3 id="chapter-5-52-udp">5.2 UDP</h3>
+<p>在 Comm Links 添加 UDP 链路，填写地面站本地监听端口及需要的远端主机。常见模拟器和 GCS MAVLink 输入使用 <strong>14550</strong>，以实际发送端配置为准。</p>
+<p>发送端应把 MAVLink 发往运行 QGC 的主机地址，而不是任意一台设备的本机回环地址。跨 Docker/虚拟机部署时，核对实际网络命名空间及端口映射。</p>
+<p>一个 UDP 接收端可按不同系统号识别多架机。不要让两个程序在同一主机上竞争同一个接收端口，也不要把感知端口 15600 当作飞控 MAVLink 端口。</p>
+<h3 id="chapter-5-53-tcp">5.3 TCP 与其他链路</h3>
+<p>TCP 配置需要对端地址和监听端口，对端服务应已运行。蓝牙及其他链路是否可选取决于平台和构建。需要每次启动自动连接时，勾选“Automatically Connect on Start”；高时延链路按实际设备启用对应选项。</p>
+<h3 id="chapter-5-54">5.4 多机接入要求</h3>
+<ul>
+<li>各飞控使用不同 MAVLink 系统号，且不与地面站系统号冲突。</li>
+<li>分批接入，记录“机号—实体飞机—链路—任务”的对应关系。</li>
+<li>核对每架机的位置、模式、电量及 Home；若两架机被显示为一架，优先检查重复系统号或错误转发。</li>
+<li>参数和标准任务页面针对活动机；修改前再次确认顶部机号。</li>
+<li>暂时失联的对象可能仍留在列表。列表中有该机，不代表它仍能接收命令。</li>
+</ul>
+<h3 id="chapter-5-55">5.5 选择操作</h3>
+<p>集群面板点击整行切换选中；高亮表示集群选择，绿色边框表示当前活动机。行点击的作用是改变集群选择，不能据此判断活动机已切换。</p>
+<p>“全选”选中当前列表，“全不选”清空选中集合。<strong>直接批量操作在没有选中对象时采用全体目标。</strong> 只操作一架时，应明确点选那一架并核对“已选 1 架”。</p>
+<p>AI/任务计划解析后保留目标 ID；新接入的飞机不会自动加入旧计划。需要增减对象时放弃旧计划并重新生成。JSON 中显式选机必须给出非空、有效的机号数组，空数组不表示全体。</p></section>
+<section class="chapter" data-chapter="6"><p><a id="vehicle-setup"></a></p>
+<h2 id="chapter-6-6">6. 载具配置、校准与参数</h2>
+<h3 id="chapter-6-61">6.1 配置顺序</h3>
+<p>选择活动机后打开 Vehicle Configuration。先看 Summary，按设备所需完成机架、传感器、遥控、电源、飞行模式及安全配置；红色未完成项应按页面提示处理。</p>
+<table>
+<thead>
+<tr>
+<th>页面或功能</th>
+<th>操作要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Firmware</td>
+<td>使用与飞控硬件匹配的固件；按页面提示连接 USB、选择版本并等待写入完成</td>
+</tr>
+<tr>
+<td>Airframe / Frame</td>
+<td>选择实际机架、旋翼/舵面布局；设置后可能要求重启</td>
+</tr>
+<tr>
+<td>Sensors</td>
+<td>按向导完成加速度计、罗盘等校准；检查姿态方向是否符合实体动作</td>
+</tr>
+<tr>
+<td>Radio</td>
+<td>校准各通道范围、方向和开关；核对油门最低值与模式开关</td>
+</tr>
+<tr>
+<td>Power</td>
+<td>配置电池类型、容量和电压/电流测量，确认显示值可信</td>
+</tr>
+<tr>
+<td>Flight Modes</td>
+<td>配置可明确区分的飞行模式和人工接管方式</td>
+</tr>
+<tr>
+<td>Safety / Failsafes</td>
+<td>设置返航、低电量、遥控和数据链丢失行为</td>
+</tr>
+<tr>
+<td>Actuators / Motors / Servo Outputs</td>
+<td>检查输出映射及方向；电机测试前拆除螺旋桨</td>
+</tr>
+<tr>
+<td>Tuning</td>
+<td>按机型和固件提供的调参功能操作</td>
+</tr>
+<tr>
+<td>Camera / Gimbal</td>
+<td>根据载荷能力配置触发和云台控制</td>
+</tr>
+</tbody>
+</table>
+<p>PX4 与 ArduPilot 页面不同，同名能力也可能有不同参数。手册不提供可直接套用于所有飞控的安全参数数值。</p>
+<h3 id="chapter-6-62">6.2 参数查询、修改与备份</h3>
+<ol>
+<li>进入 Parameters，按名称或描述搜索，或按分组查找。</li>
+<li>点击参数，阅读单位、范围、说明及是否需要重启。</li>
+<li>输入值并保存，等待飞控参数写入完成；这不是仅修改电脑里的副本。</li>
+<li>对关键修改重新读取确认，按提示重启。</li>
+<li>使用工具菜单中的保存到文件备份；加载参数文件前确认飞控、机型和固件适配关系。</li>
+</ol>
+<p>参数文件与航线文件不能互相替代。批量载入参数、恢复默认或重刷固件前保留原始参数，不在飞行中操作。</p>
+<h3 id="chapter-6-63">6.3 遥控器与摇杆</h3>
+<p>实体遥控器在 Radio 页面校准；USB 摇杆/手柄在 Joystick 页面选择设备、校准轴和设置按钮。虚拟摇杆在应用设置的 Fly View 中启用。</p>
+<p>先在无动力或模拟状态验证方向、油门和切换行为，再用于飞行。摇杆通常控制活动机，不是整支集群；键盘焦点、活动机切换和失联行为也应事先演练。</p></section>
+<section class="chapter" data-chapter="7"><p><a id="maps"></a></p>
+<h2 id="chapter-7-7">7. 地图、离线地图与三维视图</h2>
+<h3 id="chapter-7-71">7.1 底图与定位</h3>
+<p>在 Application Settings → Maps 选择 Provider 和地图类型，按需配置服务令牌、地形高程来源或自定义瓦片 URL。在线服务是否可达由实际网络和账号决定。</p>
+<p>拖动、缩放地图查看作业区。飞行视图可能自动回中活动机；为集群覆盖选中心时，应检查地图是否被自动回中，可在 Fly View 设置中调整“Keep Map Centered on Vehicle”。</p>
+<p>地图底图不是定位校准依据。任务坐标使用 WGS84 经纬度；若地图、外部标注和飞控位置有系统偏差，先核实坐标系，不靠拖动航线随意补偿。</p>
+<h3 id="chapter-7-72">7.2 离线地图</h3>
+<ol>
+<li>在 Maps → Offline Maps 选择新增地图集。</li>
+<li>移动地图到作业区，填写名称，选择需要的缩放级别。</li>
+<li>检查覆盖范围和预计数据量，开始下载。</li>
+<li>等待下载完成，断开外网后在目标区域和缩放级别检查显示。</li>
+<li>需要转移到其他设备时导出地图集，再在目标设备导入并复查。</li>
+</ol>
+<p>普通地图缓存、显式离线地图集和地形高程数据不是同一份数据。瓦片已下载不保证所有地形跟随计算也可离线运行。</p>
+<h3 id="chapter-7-73">7.3 三维视图</h3>
+<p>构建启用三维功能时，可在 3D View 设置和飞行视图相应入口配置、查看三维场景。城市/地形显示需要对应数据。二维/三维可视化都不能代替避障、真实高度和飞控状态判断。</p></section>
+<section class="chapter" data-chapter="8"><p><a id="single-flight"></a></p>
+<h2 id="chapter-8-8">8. 单机飞行与飞行监控</h2>
+<h3 id="chapter-8-81">8.1 飞行前确认</h3>
+<p>确认活动机正确、必要配置完成、定位与 Home 合理、电量和链路正常、航线已核对。使用检查单的场景，在 Fly View 设置中启用检查单并按项目完成。</p>
+<p>返航高度和失效保护属于飞控设置。地面站显示“返航”不表示它会绕开所有障碍或使用集群覆盖高度。</p>
+<h3 id="chapter-8-82">8.2 常用飞行操作</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>操作方法</th>
+<th>检查结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>起飞</td>
+<td>在飞行工具中选择相应动作，核对目标高度并完成界面确认</td>
+<td>解锁状态、飞行模式、高度变化</td>
+</tr>
+<tr>
+<td>暂停</td>
+<td>请求当前载具暂停；按界面要求确认</td>
+<td>多旋翼通常悬停，固定翼可能盘旋，依固件而定</td>
+</tr>
+<tr>
+<td>返航</td>
+<td>使用 Return/RTL 并确认</td>
+<td>模式进入返航，朝实际 Home/固件指定返航位置运行</td>
+</tr>
+<tr>
+<td>降落</td>
+<td>请求 Land 并确认</td>
+<td>垂直速度、高度、落地和上锁状态</td>
+</tr>
+<tr>
+<td>开始/继续任务</td>
+<td>核对机载航线后使用对应任务动作</td>
+<td>任务模式、当前任务项和进度</td>
+</tr>
+<tr>
+<td>指点飞行/环绕</td>
+<td>点击地图位置，选择固件提供的动作并确认</td>
+<td>目标点和飞行模式与预期一致</td>
+</tr>
+</tbody>
+</table>
+<p>可用按钮随载具状态变化，不强行寻找不适用于当前机型的操作。软件暂停不会切断电机。</p>
+<h3 id="chapter-8-83">8.3 持续监控与接管</h3>
+<p>关注模式、相对高度、地速、电量趋势、定位质量和链路状态；展开错误消息查看飞控拒绝原因。某命令失败时不要连续重复点击造成难以追踪的请求。</p>
+<p>需要脱离集群自动化时，先处理任务状态机和持续编队，再使用已验证的单机模式或遥控器接管。第 18 章说明租约判断及恢复条件。</p>
+<h3 id="chapter-8-84">8.4 单机任务继续与集群任务恢复</h3>
+<p>标准 QGC 在固件和任务状态允许时提供继续任务、落地换电后的任务恢复等流程。其依据是当前飞控任务及 QGC 会话状态。</p>
+<p>这与定制集群状态机重启后的提示不同：<strong>本版集群只恢复未完成任务的元信息，不能从关闭软件前的完整阶段和航点自动续飞。</strong></p></section>
+<section class="chapter" data-chapter="9"><p><a id="mission-planning"></a></p>
+<h2 id="chapter-9-9">9. 标准航线规划与上传</h2>
+<h3 id="chapter-9-91">9.1 建立单机任务</h3>
+<ol>
+<li>进入 Plan。离线规划时确认默认固件和机型；在线时确认活动机。</li>
+<li>将 Planned Home 放在预计起飞位置附近。它用于规划估算，不等于已修改飞控实际 Home。</li>
+<li>插入适合机型的起飞项、航点和返航/降落项。</li>
+<li>点击任务项调整位置、高度、速度、相机或停留等参数。</li>
+<li>逐项核对高度参考：相对高度、海拔或地形相关模式不能混用。</li>
+<li>查看路线连线、任务统计和可用的地形剖面，检查总距离和预计时间。</li>
+<li>保存计划，再上传至飞控，等待成功后切换 Fly 执行。</li>
+</ol>
+<h3 id="chapter-9-92">9.2 规划界面的主要控件</h3>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Open / 打开</td>
+<td>从本地加载计划文件</td>
+</tr>
+<tr>
+<td>Save / 保存</td>
+<td>保存当前计划，常用格式为 .plan</td>
+</tr>
+<tr>
+<td>Upload / 上传</td>
+<td>将计划发送给当前载具</td>
+</tr>
+<tr>
+<td>Download / 下载</td>
+<td>读取当前载具上的计划；通常位于附加菜单</td>
+</tr>
+<tr>
+<td>Clear / 清空</td>
+<td>清除规划内容；连接载具时可能同时请求清除机载计划，操作前阅读确认框</td>
+</tr>
+<tr>
+<td>Takeoff / Waypoint / Return 或 Land</td>
+<td>插入对应任务项</td>
+</tr>
+<tr>
+<td>Pattern / 模式</td>
+<td>建立测绘、走廊、结构扫描或降落模式</td>
+</tr>
+<tr>
+<td>Mission / Geo-Fence / Rally Point</td>
+<td>切换编辑图层</td>
+</tr>
+<tr>
+<td>右侧树形编辑区</td>
+<td>编辑计划信息、默认值、任务、围栏、集结点及变换</td>
+</tr>
+<tr>
+<td>Stats / Terrain</td>
+<td>查看统计与高程剖面</td>
+</tr>
+</tbody>
+</table>
+<p>保存按钮和上传按钮高亮通常表示存在尚未保存或尚未上传的更改。上传前处理无效输入；任务文件应保留到作业结束后复盘。</p>
+<h3 id="chapter-9-93">9.3 常用复杂航线</h3>
+<ul>
+<li><strong>Survey 测绘</strong>：绘制作业多边形，选择相机/覆盖参数、角度和高度，检查条带方向及出入口。</li>
+<li><strong>Corridor Scan 走廊扫描</strong>：定义中心折线、走廊宽度和覆盖参数，检查转弯与边界。</li>
+<li><strong>Structure Scan 结构扫描</strong>：定义结构轮廓、扫描高度层和距离等；确认相机及地形条件适合。</li>
+<li><strong>降落模式</strong>：固定翼或 VTOL 构建会提供相应降落模式，按机型设置进近与降落参数。</li>
+</ul>
+<p>这些是标准单机规划功能；集群矩形覆盖不会自动把任意 Survey 多边形分配给多机。</p>
+<h3 id="chapter-9-94-rally-points">9.4 机载围栏与 Rally Points</h3>
+<p>固件支持时，在 Geo-Fence 图层添加多边形或圆形区域，设置允许/禁止属性，并上传。Rally Points 是固件支持的备选返航/等待位置，按图层编辑并上传。</p>
+<p><strong>Plan 中上传给飞控的围栏与集群的 fences.json 相互独立。</strong> 本版没有自动双向同步：编辑其中一处，不代表另一处已更新。</p>
+<h3 id="chapter-9-95">9.5 上传、回读与多机核对</h3>
+<p>每次只对确认的活动机操作，上传成功后检查任务项数和关键坐标。处理集群覆盖结果时，逐架切换活动机，下载或等待同步，核对它自己的条带。</p>
+<p>有未保存的本地编辑时，不要直接下载覆盖；先保存副本。多机任务上传不是跨飞控事务：部分飞机可能已收到，部分失败，应逐架查明后再统一开始。</p></section>
+<section class="chapter" data-chapter="10"><p><a id="swarm-control"></a></p>
+<h2 id="chapter-10-10">10. 集群批量指挥</h2>
+<h3 id="chapter-10-101">10.1 操作前确定目标</h3>
+<p>检查“已选 N 架”和每一行机号。直接操作采用“有选中用选中集合，无选中用全体”的规则；按钮弹窗打开期间也不要随意切换选择。AI 已确认计划则保持它原先绑定的对象。</p>
+<h3 id="chapter-10-102">10.2 一键指令</h3>
+<table>
+<thead>
+<tr>
+<th>按钮</th>
+<th>当前行为</th>
+<th>单独确认弹窗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>解锁</td>
+<td>向目标机请求解锁</td>
+<td>无</td>
+</tr>
+<tr>
+<td>上锁</td>
+<td>请求正常上锁，是否接受由飞控决定</td>
+<td>无</td>
+</tr>
+<tr>
+<td>起飞</td>
+<td>按填入高度依次请求解锁并起飞</td>
+<td>有</td>
+</tr>
+<tr>
+<td>降落</td>
+<td>请求目标机原地降落</td>
+<td>有</td>
+</tr>
+<tr>
+<td>返航</td>
+<td>请求目标机按固件返航逻辑执行</td>
+<td>有</td>
+</tr>
+<tr>
+<td>暂停</td>
+<td>向目标机立即发出暂停请求</td>
+<td>无</td>
+</tr>
+<tr>
+<td>开始任务</td>
+<td>请求执行各机已上传的任务</td>
+<td>无</td>
+</tr>
+<tr>
+<td>紧急上锁</td>
+<td>发送强制上锁命令，可能在空中关闭动力</td>
+<td>有，含明确警告</td>
+</tr>
+</tbody>
+</table>
+<p>“起飞高度(米)”默认 10，输入范围 2–120，仍受更严格的约束和飞控检查。常规命令默认机间错开 300 毫秒，起飞默认错开 2500 毫秒，并等待解锁状态；<strong>没有同时离地不一定是失败</strong>。暂停和紧急上锁请求不采用上述常规错峰，但实际响应仍取决于链路和飞控。</p>
+<p>飞行中不要把“紧急上锁”作为暂停或返航使用；强制关闭动力会导致坠落。</p>
+<h3 id="chapter-10-103">10.3 从自动化切回人工回收</h3>
+<p>对于正在运行的集群任务或编队，按当前状态处理：</p>
+<ol>
+<li>若编队正在运行，点“停止编队”，先停止持续目标点下发。</li>
+<li>若任务状态机正在运行，点“中止任务”，结束后续阶段并请求该任务已涉及的目标机暂停。</li>
+<li>明确选择需要处置的机队；需要暂停时点“暂停”，需要回收时请求“返航”或“降落”。</li>
+<li>逐架确认模式和实际运动，失联或拒绝命令的飞机按已准备的飞控/遥控处置方式处理。</li>
+</ol>
+<p>中止请求、暂停请求和实际停止运动不是同一时刻。不能假定点一次暂停就清空了编队、任务状态机和机载航线。</p></section>
+<section class="chapter" data-chapter="11"><p><a id="formation"></a></p>
+<h2 id="chapter-11-11">11. 编队飞行</h2>
+<h3 id="chapter-11-111">11.1 准备条件</h3>
+<p>选中编队机队，确保长机包含在目标中；长机须已解锁且定位有效。僚机须已解锁、达到离地判定高度并允许集群控制，才会参与更新。当前离地判定门槛为相对高度 1.5 米，不应把这个门槛当成推荐编队飞行高度。</p>
+<h3 id="chapter-11-112">11.2 参数</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>默认或选项</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>队形</td>
+<td>楔形、纵队、横队、环形</td>
+<td>决定僚机相对长机的槽位</td>
+</tr>
+<tr>
+<td>长机</td>
+<td>连接列表中的机号</td>
+<td>提供位置、航向和高度参考</td>
+</tr>
+<tr>
+<td>间距(米)</td>
+<td>默认 10；输入 2–500</td>
+<td>队形尺度；环形时用作半径，其他队形按槽位展开</td>
+</tr>
+<tr>
+<td>高度分层(米)</td>
+<td>默认 3；输入 0–50</td>
+<td>按槽位叠加到长机高度的分层量</td>
+</tr>
+</tbody>
+</table>
+<p>默认约束下，小于 3 米的间距被拒绝，小于 6 米会警告。输入框允许输入不代表通过约束。不同队形中的相邻机真实距离并不都等于这个“间距”值。</p>
+<p>楔形按排、纵队按僚机序号叠加高度；横队和环形当前保持长机高度，不应用高度分层参数。</p>
+<h3 id="chapter-11-113">11.3 启动、观察和结束</h3>
+<ol>
+<li>完成起飞并确认实际高度、定位和控制状态。</li>
+<li>设置队形、长机、间距和高度分层，点击其他控件使数值编辑生效。</li>
+<li>点“开始编队”，查看长机和僚机数量。</li>
+<li>观察各机位置、实际高度和相对距离，确认进入预期队形。</li>
+<li>结束时先点“停止编队”，再按目标机队请求暂停、返航或降落。</li>
+</ol>
+<p>控制器默认每秒更新目标点。它主要控制僚机相对位置，<strong>不会自动为长机生成一条巡航路线</strong>。长机的飞行路线需要另行安排。</p>
+<h3 id="chapter-11-114">11.4 异常与边界</h3>
+<p>已绑定编队不会因界面选中变化而自动吸收其他飞机。被人工接管、尚未离地或未获得控制许可的飞机会被跳过，应核对显示的僚机数。</p>
+<p>检测到长机对象不存在、上锁或定位无效时，控制器会停止并尝试暂停允许控制的僚机；这不是所有断链情况的可靠覆盖，不要依赖它替代飞控失联保护。</p>
+<p>人工点“停止编队”会停止当前整个编队控制器，当前行选择不把它变成“只停止部分僚机”；它不会发送悬停命令。编队也没有完整障碍物规避、地形避让或动力学可行性保证；高度分层不能代替对各机最终高度的核验。</p></section>
+<section class="chapter" data-chapter="12"><p><a id="coverage"></a></p>
+<h2 id="chapter-12-12">12. 集群区域覆盖</h2>
+<h3 id="chapter-12-121">12.1 手动覆盖参数</h3>
+<p>集群面板的覆盖中心来自<strong>点击“生成并上传”时的飞行地图中心</strong>。先移动地图并确认它没有自动回中到其他位置。</p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>面板默认值</th>
+<th>面板范围</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>长(米)</td>
+<td>200</td>
+<td>10–100000</td>
+</tr>
+<tr>
+<td>宽(米)</td>
+<td>120</td>
+<td>10–100000</td>
+</tr>
+<tr>
+<td>角度(度)</td>
+<td>0</td>
+<td>0–359</td>
+</tr>
+<tr>
+<td>行距(米)</td>
+<td>20</td>
+<td>2–1000</td>
+</tr>
+</tbody>
+</table>
+<p>角度按北起方位角解释，0 为南北向航线，90 为东西向航线。长度沿航线方向，宽度垂直于航线方向。输入上限是软件参数范围，不是单架飞机的可执行航程。</p>
+<p><strong>覆盖作业高度</strong>由当前覆盖规划器状态决定，进程初始值为相对起飞点 30 米。面板没有直接编辑该高度的控件；它不使用上面的“起飞高度”，也不使用标准 Plan 的默认航点高度。AI 覆盖计划执行后可能改变规划器高度。需要指定高度时，通过带 altitude 参数的 AI 计划或模板操作，并核对上传结果。</p>
+<h3 id="chapter-12-122">12.2 生成到执行</h3>
+<ol>
+<li>选定目标机队，检查飞控已有任务，保存需要保留的航线。</li>
+<li>设置区域和行距，确认覆盖高度、Home、围栏和电量估算条件。</li>
+<li>点“生成并上传”。规划器按机数划分矩形条带，为各机生成任务。</li>
+<li>等待各机上传完成及回读反馈，逐机核对起飞项、覆盖航点、作业高度和返航项。</li>
+<li>确认所有目标机的任务正确后，点“开始任务”。</li>
+<li>监控机载进度、实际飞行轨迹和电量，结束后核对落地与上锁。</li>
+</ol>
+<p>一次生成会向目标飞控写入任务，可能覆盖已有航线，不是纯预览。“清空任务”请求清除目标机载任务，不是中止按钮。</p>
+<h3 id="chapter-12-123">12.3 三种分配方式</h3>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>含义</th>
+<th>使用入口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sequential</td>
+<td>按机号顺序分配条带</td>
+<td>手动面板默认</td>
+</tr>
+<tr>
+<td>auction</td>
+<td>根据位置等成本进行集中分配</td>
+<td>AI 覆盖动作指定 assign</td>
+</tr>
+<tr>
+<td>cbba</td>
+<td>使用 CBBA 算法形成分配结果</td>
+<td>AI 覆盖动作指定 assign</td>
+</tr>
+</tbody>
+</table>
+<p>三种方式均在地面站侧计算；cbba 名称不代表各飞机已经运行分布式通信与一致性协议。当前面板没有分配方式下拉框。</p>
+<h3 id="chapter-12-124">12.4 与实际成果的关系</h3>
+<p>生成的机载任务包括起飞、覆盖航点和返航。它没有自动完成相机标定、测绘重叠率设计、拍照触发或数据质量验收。若需要摄影测量，应核对机载相机动作和采集设置，或使用标准 Survey 功能规划对应单机任务。</p>
+<p>多程模板中每一程覆盖都可能带返航项，不应假定始终保持空中连续扫掠。由目标机数和条带宽度决定的航点数也可能很大，先检查传输和飞控容量。</p></section>
+<section class="chapter" data-chapter="13"><p><a id="ai-setup"></a></p>
+<h2 id="chapter-13-13-ai">13. AI 配置与自主等级</h2>
+<h3 id="chapter-13-131">13.1 配置接口</h3>
+<p>展开 AI 面板的“配置”：</p>
+<table>
+<thead>
+<tr>
+<th>输入项</th>
+<th>当前默认或行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>接口地址</td>
+<td>默认 <code>https://api.deepseek.com/v1</code>；填写兼容服务的基础地址</td>
+</tr>
+<tr>
+<td>API Key（仅本次会话）</td>
+<td>初始为空；使用密码框，退出进程后不保留</td>
+</tr>
+<tr>
+<td>模型</td>
+<td>默认 deepseek-chat；必须是端点实际提供的模型名</td>
+</tr>
+<tr>
+<td>工具调用</td>
+<td>默认开启；不支持 Function Calling 时关闭，使用 JSON 路径</td>
+</tr>
+<tr>
+<td>所有 AI 动作均需确认</td>
+<td>默认关闭；开启后，普通动作也进入确认流程</td>
+</tr>
+<tr>
+<td>测试连接</td>
+<td>请求基础地址后附加 /models 的资源</td>
+</tr>
+</tbody>
+</table>
+<p>本程序把 /models 和 /chat/completions 拼到基础地址后，不应把完整聊天路径填进“接口地址”。避免多余的尾部斜杠。</p>
+<p>测试连接通过只能说明该请求成功，不能证明指定模型支持工具调用或能正确执行任务解析。再用明确的 L1 示例检查实际聊天结果。</p>
+<h3 id="chapter-13-132">13.2 本地服务和离线使用</h3>
+<p>本程序要求 API Key 输入非空，即使本地兼容服务不检查密钥也是如此。仅对明确不校验令牌的自有本地服务，可按其配置使用一个非空占位值；需要鉴权的服务应填真实授权凭据。</p>
+<p>离线时可配置自有本地端点和已部署模型，但还需单独准备离线地图、地形和其他网络依赖。手册不保证任意“兼容”模型都接受本软件的工具或 JSON 请求格式。</p>
+<h3 id="chapter-13-133">13.3 确认规则</h3>
+<table>
+<thead>
+<tr>
+<th>等级</th>
+<th>含危险动作</th>
+<th>其他动作</th>
+<th>适用方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1 仅建议</td>
+<td>保留计划，禁止下发</td>
+<td>统一执行管线同样禁止</td>
+<td>查看和审查 AI 输出</td>
+</tr>
+<tr>
+<td>L2 监督执行</td>
+<td>必须人工确认</td>
+<td>若额外确认开关关闭，可自动执行</td>
+<td>默认等级</td>
+</tr>
+<tr>
+<td>L3 限定域自主</td>
+<td>在允许白名单内可自动；域外需确认</td>
+<td>可自动，额外确认开关开启时仍需确认</td>
+<td>经验证的限定流程</td>
+</tr>
+</tbody>
+</table>
+<p>危险动作包括解锁、起飞、降落、返航、开始任务、上锁、开始编队和紧急上锁。<strong>紧急上锁始终不能自动执行。</strong></p>
+<p>L3 界面可配置 arm、takeoff、land、rtl、start_mission、disarm、start_formation。初始白名单包含这七类；启用 L3 前逐项核对，不能假定它初始为空。“所有 AI 动作均需确认”开关开启时，白名单不会消除这项额外确认。</p>
+<p>L1 限制 AI/任务统一执行管线，人工集群直接按钮仍可操作。运行中切到 L1不等于急停：已经发出的动作不会回滚，人工启动的持续流程也应显式停止。</p>
+<h3 id="chapter-13-134">13.4 数据与响应</h3>
+<p>模型请求会携带用户文本、对话历史和机况/感知等上下文；使用远端模型时，这些内容会发往所配置的端点。审计还会记录输入和模型输出。</p>
+<p>地址、模型名和工具调用选项可跨启动保存；API Key、额外确认开关和周期摘要开关按当前进程状态使用。模型请求超时设置为 60 秒，连接测试为 15 秒。界面在请求中禁用发送输入；没有独立的取消请求按钮。</p></section>
+<section class="chapter" data-chapter="14"><p><a id="ai-use"></a></p>
+<h2 id="chapter-14-14">14. 自然语言任务、确认与候选方案</h2>
+<h3 id="chapter-14-141">14.1 写出明确指令</h3>
+<p>使用“对象 + 动作 + 参数 + 完成条件”的表达方式，并标明坐标、单位或使用地图中心。例如在相应模拟机号已存在的条件下：</p>
+<ul>
+<li>“只对 1、2 号机生成起飞到 20 米的计划。”</li>
+<li>“为当前选中机队规划以当前地图中心为中心的 200×120 米矩形覆盖，作业高度 30 米，行距 20 米，方位角 90 度；先展示方案。”</li>
+<li>“生成两阶段任务：选中机队升到 20 米后，进入人工等待阶段。”</li>
+<li>“比较两种覆盖方案，列出目标机、作业高度和预计距离，等待我选择。”</li>
+</ul>
+<p>“先展示”属于用户意图，真正的下发限制仍由自主等级和确认开关执行。只想讨论方案时先设 L1。</p>
+<p>简单动作序列会按顺序发起请求，<strong>不等于等待前一动作实际完成</strong>。需要“升到指定高度之后再开始下一步”时，应明确生成多阶段任务，使用升空完成条件。</p>
+<h3 id="chapter-14-142">14.2 审查待确认计划</h3>
+<p>查看目标机号、动作顺序、参数、约束报告和预演估算。重点核对：</p>
+<ol>
+<li>对象是否与本次任务一致，是否包含意外的全体机队。</li>
+<li>高度、区域中心、角度和距离单位是否正确。</li>
+<li>是否先上传了正确任务再开始执行。</li>
+<li>起飞、编队、返航与任务等待关系是否明确。</li>
+<li>约束中是否仍有 error，估算参数是否符合实际设备。</li>
+</ol>
+<p>点击“确认执行”时再次检查实时条件。存在错误不会因人工确认而强行下发，计划通常保留供修正。warning 是提示，不能忽略其实际原因。</p>
+<h3 id="chapter-14-143">14.3 修改参数</h3>
+<p>普通动作计划可勾选“编辑参数”，修改该动作的完整参数 JSON 后点“更新”。例如起飞动作参数：</p>
+<pre><code class="language-json">{"altitude": 20}
+</code></pre>
+<p>覆盖动作可使用以下完整参数形式；数值仅为格式示例：</p>
+<pre><code class="language-json">{
+  "center_lat": 39.9,
+  "center_lon": 116.4,
+  "length": 200,
+  "width": 120,
+  "angle": 90,
+  "spacing": 20,
+  "altitude": 30,
+  "assign": "sequential"
+}
+</code></pre>
+<p>修改框编辑的是参数，不是整条带 type 的动作对象。保留该动作所需字段，使用 JSON 数字而非数字字符串。更新会重新校验，但不会重新绑定目标机。</p>
+<p>不能通过参数更新框编辑选机动作来替换目标；需要重新生成。多阶段任务也不是可在这里逐阶段编辑的通用编辑器，应放弃后重新生成任务或修改模板。</p>
+<h3 id="chapter-14-144">14.4 选择候选方案</h3>
+<p>候选卡片显示标题、摘要、优劣、估算和错误数量。非法候选会被过滤，因此未必总有两到三个可选项。</p>
+<p>“选择此方案”不保证只是预览：普通动作候选会进入当前等级/开关对应的执行或确认流程；多阶段任务候选进入任务确认流程。若需要先看后执行，提前启用额外确认或使用 L1。</p>
+<h3 id="chapter-14-145">14.5 放弃、新会话与新指令</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>会发生什么</th>
+<th>不会发生什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>放弃</td>
+<td>清除当前待确认计划/任务</td>
+<td>不撤回已经下发的命令</td>
+</tr>
+<tr>
+<td>全部放弃</td>
+<td>清除候选方案</td>
+<td>不中止正在运行的任务</td>
+</tr>
+<tr>
+<td>新会话</td>
+<td>清空聊天和历史上下文</td>
+<td>不清除待确认计划、不停止任务、不新建审计文件</td>
+</tr>
+<tr>
+<td>发送新的有效指令</td>
+<td>新请求会清理旧待确认计划和候选</td>
+<td>不等于停止已执行的旧任务</td>
+</tr>
+<tr>
+<td>中止任务</td>
+<td>停止任务状态机并请求任务目标暂停</td>
+<td>不自动停止持续编队或删除机载航线</td>
+</tr>
+</tbody>
+</table>
+<p>存在仍有用的待确认方案时，先决定执行或放弃，再发送新指令。需要改变正在飞行的行为时，使用明确的控制入口。</p>
+<h3 id="chapter-14-146">14.6 输出校验失败</h3>
+<p>普通动作最多 10 项，多阶段任务最多 8 阶段，每阶段也受动作数量限制。未知动作、无效机号、错误类型或越界字段会拒绝整计划；部分历史提示仍含“忽略”字样，不应理解为其余动作一定已执行。</p>
+<p>输入过滤命中高风险模式时不向模型发送；可疑文本可能记录后继续。过滤不是模型正确性的保证，操作员仍需核对生成结果。</p></section>
+<section class="chapter" data-chapter="15"><p><a id="tasks"></a></p>
+<h2 id="chapter-15-15">15. 多阶段任务与模板库</h2>
+<h3 id="chapter-15-151">15.1 任务状态与按钮</h3>
+<p>一次只运行一个集群任务状态机。AI 面板显示任务名、当前状态和阶段列表。</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+<th>操作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行中</td>
+<td>当前阶段已进入执行/等待条件流程</td>
+<td>观察目标机状态</td>
+</tr>
+<tr>
+<td>等待操作员确认</td>
+<td>当前阶段为 manual 条件</td>
+<td>核对现场后点“继续（人工确认）”</td>
+</tr>
+<tr>
+<td>已阻塞</td>
+<td>阶段约束或执行被拒绝，停止自动推进</td>
+<td>修正后点“重试当前阶段”</td>
+</tr>
+<tr>
+<td>已完成</td>
+<td>所有阶段的程序条件满足</td>
+<td>再核对实际成果及各机状态</td>
+</tr>
+<tr>
+<td>已中止/失败</td>
+<td>中止或超时结束</td>
+<td>核查暂停结果，决定回收或重建任务</td>
+</tr>
+</tbody>
+</table>
+<p>manual 条件是在该阶段动作发起之后等待，<strong>不是执行这些动作之前的确认闸门</strong>。若需要先批准后起飞，应把无动作的人工等待放在独立的前一阶段。</p>
+<h3 id="chapter-15-152">15.2 六种完成条件</h3>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th>当前程序判断</th>
+<th>使用注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>all_airborne</td>
+<td>目标机已解锁，达到最小相对高度附近</td>
+<td>有 0.5 米容差；不是稳定悬停判定</td>
+</tr>
+<tr>
+<td>all_disarmed</td>
+<td>目标机全部上锁</td>
+<td>不直接测量接地</td>
+</tr>
+<tr>
+<td>all_mission_finished</td>
+<td>已上锁，或曾进入 Mission 后退出</td>
+<td>模式退出可能是中断，不是逐航点成果验收</td>
+</tr>
+<tr>
+<td>formation_running</td>
+<td>编队控制器启用且僚机数达到要求</td>
+<td>不检查编队几何收敛误差</td>
+</tr>
+<tr>
+<td>duration</td>
+<td>当前阶段经过指定时间</td>
+<td>不是航程或电量保证</td>
+</tr>
+<tr>
+<td>manual</td>
+<td>操作员点击继续</td>
+<td>仍受阶段超时限制</td>
+</tr>
+</tbody>
+</table>
+<p>默认阶段宽限期 3 秒，默认超时 600 秒；自定义任务可设置。任务到达超时会失败并请求已涉及目标机暂停。若等待时长大于超时，应修正模板，而不是反复重试。</p>
+<p>阻塞时计时推进停止；重试重新进入当前阶段并重置该阶段计时。重试不是物理事务回滚，先核实此前哪些动作实际发生过。</p>
+<h3 id="chapter-15-153">15.3 使用模板库</h3>
+<ol>
+<li>查看模板卡片的名称、阶段数、描述和参数。</li>
+<li>核对选择机队、长机及默认值，修改后让输入框结束编辑。</li>
+<li>需要审查完整流程时先查看模板文件或通过 AI 生成待确认任务。</li>
+<li>点“执行”是一次显式操作员授权，可能立即进入第一阶段；<strong>没有额外的统一确认弹窗</strong>。</li>
+<li>观察任务状态机，处理人工继续、阻塞或超时。</li>
+</ol>
+<p>L1 下即使模板“执行”触发任务启动，统一下发仍会被阻断；不要把模板按钮当成绕过 L1 的入口。</p>
+<p>“刷新”重新扫描模板；“打开目录”打开应用数据目录中的 SwarmTemplates。非内置模板可删除，内置模板在界面中不能删除。</p>
+<h3 id="chapter-15-154">15.4 九套内置模板的实际含义</h3>
+<p>下表描述随此提交提供的模板。模板首次落地后不会在每次启动时覆盖旧文件，升级后的实际内容应在目录中核对。</p>
+<table>
+<thead>
+<tr>
+<th>模板</th>
+<th>阶段数</th>
+<th>主要流程</th>
+<th>使用边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>区域搜索后返航</td>
+<td>3</td>
+<td>起飞→矩形覆盖→返航</td>
+<td>默认高度 30 米，区域 200×150 米；先核对覆盖上传</td>
+</tr>
+<tr>
+<td>编队巡航后返航</td>
+<td>4</td>
+<td>起飞→编队→计时→停止编队并返航</td>
+<td>需要至少长机和僚机；不自动生成长机巡航路线</td>
+</tr>
+<tr>
+<td>快速出动待命</td>
+<td>2</td>
+<td>起飞→人工等待</td>
+<td>默认 20 米；继续后结束任务，不自动返航</td>
+</tr>
+<tr>
+<td>全员返航降落</td>
+<td>1</td>
+<td>停止编队→返航→等待上锁</td>
+<td>名称不覆盖目标规则；有选择时仍针对选中机</td>
+</tr>
+<tr>
+<td>扇形扫掠搜索</td>
+<td>5</td>
+<td>起飞→三种角度的覆盖→返航</td>
+<td>至少 3 架；当前是旋转矩形覆盖，不是精确扇形边界</td>
+</tr>
+<tr>
+<td>平行网格扫掠</td>
+<td>4</td>
+<td>起飞→两种角度覆盖→返航</td>
+<td>至少 2 架；相机载荷需人工确认</td>
+</tr>
+<tr>
+<td>编队巡逻</td>
+<td>6</td>
+<td>起飞→第一队形/计时→第二队形/计时→返航</td>
+<td>至少 3 架；长机路线需另行安排</td>
+</tr>
+<tr>
+<td>多机接力值守</td>
+<td>4</td>
+<td>声明为起飞、A/B 组计时、返航</td>
+<td><strong>本版暂不可直接运行</strong>，详见下文</td>
+</tr>
+<tr>
+<td>会合集结</td>
+<td>4</td>
+<td>起飞→环形编队→计时保持→返航</td>
+<td>至少 3 架；以长机为参考，不是任意地图集结点</td>
+</tr>
+</tbody>
+</table>
+<p>模板的相机要求目前主要是提示，不是自动识别载荷已安装。最少机队检查也不能代替对实际选中集合、离线状态和载荷的检查。</p>
+<h3 id="chapter-15-155">15.5 模板的已知输入限制</h3>
+<p><strong>多机接力值守</strong>的最后阶段使用空 vehicle_ids 数组试图恢复全选，但当前严格解析拒绝空选机数组，因此随版本提供的这个任务会整体被拒绝。它还使用数组型分组参数，当前表单会把手工输入保留为字符串，不能假定输入“[1,2]”就成为机号数组。</p>
+<p>需要该流程时，由保障人员复制为新的自定义模板，在文件中明确填写实际机号数组并检查完整阶段，再在模拟环境验证。该模板当前只切换分组并计时，没有自动换电、航路接力或感知目标接替闭环。</p>
+<p>普通动作参数采用严格拒绝，但模板参数替换层仍会把数值按模板 min/max 截到边界；不能假定越界模板输入必然报错。填写后核对实际生成参数。</p>
+<h3 id="chapter-15-156">15.6 自定义模板入门</h3>
+<p>通过“打开目录”保存新的 UTF-8 JSON 文件，使用不与内置模板重复的名称，再点“刷新”。下面是用于模拟练习的“暂停—人工继续—结束”示例，执行前应有明确的目标机：</p>
+<pre><code class="language-json">{
+  "name": "训练_暂停与人工继续",
+  "description": "暂停目标机，等待人工确认后再计时结束。",
+  "version": 1,
+  "schema_version": 2,
+  "min_fleet": 1,
+  "parameters": [],
+  "stages": [
+    {
+      "name": "暂停并等待",
+      "actions": [{"type": "pause"}],
+      "complete_when": {"kind": "manual", "timeout_sec": 120}
+    },
+    {
+      "name": "观察五秒",
+      "actions": [],
+      "complete_when": {"kind": "duration", "seconds": 5, "timeout_sec": 30}
+    }
+  ]
+}
+</code></pre>
+<p>这个示例不负责起飞、返航或降落，结束后仍需按实际情况处置目标机。</p></section>
+<section class="chapter" data-chapter="16"><p><a id="tactics"></a></p>
+<h2 id="chapter-16-16">16. 协同规划建议</h2>
+<p>AI 可调用 plan_tactic 计算跟踪环、环形包围点、运动目标截获解和多边形周界分段。当前主要以文字和部分坐标返回，不直接上传航线，也不是在 COP 中点击目标即可自动持续跟随。</p>
+<table>
+<thead>
+<tr>
+<th>规划种类</th>
+<th>需要说明的信息</th>
+<th>返回内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>track</td>
+<td>目标经纬度、观测半径、参与机队</td>
+<td>环上观测点分布</td>
+</tr>
+<tr>
+<td>encircle</td>
+<td>中心经纬度、半径、参与机队</td>
+<td>环形位置与机号分配</td>
+</tr>
+<tr>
+<td>intercept</td>
+<td>目标位置、速度、航向和预计机速</td>
+<td>几何可行性、时间、航向和点位</td>
+</tr>
+<tr>
+<td>patrol</td>
+<td>周界多边形、参与机队</td>
+<td>周界分段及部分点位说明</td>
+</tr>
+</tbody>
+</table>
+<p>这些结果没有完成轨迹安全和现场可行性验证。环绕建议与第 11 章持续编队是不同功能。L1 下可以让模型用文字讨论，但依赖统一执行管线的数值工具动作也会被阻止，不能把 L1 当成必定能执行所有计算工具的模式。</p></section>
+<section class="chapter" data-chapter="17"><p><a id="perception"></a></p>
+<h2 id="chapter-17-17">17. 视频、感知服务与共同态势图</h2>
+<h3 id="chapter-17-171">17.1 三条不同的数据链</h3>
+<table>
+<thead>
+<tr>
+<th>数据链</th>
+<th>输入</th>
+<th>用户看到的结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>飞控遥测</td>
+<td>MAVLink 链路</td>
+<td>机号、位置、高度、模式和电量</td>
+</tr>
+<tr>
+<td>QGC 视频</td>
+<td>视频设置或载荷自动提供的媒体流</td>
+<td>视频画面、录像、相机控制</td>
+</tr>
+<tr>
+<td>集群感知</td>
+<td>独立服务的结构化航迹报文</td>
+<td>融合目标、告警、态势摘要和地图图标</td>
+</tr>
+</tbody>
+</table>
+<p>看到视频不代表检测服务已运行；感知链路在线也不代表视频正在 QGC 播放。Python 服务读取自己的 video_source，不会自动取得 QGC 当前显示的视频。</p>
+<h3 id="chapter-17-172-qgc">17.2 配置 QGC 视频和录像</h3>
+<ol>
+<li>打开 Application Settings → Video。</li>
+<li>按来源选择 RTSP、UDP H.264/H.265、MPEG-TS、TCP 或构建提供的相机源。</li>
+<li>填写完整媒体地址；UDP 常见默认地址为 0.0.0.0:5600，以发送端为准。</li>
+<li>回到 Fly 检查画面。若载荷已自动配置视频，部分设置可能不可编辑。</li>
+<li>根据实际需要设置低时延、解码器和本地录像格式/空间上限。</li>
+<li>开始录像后确认录像指示；结束时主动停止并检查输出文件。</li>
+</ol>
+<p>本地视频录制和机载相机录像是不同操作。拍照、云台和相机参数按钮只在对应载荷能力出现时可用。当前定制面板没有完整的多路视频墙，不能把内部多流状态模型当成已提供的操作界面。</p>
+<h3 id="chapter-17-173">17.3 启动结构化感知接收</h3>
+<p>展开 AI 面板“配置”，在感知卡片点“启动”。默认接收 UDP <strong>15600</strong>。</p>
+<p>“启动”只打开 QGC 接收端，不会启动 Python、打开相机或加载模型。约 3 秒内收到服务心跳才被认为在线。若按钮显示“停止”而状态仍是“待机”，通常是正在监听但未收到有效心跳。</p>
+<h3 id="chapter-17-174">17.4 模拟馈送练习</h3>
+<p>在已有 Python 环境、QGC 正在监听且两者使用同一主机网络的条件下，从仓库根目录运行：</p>
+<pre><code class="language-bash">python3 swarm_ext/services/perception/service.py \
+  --scenario swarm_ext/sim/scenarios/06_perception_feed.json \
+  --out udp://127.0.0.1:15600 --realtime
+</code></pre>
+<p>观察心跳、目标数和地图航迹。内置模拟场景有固定地理区域，应把地图移到场景定义的相机/目标附近；不在可视范围时不会自动证明接收失败。</p>
+<p>如只检查配置而不馈送：</p>
+<pre><code class="language-bash">python3 swarm_ext/services/perception/service.py \
+  --scenario swarm_ext/sim/scenarios/06_perception_feed.json --dry-run
+</code></pre>
+<p>保存离线协议报文：</p>
+<pre><code class="language-bash">python3 swarm_ext/services/perception/service.py \
+  --scenario swarm_ext/sim/scenarios/06_perception_feed.json \
+  --out file://tracks.jsonl --quiet
+</code></pre>
+<p>输出的 tracks.jsonl 保存报文类型和十六进制载荷，不是可直接用视频播放器打开的文件，也不是一行一个解码后的目标。dry-run 不验证实际取帧或检测精度。</p>
+<h3 id="chapter-17-175">17.5 真实视频服务配置</h3>
+<p>由保障人员准备与 Python 及硬件兼容的 OpenCV、推理运行时和 ultralytics 模型依赖。模型路径必须指向实际文件；不要把接口接线测试通过理解为模型已经交付。</p>
+<p>创建场景 JSON，例如：</p>
+<pre><code class="language-json">{
+  "duration_s": 30,
+  "fps": 5,
+  "detector": {
+    "type": "onnx",
+    "model_path": "/models/detector.onnx"
+  },
+  "cameras": [
+    {
+      "sensor_id": 1,
+      "video_source": "/videos/sample.mp4",
+      "reconnect_attempts": 2,
+      "lat": 39.9,
+      "lon": 116.4,
+      "alt_m": 80,
+      "heading_deg": 0,
+      "gimbal_pitch_deg": 55,
+      "hfov_deg": 60
+    }
+  ]
+}
+</code></pre>
+<p>把文件、坐标、高度、朝向和相机视场替换为经过标定的现场值。video_source 可是本地文件、支持的 RTSP/HTTP(S) 地址或整数设备编号；每路 sensor_id 必须唯一。真实检测配置不需要模拟 truths。</p>
+<p>从仓库根目录执行，将配置路径替换为实际文件：</p>
+<pre><code class="language-bash">python3 swarm_ext/services/perception/service.py \
+  --scenario /path/to/real_feed.json \
+  --out udp://127.0.0.1:15600 --realtime
+</code></pre>
+<p>远端服务应把输出目标改为 QGC 主机地址。相机视频和结构化航迹使用不同端口，单独验证路由和接收端。</p>
+<p>服务逐帧读取 BGR 图像，将实际宽高用于解算。读取失败有有限重连；首次打开失败或重开失败可能直接退出。网络流请求 3 秒打开/读取超时，实际效果依解码后端而定。读到文件末尾会报错，不能当成完成规定时长。</p>
+<p>duration_s 和 fps 控制处理帧数及期望节奏，不是无限运行开关，也不保证处理速度能达到配置值。停止脚本会结束馈送，QGC 接收端可另行点“停止”。</p>
+<h3 id="chapter-17-176">17.6 地理解算与时延边界</h3>
+<p>相机位姿目前来自固定配置，适合固定标定或受控录制。移动机载相机需要逐帧匹配机体/云台姿态和采集时间，本版未完成该同步。</p>
+<p>多相机按处理循环读取，不是硬件同步采集。跟踪也使用配置步长，真实吞吐明显变化时速度估计可能偏离。</p>
+<p>“线路时延”使用服务报文时间戳与 QGC 接收时间估算，可能包含部分处理时间，但没有覆盖相机曝光和所有缓冲；跨主机还受时钟同步影响。不能把它标为真实相机到屏幕端到端时延。</p>
+<h3 id="chapter-17-177-cop">17.7 COP 地图符号</h3>
+<table>
+<thead>
+<tr>
+<th>显示</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>目标编号</td>
+<td>地面站融合后的目标标识，不必与源服务跟踪 ID 相同</td>
+</tr>
+<tr>
+<td>类别色点</td>
+<td>人员紫、车辆红、船只蓝、动物绿、火点橙、烟雾灰</td>
+</tr>
+<tr>
+<td>圆环</td>
+<td>用透明度表达置信度；coasting 使用灰色提示短时丢失</td>
+</tr>
+<tr>
+<td>速度</td>
+<td>融合/跟踪得到的地速估计</td>
+</tr>
+<tr>
+<td>红色半透明多边形</td>
+<td>来自集群配置的禁飞区域显示</td>
+</tr>
+<tr>
+<td>琥珀色格网</td>
+<td>在线机体位置采样累计；权重越高颜色更明显</td>
+</tr>
+</tbody>
+</table>
+<p><strong>热力图不是漏扫图。</strong> 它没有将相机视场、拍照成功、遮挡或识别效果合成为有效覆盖率；当前机队选择也可能影响参与采样的对象。不能据此认定某片区域已经完成搜索。</p>
+<p>图层默认显示，没有面向用户的独立总开关。停止感知服务后图层可能仍保留或短时显示已有内容，应结合目标新鲜度与心跳判断。</p>
+<h3 id="chapter-17-178">17.8 告警与周期摘要</h3>
+<p>配置区最多显示最近 5 条告警；内部保留最近 20 条。默认低电量阈值为小于 30% 警告、小于 20% 严重，还包括断链、围栏、目标聚集、越界和速度变化等规则。相同对象/规则通常有冷却。</p>
+<p>“周期态势摘要”默认关闭，默认间隔 60 秒，可设置 10–3600 秒。需要有效模型配置；模型忙时可能跳过本次请求。严重告警还可能触发模型处置建议，因此关闭周期摘要不等于完全禁止告警相关的模型请求。</p>
+<p>摘要和告警是辅助信息。不能把模型文字当成飞控已采取行动，也不能把当前告警规则看作完整的现场风险检测系统。</p></section>
+<section class="chapter" data-chapter="18"><p><a id="constraints"></a></p>
+<h2 id="chapter-18-18">18. 围栏、约束与控制权</h2>
+<h3 id="chapter-18-181">18.1 执行检查的作用</h3>
+<p>普通 AI 计划在解析、预览、参数更新、确认和执行时经过对应检查；多阶段任务进入阶段时复查实时约束。人工起飞、编队和覆盖入口也检查相应条件。</p>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>error 情况</th>
+<th>warning 情况或限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>目标机</td>
+<td>已绑定对象缺失、离线或无有效目标</td>
+<td>列表可见不等于在线</td>
+</tr>
+<tr>
+<td>配置</td>
+<td>配置损坏、不可读、多边形/数值无效</td>
+<td>缺少配置文件会创建默认值</td>
+</tr>
+<tr>
+<td>作业区域</td>
+<td>区域不被同一允许多边形完整包含、接触/穿越边界或与禁飞区相交</td>
+<td>采用保守二维判断</td>
+</tr>
+<tr>
+<td>转场/返航</td>
+<td>当前点或返航点到作业区的保守通道不符合围栏</td>
+<td>不是基于真实地形的可飞轨迹搜索</td>
+</tr>
+<tr>
+<td>高度</td>
+<td>起飞或覆盖高度超过集群配置上限</td>
+<td>不等于验证所有编队层高和障碍物</td>
+</tr>
+<tr>
+<td>电量</td>
+<td>覆盖任务估计消耗超过可用电量</td>
+<td>余量偏低或电量未知时提示</td>
+</tr>
+<tr>
+<td>通信</td>
+<td>超过配置半径乘阻断系数</td>
+<td>超过警告半径时提示</td>
+</tr>
+<tr>
+<td>编队间距</td>
+<td>小于配置的最小间距</td>
+<td>小于最小间距乘警告系数时提示</td>
+</tr>
+<tr>
+<td>多区冲突</td>
+<td>主要提供潜在重叠提示</td>
+<td>不能保证实时机间防碰撞</td>
+</tr>
+<tr>
+<td>模板要求</td>
+<td>机队规模不满足模板声明</td>
+<td>载荷未知需要人工确认</td>
+</tr>
+</tbody>
+</table>
+<p>估算使用巡航速度、爬升速度、满电续航和安全系数等配置。它们是估算输入，<strong>不会自动把飞控速度或电池能力改成这些数值</strong>。</p>
+<h3 id="chapter-18-182">18.2 找到集群配置目录</h3>
+<p>展开 AI 配置，读取“审计追溯”显示的 SwarmAudit 路径，其上一级为当前应用数据目录。同一上级目录下有 SwarmConfig 和 SwarmTemplates。</p>
+<p>平台、应用名称、Daily/Debug 包及隔离测试环境可能使用不同目录，不要根据另一台机器的路径直接覆盖。集群配置位置也不等于 General 中的通用文件保存路径。</p>
+<h3 id="chapter-18-183-fencesjson">18.3 fences.json 配置示例</h3>
+<p>在没有运行任务的状态下，备份 SwarmConfig/fences.json，再由负责空域与设备配置的人员编辑。下面仅演示结构，坐标和性能数值需替换为实际批准的作业环境：</p>
+<pre><code class="language-json">{
+  "include": [
+    {
+      "polygon": [
+        [39.89, 116.39],
+        [39.89, 116.41],
+        [39.91, 116.41],
+        [39.91, 116.39]
+      ]
+    }
+  ],
+  "exclude": [],
+  "max_altitude_m": 60,
+  "home_lat": 39.9,
+  "home_lon": 116.4,
+  "comm_range_m": 1500,
+  "cruise_speed_ms": 12,
+  "climb_rate_ms": 2.5,
+  "endurance_min": 25,
+  "reserve_factor": 0.8,
+  "min_separation_m": 3,
+  "comm_warn_factor": 1,
+  "comm_error_factor": 1.5,
+  "spacing_warn_factor": 2,
+  "deconflict_factor": 1
+}
+</code></pre>
+<p>顶点顺序为 <strong>[纬度, 经度]</strong>，不是 GeoJSON 常见的经度在前。至少三个有效顶点，顺序沿边界排列，不允许自交、零面积或跨日期变更线。文件中不能写 JSON 注释或带引号的数值。</p>
+<p>include 为空表示不限制允许区域；exclude 为空表示未设置禁飞多边形；max_altitude_m 为 0 表示不启用该高度上限。初始默认虽然没有多边形/高度限制，<strong>仍有通信、电量和间距等默认约束</strong>。</p>
+<p>home_lat/home_lon 用于通信等检查的指控参考点，不会修改飞控实际 Home。实际返航位置仍来自各飞控。</p>
+<h3 id="chapter-18-184">18.4 修改后如何确认</h3>
+<ol>
+<li>检查 JSON 格式，可用标准工具进行语法检查：</li>
+</ol>
+<p>~~~bash
+   python3 -m json.tool /path/to/SwarmConfig/fences.json
+   ~~~</p>
+<ol start="2">
+<li>重新启动应用，或在下一次计划校验时查看新配置的反馈。</li>
+<li>感知禁飞图层和事件围栏在“启动感知”时加载；修改配置后停止再启动感知，检查图层。</li>
+<li>分别用明确在区域内和越界的模拟计划验证，确认允许/拒绝结果符合预期。</li>
+</ol>
+<p>语法检查不验证多边形和参数语义；界面文字也可能未随文件修改即时刷新。不要在飞行中修改配置来试探何时生效。</p>
+<h3 id="chapter-18-185">18.5 控制租约和人工接管</h3>
+<p>软件按每架机维护是否允许自动化控制的状态。自动化持有控制期间，载具切到所用固件自主模式集合之外的模式，通常会被识别为人工接管；持续编队、排队命令和任务上传会检查许可。</p>
+<p>自主模式集合来自固件的 Mission、Pause/Hold、RTL、SmartRTL、Land、Follow、Goto、Takeoff 等规范接口。未知模式或其他控制模式不应视为自动允许。</p>
+<p><strong>Pause/Hold 本身属于自主模式集合</strong>，因此只切到 Hold 不能保证持续编队已让出控制。需要脱离持续流程时使用“停止编队”和“中止任务”，再进行单机操作。</p>
+<p>切回自主模式后可重新申请控制，但不会补发已经跳过的旧命令；下一阶段或新计划仍需校验。明确的人工操作或已确认计划可能重新授权控制，所以操作前仍要确认意图和对象。</p>
+<h3 id="chapter-18-186">18.6 故障动作的最终依据</h3>
+<p>QGC 断开、关闭或电脑失效后，已经上传到飞控的任务和已设置的飞行模式不会自动撤销。持续编队依赖地面站更新，而机载任务、返航和失效保护由飞控执行。软件约束不能替代飞控保护、遥控接管和事先验收的处置流程。</p></section>
+<section class="chapter" data-chapter="19"><p><a id="logs"></a></p>
+<h2 id="chapter-19-19">19. 日志、审计与飞后复盘</h2>
+<h3 id="chapter-19-191">19.1 四类记录</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>记录内容</th>
+<th>典型入口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>遥测日志 .tlog / 可选 CSV</td>
+<td>地面站接收到的 MAVLink/遥测</td>
+<td>Telemetry 设置</td>
+</tr>
+<tr>
+<td>机载日志 .ulg / .bin / .log</td>
+<td>飞控内部状态、估计、控制和事件</td>
+<td>Analyze → Onboard Logs / Onboard Logs (FTP)</td>
+</tr>
+<tr>
+<td>应用日志</td>
+<td>地面站自身错误、通信、视频等诊断信息</td>
+<td>App Logging / App Log Viewer</td>
+</tr>
+<tr>
+<td>集群 JSONL 审计</td>
+<td>用户文本、AI 输出、约束、确认、执行和任务事件</td>
+<td>AI 配置 → 导出当前会话</td>
+</tr>
+</tbody>
+</table>
+<p>没有收到的遥测不会凭空出现在 .tlog 中；机载日志通常能提供地面站日志没有的飞控内部信息。</p>
+<h3 id="chapter-19-192">19.2 开启和取得日志</h3>
+<p>在 Telemetry → Logging 中设置是否保存遥测、未解锁时是否保存及 CSV 选项。数据目录以 General 的保存路径和相应子目录为准。</p>
+<p>飞后在 Onboard Logs 选择日志并下载，或在固件支持时使用 FTP 页面。等待完成再断电；下载失败时保留错误和文件大小，不用不完整文件作为完整飞行证据。</p>
+<h3 id="chapter-19-193">19.3 统一日志查看器</h3>
+<p>桌面版本 Analyze → Log Viewer 支持相应构建提供的 DataFlash、PX4 ULog 和遥测日志。</p>
+<ol>
+<li>点 Open .bin、Open .ulg 或 Open .tlog 打开对应文件。</li>
+<li>等待解析完成，核对文件名和飞行时段。</li>
+<li>对机载日志在 Charting 搜索字段、选择曲线；查看 Map、Parameters 和 Messages。</li>
+<li>通过时间轴定位异常附近，比较姿态、模式、电压、位置与状态消息。</li>
+<li>清除当前选择或换文件前保留必要截图/记录。</li>
+</ol>
+<p>日志数据缺失、时间不同步或固件字段变化可能影响解释。移动平台通常不提供相同的完整日志查看器能力。</p>
+<h3 id="chapter-19-194">19.4 遥测回放</h3>
+<p>打开 .tlog 后使用播放/暂停、速度和定位控件。回放会驱动载具视图及 MAVLink 检查器更新，应在隔离的复盘环境中进行，并明确区分回放载具和实时载具。</p>
+<p>回放不会重新执行原飞行，但界面可能呈现当时的机号、位置和模式；不要在混合实时连接的工作环境里据此操作集群。</p>
+<h3 id="chapter-19-195-mavlink-inspectorconsole">19.5 MAVLink Inspector、Console 与振动</h3>
+<ul>
+<li><strong>MAVLink Inspector</strong>：选择载具、组件和消息，检查频率及字段，可辅助定位“有链路却没有某项数据”。</li>
+<li><strong>MAVLink Console</strong>：固件支持时访问控制台；命令可能改变设备状态，交由了解该固件的保障人员操作。</li>
+<li><strong>Vibration</strong>：查看支持的振动数据，结合飞控日志判断机械或传感器问题。</li>
+<li><strong>GeoTag Images</strong>：选择日志和图片，按页面完成匹配/地理标记；先备份原始图片。</li>
+</ul>
+<h3 id="chapter-19-196">19.6 集群审计导出</h3>
+<p>展开 AI 配置，记录会话号和审计目录，点击“导出当前会话”，按反馈取得 SwarmAudit/exports 中的副本。每次应用进程会话有相应审计文件，“新会话”聊天按钮不会切分该文件。</p>
+<p>复盘时按顺序核对：用户意图 → 解析计划 → 目标和参数 → 约束结果 → 操作员确认 → 下发记录 → 飞控反馈和实际轨迹。</p>
+<p>审计有“下发”记录不代表命令成功。日志可能包含任务文字、位置和模型回复，共享前核对是否含不宜公开的任务数据。</p></section>
+<section class="chapter" data-chapter="20"><p><a id="advanced-settings"></a></p>
+<h2 id="chapter-20-20-rtk">20. RTK、遥测与其他设置</h2>
+<h3 id="chapter-20-201-rtk-ntrip">20.1 RTK / NTRIP</h3>
+<p>在 Application Settings → NTRIP/RTK：</p>
+<ol>
+<li>填写 Caster 主机、端口、账号以及需要的 TLS 选项。</li>
+<li>浏览或填写 Mount Point，核对差分源是否适合现场。</li>
+<li>需要 GGA 上报时设置位置来源和周期。</li>
+<li>连接后检查数据计数、速率和接收状态。</li>
+<li>在飞行器 GNSS/RTK 状态中确认差分实际生效；服务连接成功不等于飞机已获得固定解。</li>
+</ol>
+<p>可按部署需要配置 RTCM 消息过滤、UDP 转发或 UDP RTCM 输入。基站、移动站和地面站位置来源不同，不要混用。厘米级定位并非只打开一个开关就能保证。</p>
+<h3 id="chapter-20-202-telemetry">20.2 Telemetry</h3>
+<p>这里可设置地面站系统号、心跳、MAVLink 转发、遥测记录、部分 ArduPilot 数据流速率、签名密钥和链路状态。</p>
+<p>调整数据流速率前评估链路带宽。转发地址错误可能导致数据重复或发往错误接收端。协议签名用于完整性/来源验证，不能理解为对所有遥测内容加密。</p>
+<h3 id="chapter-20-203">20.3 其他应用页面</h3>
+<table>
+<thead>
+<tr>
+<th>页面</th>
+<th>用途和条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>General</td>
+<td>语言、主题、声音、显示缩放、单位、保存路径</td>
+</tr>
+<tr>
+<td>Fly View</td>
+<td>检查单、地图回中、引导命令显示范围、虚拟摇杆、仪表</td>
+</tr>
+<tr>
+<td>Plan View</td>
+<td>默认任务高度、起飞项和部分 VTOL/降落规划选项</td>
+</tr>
+<tr>
+<td>ADSB Server</td>
+<td>接入外部航空目标数据；不同于集群感知目标源</td>
+</tr>
+<tr>
+<td>Remote ID</td>
+<td>配置系统提供的识别和位置相关信息；取决于设备支持</td>
+</tr>
+<tr>
+<td>PX4 Log Transfer</td>
+<td>PX4 日志文件、控制和上传相关设置，按条件显示</td>
+</tr>
+<tr>
+<td>App Logging</td>
+<td>调整应用诊断记录</td>
+</tr>
+<tr>
+<td>Help</td>
+<td>查看版本、应用信息和辅助入口</td>
+</tr>
+</tbody>
+</table>
+<p>部分页面提供搜索或关键词定位。不要把“Fly View 引导高度范围”“Plan 默认高度”和“集群 fences.json 高度上限”视为同一个参数。</p></section>
+<section class="chapter" data-chapter="21"><p><a id="workflows"></a></p>
+<h2 id="chapter-21-21">21. 典型作业流程</h2>
+<h3 id="chapter-21-211">21.1 手动多机起飞、观察与回收</h3>
+<ol>
+<li>逐机确认系统号、位置、配置、电量及返航设置。</li>
+<li>在集群面板明确选择目标机队，填起飞高度。</li>
+<li>点“起飞”并核对弹窗；软件会请求解锁和错峰起飞。</li>
+<li>逐机确认实际升空和模式，没有升空的飞机查看拒绝原因。</li>
+<li>若需暂停，明确选择目标并请求暂停。</li>
+<li>若要回收，先停止仍在运行的编队/任务流程，再请求返航或降落。</li>
+<li>确认全部落地和上锁，保存日志。</li>
+</ol>
+<h3 id="chapter-21-212-ai">21.2 指定高度的 AI 覆盖任务</h3>
+<ol>
+<li>选择机队，移动地图到作业中心，核对自动回中状态。</li>
+<li>AI 配置使用 L2，并开启“所有 AI 动作均需确认”。</li>
+<li>明确描述矩形长宽、角度、行距、作业高度和机号，要求先生成覆盖上传计划。</li>
+<li>审查目标、坐标、参数、违例和估算，确认后等待上传。</li>
+<li>逐架在 Plan 中核对任务内容。</li>
+<li>确认需要执行的相同机队，再使用“开始任务”。</li>
+<li>飞后核对成果和日志。热力图只能辅助观察机体经过的位置。</li>
+</ol>
+<h3 id="chapter-21-213">21.3 多阶段任务遇到阻塞</h3>
+<ol>
+<li>阅读“已阻塞”状态以及应用/AI 反馈，记录阶段名。</li>
+<li>判断是否是目标离线、电量下降、围栏错误、L1 限制或执行拒绝。</li>
+<li>核实此前已发生的飞行动作；阻塞不会把飞机恢复到任务开始前。</li>
+<li>在允许继续且实际条件已修正后点“重试当前阶段”。</li>
+<li>若计划对象或任务本身需要修改，先中止、处置在飞机队，再重新生成任务。</li>
+</ol>
+<p>“继续”只用于正常 manual 阶段，不能越过约束错误；也不要反复重试不可恢复的失联或不满足条件的计划。</p>
+<h3 id="chapter-21-214">21.4 感知辅助观察</h3>
+<ol>
+<li>建立飞控连接，让集群界面可见。</li>
+<li>配置视频画面（如果需要），独立启动 QGC 感知监听。</li>
+<li>启动模拟或已验收的真实感知服务，核对其输出目标。</li>
+<li>检查心跳、目标数、时间戳与地图范围。</li>
+<li>按任务需要启用周期摘要，阅读模型标注的数据来源。</li>
+<li>人工核对异常，使用明确控制入口处置；结束后停止服务并导出审计。</li>
+</ol>
+<h3 id="chapter-21-215">21.5 任务结束交接记录</h3>
+<p>建议至少记录：软件版本、飞控版本、实际机号、所用模板/计划副本、围栏配置、模型名称、主要事件时间、落地上锁情况、数据文件位置，以及未完成项。交接的是实际状态，不能只抄任务状态机的“已完成”文字。</p></section>
+<section class="chapter" data-chapter="22"><p><a id="troubleshooting"></a></p>
+<h2 id="chapter-22-22">22. 故障排查</h2>
+<p>按“现象 → 检查 → 处理”逐项排查，避免同时改动多个参数后无法判断原因。</p>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>优先检查</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>集群面板完全不出现</td>
+<td>是否为本定制版本、是否连接至少一架机、是否在 Fly</td>
+<td>核对版本和连接；标准 QGC 包可能没有扩展</td>
+</tr>
+<tr>
+<td>AI 面板内容看不全</td>
+<td>上方集群面板高度、窗口大小、折叠状态</td>
+<td>收起上方面板，扩大窗口或调整缩放后滚动</td>
+</tr>
+<tr>
+<td>找不到感知/审计/告警</td>
+<td>AI “配置”是否展开</td>
+<td>展开并滚动配置区</td>
+</tr>
+<tr>
+<td>串口连接失败</td>
+<td>端口、驱动、权限、波特率和占用</td>
+<td>逐项修正，关闭竞争程序</td>
+</tr>
+<tr>
+<td>UDP 没有载具</td>
+<td>目标 IP、本地端口、自动连接和网络命名空间</td>
+<td>核对发送端，检查防火墙及端口占用</td>
+</tr>
+<tr>
+<td>多架机显示混乱</td>
+<td>系统号是否重复，是否有重复转发</td>
+<td>逐架隔离检查并修正机号/路由</td>
+</tr>
+<tr>
+<td>有机号但参数未就绪</td>
+<td>丢包、初始下载、固件兼容性</td>
+<td>等待或在稳定链路重新请求，保留错误日志</td>
+</tr>
+<tr>
+<td>集群命令作用到全体</td>
+<td>当时是否“全不选”</td>
+<td>明确选择对象；该状态不是禁止控制</td>
+</tr>
+<tr>
+<td>旧 AI 计划仍针对旧机队</td>
+<td>计划绑定的是解析时目标</td>
+<td>放弃并重新生成，不能只改行选择</td>
+</tr>
+<tr>
+<td>起飞拒绝或等待很久</td>
+<td>解锁前检查、定位、飞控反馈、约束、错峰队列</td>
+<td>逐机看状态；不要连点起飞；需取消时明确处置</td>
+</tr>
+<tr>
+<td>编队启动失败</td>
+<td>长机在不在目标集、是否解锁和定位有效</td>
+<td>修正目标和机况后重新启动</td>
+</tr>
+<tr>
+<td>编队僚机数少</td>
+<td>是否离地、上锁、被接管或失去许可</td>
+<td>逐架核对；不得只根据机队总数判断成功</td>
+</tr>
+<tr>
+<td>停止编队后仍移动</td>
+<td>停止只停目标点更新</td>
+<td>对正确目标明确请求暂停/返航/降落</td>
+</tr>
+<tr>
+<td>暂停后再次移动或任务继续</td>
+<td>编队或任务状态机是否仍运行</td>
+<td>停止持续编队，中止任务，再进行人工处置</td>
+</tr>
+<tr>
+<td>手动覆盖高度与预期不同</td>
+<td>规划器高度和起飞输入框不是同一参数</td>
+<td>用明确 altitude 的 AI/模板，回读核对</td>
+</tr>
+<tr>
+<td>“已提交上传请求”后没有执行</td>
+<td>上传是否完成、每机任务内容、是否开始任务</td>
+<td>等待回读并逐机检查，确认后开始</td>
+</tr>
+<tr>
+<td>模板显示已启动但没有动作</td>
+<td>当前 L1、首阶段阻塞、实际目标状态</td>
+<td>查任务状态及错误；不把启动文字当下发成功</td>
+</tr>
+<tr>
+<td>多机接力值守不能运行</td>
+<td>内置模板空数组、数组参数类型</td>
+<td>当前版本限制，按第 15 章重建并验证自定义模板</td>
+</tr>
+<tr>
+<td>模板输入值与执行值不同</td>
+<td>模板 min/max 截断、编辑是否生效</td>
+<td>核对模板文件和生成动作，重新填写合法值</td>
+</tr>
+<tr>
+<td>AI 测试连接失败</td>
+<td>基础地址、Key、网络、/models 支持</td>
+<td>修正配置；本地服务也需非空 Key 输入</td>
+</tr>
+<tr>
+<td>测试连接成功但聊天失败</td>
+<td>模型名、工具/JSON 格式支持、响应错误</td>
+<td>在 L1 做简单请求；按端点能力选择调用模式</td>
+</tr>
+<tr>
+<td>AI 约 60 秒后报错</td>
+<td>请求超时、模型负载、链路或服务日志</td>
+<td>检查端点，不把“新会话”当取消按钮</td>
+</tr>
+<tr>
+<td>计划“确认执行”仍被拒绝</td>
+<td>L1、最新 error、离线目标或租约</td>
+<td>按反馈修正并重验，不绕过约束</td>
+</tr>
+<tr>
+<td>任务停在人工等待</td>
+<td>是否为 manual，是否接近超时</td>
+<td>核对后继续，或中止重建</td>
+</tr>
+<tr>
+<td>“已完成”但作业成果不全</td>
+<td>模式曾退出 Mission、相机未采集、上传不全</td>
+<td>联合机载日志、轨迹和原始成果复核</td>
+</tr>
+<tr>
+<td>感知启动失败</td>
+<td>15600 是否被另一 QGC/程序占用</td>
+<td>使用单一接收端或重新规划端口</td>
+</tr>
+<tr>
+<td>正在监听却“待机”</td>
+<td>Python 是否运行、心跳格式、网络路由</td>
+<td>检查服务输出和接收地址</td>
+</tr>
+<tr>
+<td>有心跳但地图无目标</td>
+<td>目标是否确认、场景区域、地图缩放、帧是否有检测</td>
+<td>移动到实际区域，核对检测/跟踪统计</td>
+</tr>
+<tr>
+<td>感知目标位置明显偏移</td>
+<td>经纬度顺序、相机标定、位姿/云台同步</td>
+<td>校准并检查时间匹配，不能靠地图偏移补偿</td>
+</tr>
+<tr>
+<td>线路时延异常</td>
+<td>主机时钟、处理积压、时间戳口径</td>
+<td>同步时钟并测完整链路，保留原始数值</td>
+</tr>
+<tr>
+<td>视频能看但没有目标</td>
+<td>感知服务是独立链路</td>
+<td>单独配置 video_source、模型和航迹输出</td>
+</tr>
+<tr>
+<td>服务读视频末尾报错</td>
+<td>素材长度、duration_s × fps</td>
+<td>调整处理长度或素材；EOF 不计成功完成</td>
+</tr>
+<tr>
+<td>修改围栏后图层没变</td>
+<td>图层在启动感知时加载</td>
+<td>无任务时停止再启动感知，重新校验</td>
+</tr>
+<tr>
+<td>重启后显示未完成任务</td>
+<td>只恢复了任务元信息</td>
+<td>先确认真实飞控状态，再重新规划/启动</td>
+</tr>
+<tr>
+<td>地图离线空白</td>
+<td>缩放级别、地图集、底图类型</td>
+<td>在出发前完成目标区域离线检查</td>
+</tr>
+<tr>
+<td>日志不能打开</td>
+<td>格式、下载是否完整、构建支持、存储空间</td>
+<td>检查原始文件，保留失败信息</td>
+</tr>
+</tbody>
+</table>
+<p>需要反馈问题时，提供软件提交/版本、操作时间、活动机与选中机号、具体点击顺序、错误文字及相应日志；模型和设备凭据不要放进问题描述。</p></section>
+<section class="chapter" data-chapter="23"><p><a id="maintenance"></a></p>
+<h2 id="chapter-23-23">23. 数据备份、升级与已知限制</h2>
+<h3 id="chapter-23-231">23.1 数据位置</h3>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th>内容</th>
+<th>备份建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>应用数据目录 / SwarmConfig/fences.json</td>
+<td>集群约束</td>
+<td>每次修改前保存版本</td>
+</tr>
+<tr>
+<td>应用数据目录 / SwarmConfig/tasks.json</td>
+<td>任务元信息快照</td>
+<td>与任务发生时间关联保留</td>
+</tr>
+<tr>
+<td>应用数据目录 / SwarmTemplates</td>
+<td>实际运行模板</td>
+<td>与仓库样例区分，备份自定义及修改过的文件</td>
+</tr>
+<tr>
+<td>应用数据目录 / SwarmAudit</td>
+<td>会话 JSONL、exports 副本</td>
+<td>飞后归档</td>
+</tr>
+<tr>
+<td>通用保存路径下的任务、参数、遥测、日志、视频等目录</td>
+<td>标准 QGC 作业文件</td>
+<td>按任务编号归档</td>
+</tr>
+<tr>
+<td>QSettings 的平台存储</td>
+<td>地址、模型、语言、自主等级等应用设置</td>
+<td>由保障人员按实际应用名称备份</td>
+</tr>
+<tr>
+<td>外部感知服务配置和模型</td>
+<td>相机标定、视频地址、算法文件</td>
+<td>独立归档并记录版本</td>
+</tr>
+</tbody>
+</table>
+<p>SwarmTemplates 中的文件才是应用运行时读取的模板。修改仓库的 swarm_ext/templates 样例不会自动修改已安装应用中的旧文件。</p>
+<h3 id="chapter-23-232">23.2 结束和退出</h3>
+<p>先结束需要停止的编队和任务，确认各机状态，再停止感知及录像并保存日志。软件提示存在连接、未保存任务或待写入参数时，核实后处理。</p>
+<p>关闭 QGC 不等于让飞行器返航或上锁，也不会删除已上传任务。需要在飞机仍运行时退出，应按事先确认的机载/遥控控制安排交接。</p>
+<h3 id="chapter-23-233">23.3 升级步骤</h3>
+<ol>
+<li>记录现有软件/飞控版本和完整配置。</li>
+<li>备份模板、围栏、计划、参数及重要日志。</li>
+<li>完成当前任务和设备处置后更新软件。</li>
+<li>重启，重新填写会话 API Key，核对模型、单位、自主等级和 L3 白名单。</li>
+<li>检查运行时模板是否仍为旧版本。默认模板通常只在文件缺失时创建，不会强制覆盖用户内容。</li>
+<li>依次完成单机连接、模拟任务、上传回读及所需感知验证，再投入现场。</li>
+</ol>
+<p>不要直接用旧 tasks.json 宣称恢复了一个完整任务；它不保存足以重建全部阶段与航点的信息。</p>
+<h3 id="chapter-23-234">23.4 当前验证和能力边界</h3>
+<p>此版本上一轮验证包括构建、183 项 Unit、58 项 Integration、独立 Swarm/Python 测试，以及部分 8 机 SITL 和 GUI 场景；最终 Swarm 专项另行复核。完整条件与失败重跑记录见 <a href="reports/2026-09-07-execution-safety-validation.md">版本验证摘要</a>。</p>
+<p>全仓库 lint 仍有原有格式/规则问题和环境缺失项，未满足完整发布门禁。本手册编写进行了功能与文档核对，没有重新宣称完成真机验证。</p>
+<p>尚不能宣称具备：</p>
+<ul>
+<li>真机/HIL、长时间飞行、16/32 机容量、跨平台及多轮故障资格。</li>
+<li>全面避障、地形跟随、实时碰撞避免和真实能量保证。</li>
+<li>移动相机逐帧同步后的真实模型精度及相机到屏幕时延保证。</li>
+<li>机载分布式 CBBA 部署、完整多路视频墙和可视化集群围栏编辑。</li>
+<li>任意任务断点续飞、自动换电接力、按目标图标自动完成战术闭环。</li>
+<li>面向业务集成的通用 REST/WS 服务；仓库测试验收接口不是对外产品 API。</li>
+</ul></section>
+<section class="chapter" data-chapter="24"><p><a id="appendix"></a></p>
+<h2 id="chapter-24-24">24. 附录：参数、工具、术语与技术依据</h2>
+<h3 id="chapter-24-241">24.1 常用参数速查</h3>
+<table>
+<thead>
+<tr>
+<th>参数/设置</th>
+<th>默认值</th>
+<th>范围或解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>手动集群起飞高度</td>
+<td>10 米</td>
+<td>2–120 米</td>
+</tr>
+<tr>
+<td>AI 起飞 altitude</td>
+<td>须明确提供</td>
+<td>2–120 米</td>
+</tr>
+<tr>
+<td>覆盖 altitude</td>
+<td>初始 30 米</td>
+<td>动作解析 3–120 米，仍受围栏限制</td>
+</tr>
+<tr>
+<td>覆盖 length / width</td>
+<td>200 / 120 米</td>
+<td>普通动作各 10–100000 米；模板默认可不同</td>
+</tr>
+<tr>
+<td>覆盖 angle</td>
+<td>0 度</td>
+<td>普通动作 0–360；面板 0–359</td>
+</tr>
+<tr>
+<td>覆盖 spacing</td>
+<td>20 米</td>
+<td>2–1000 米</td>
+</tr>
+<tr>
+<td>编队 spacing</td>
+<td>10 米</td>
+<td>2–500；默认安全阈值更严格</td>
+</tr>
+<tr>
+<td>编队 vertical_step</td>
+<td>3 米</td>
+<td>0–50；横队和环形当前同高度，不使用该分层</td>
+</tr>
+<tr>
+<td>常规指令机间错峰</td>
+<td>300 毫秒</td>
+<td>不是命令响应保证</td>
+</tr>
+<tr>
+<td>起飞机间错峰</td>
+<td>2500 毫秒</td>
+<td>还要等待解锁</td>
+</tr>
+<tr>
+<td>阶段数量 / 单段动作数</td>
+<td>最多 8 / 10</td>
+<td>超出拒绝</td>
+</tr>
+<tr>
+<td>阶段宽限 / 超时</td>
+<td>3 / 600 秒</td>
+<td>人工等待也会超时</td>
+</tr>
+<tr>
+<td>阶段 duration</td>
+<td>缺省 5 秒</td>
+<td>通常显式填写 seconds</td>
+</tr>
+<tr>
+<td>周期摘要</td>
+<td>默认关闭，60 秒</td>
+<td>10–3600 秒</td>
+</tr>
+<tr>
+<td>感知接收端口</td>
+<td>15600</td>
+<td>结构化航迹</td>
+</tr>
+<tr>
+<td>常见 MAVLink UDP 端口</td>
+<td>14550</td>
+<td>按实际链路配置</td>
+</tr>
+<tr>
+<td>默认 UDP 视频地址</td>
+<td>0.0.0.0:5600</td>
+<td>媒体流，和前两者不同</td>
+</tr>
+</tbody>
+</table>
+<h3 id="chapter-24-242">24.2 集群约束默认值</h3>
+<table>
+<thead>
+<tr>
+<th>JSON 字段</th>
+<th>默认值</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>include / exclude</td>
+<td>空数组</td>
+<td>未设允许/禁止多边形</td>
+</tr>
+<tr>
+<td>max_altitude_m</td>
+<td>0</td>
+<td>不启用集群高度上限</td>
+</tr>
+<tr>
+<td>comm_range_m</td>
+<td>1500</td>
+<td>通信参考半径，米</td>
+</tr>
+<tr>
+<td>home_lat / home_lon</td>
+<td>0 / 0</td>
+<td>无有效指控点时使用调用链提供的参考点；不设置飞控 Home</td>
+</tr>
+<tr>
+<td>cruise_speed_ms</td>
+<td>12</td>
+<td>估算巡航速度</td>
+</tr>
+<tr>
+<td>climb_rate_ms</td>
+<td>2.5</td>
+<td>估算爬升速度</td>
+</tr>
+<tr>
+<td>endurance_min</td>
+<td>25</td>
+<td>估算满电续航分钟数</td>
+</tr>
+<tr>
+<td>reserve_factor</td>
+<td>0.8</td>
+<td>可用电量比例</td>
+</tr>
+<tr>
+<td>min_separation_m</td>
+<td>3</td>
+<td>编队间距下限</td>
+</tr>
+<tr>
+<td>comm_warn_factor / comm_error_factor</td>
+<td>1 / 1.5</td>
+<td>通信警告/拒绝系数</td>
+</tr>
+<tr>
+<td>spacing_warn_factor</td>
+<td>2</td>
+<td>间距警告系数</td>
+</tr>
+<tr>
+<td>deconflict_factor</td>
+<td>1</td>
+<td>多区潜在重叠判断系数</td>
+</tr>
+</tbody>
+</table>
+<h3 id="chapter-24-243-ai">24.3 AI 工具清单</h3>
+<p>以下工具由模型输出，操作者通过自然语言和计划界面使用；不是一个可在输入框执行任意代码的控制台。</p>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>set_selection</td>
+<td>绑定指定非空机号集合</td>
+</tr>
+<tr>
+<td>arm</td>
+<td>解锁或按布尔参数请求正常上锁</td>
+</tr>
+<tr>
+<td>takeoff</td>
+<td>指定高度起飞</td>
+</tr>
+<tr>
+<td>land</td>
+<td>原地降落</td>
+</tr>
+<tr>
+<td>rtl</td>
+<td>返航</td>
+</tr>
+<tr>
+<td>pause</td>
+<td>暂停</td>
+</tr>
+<tr>
+<td>start_mission</td>
+<td>开始已有机载任务</td>
+</tr>
+<tr>
+<td>disarm</td>
+<td>正常上锁</td>
+</tr>
+<tr>
+<td>emergency_disarm</td>
+<td>强制上锁，始终需要人工确认</td>
+</tr>
+<tr>
+<td>clear_missions</td>
+<td>清除目标机载任务</td>
+</tr>
+<tr>
+<td>start_formation</td>
+<td>设置长机、队形和尺度并启动</td>
+</tr>
+<tr>
+<td>stop_formation</td>
+<td>停止持续编队控制器</td>
+</tr>
+<tr>
+<td>plan_coverage</td>
+<td>规划并提交矩形覆盖任务</td>
+</tr>
+<tr>
+<td>plan_tactic</td>
+<td>返回协同几何规划建议</td>
+</tr>
+<tr>
+<td>start_swarm_task</td>
+<td>创建多阶段任务</td>
+</tr>
+<tr>
+<td>abort_swarm_task</td>
+<td>中止当前多阶段任务</td>
+</tr>
+<tr>
+<td>run_task_template</td>
+<td>实例化指定模板</td>
+</tr>
+<tr>
+<td>propose_candidates</td>
+<td>提供候选动作/任务方案</td>
+</tr>
+</tbody>
+</table>
+<p>任务编排类工具与普通动作不能任意混装在同一返回数组。工具名称相同也不意味着固件已支持其所有物理行为。</p>
+<h3 id="chapter-24-244">24.4 常见术语</h3>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MAVLink / sysid</td>
+<td>飞控消息协议 / 系统号</td>
+</tr>
+<tr>
+<td>Armed / Disarmed</td>
+<td>已解锁 / 已上锁</td>
+</tr>
+<tr>
+<td>Home / Planned Home</td>
+<td>飞控实际返航参考 / 规划估算的起点</td>
+</tr>
+<tr>
+<td>RTL / Hold / Mission</td>
+<td>返航 / 保持等待 / 任务飞行模式</td>
+</tr>
+<tr>
+<td>WGS84</td>
+<td>任务经纬度使用的地理参考系</td>
+</tr>
+<tr>
+<td>Relative Altitude / AMSL</td>
+<td>相对起飞参考高度 / 平均海平面高度</td>
+</tr>
+<tr>
+<td>Fact</td>
+<td>QGC 统一提供给界面与参数管理的数据对象</td>
+</tr>
+<tr>
+<td>Function Calling</td>
+<td>模型用结构化工具请求表达动作</td>
+</tr>
+<tr>
+<td>COP</td>
+<td>汇聚后的共同态势图</td>
+</tr>
+<tr>
+<td>Track / Coasting</td>
+<td>目标航迹 / 暂失观测时的预测状态</td>
+</tr>
+<tr>
+<td>RTK / RTCM / NTRIP</td>
+<td>差分定位方式 / 改正消息 / 网络差分传输方式</td>
+</tr>
+<tr>
+<td>SITL / HIL</td>
+<td>软件在环 / 硬件在环验证</td>
+</tr>
+<tr>
+<td>JSONL</td>
+<td>每行一个 JSON 对象的记录文件</td>
+</tr>
+</tbody>
+</table>
+<h3 id="chapter-24-245">24.5 保障人员验证入口</h3>
+<p>从仓库根目录使用：</p>
+<pre><code class="language-bash"># 查看可用完整测试项，不启动任务
+python3 swarm_ext/tests/run_all.py --profile full --list
+
+# 静态、Python 与独立 C++ 检查
+python3 swarm_ext/tests/run_all.py --profile standard
+</code></pre>
+<p>需要 Qt、Docker、PX4 或图形环境的测试按 <a href="../tests/README.md">测试说明</a> 与 <a href="../sim/README.md">仿真说明</a> 准备。不要在连接现场飞行器的操作会话里直接运行自动验收脚本。</p>
+<h3 id="chapter-24-246">24.6 手册依据</h3>
+<table>
+<thead>
+<tr>
+<th>内容</th>
+<th>主要依据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主导航及设置</td>
+<td><a href="../../src/MainWindow/MainWindow.qml">MainWindow</a>、<a href="../../src/AppSettings/pages/SettingsPages.json">设置页面目录</a></td>
+</tr>
+<tr>
+<td>集群按钮和面板</td>
+<td><a href="../../src/FlyView/SwarmControlPanel.qml">SwarmControlPanel</a>、<a href="../../src/FlyView/SwarmAIPanel.qml">SwarmAIPanel</a></td>
+</tr>
+<tr>
+<td>目标、执行与约束</td>
+<td><a href="../../src/Swarm/SwarmManager.cc">SwarmManager</a>、<a href="../../src/Swarm/SwarmConstraintChecker.cc">约束检查器</a></td>
+</tr>
+<tr>
+<td>编队和覆盖</td>
+<td><a href="../../src/Swarm/FormationController.cc">FormationController</a>、<a href="../../src/Swarm/SwarmMissionPlanner.cc">SwarmMissionPlanner</a></td>
+</tr>
+<tr>
+<td>AI、自主等级与模板</td>
+<td><a href="../../src/Swarm/SwarmAIAgent.cc">SwarmAIAgent</a>、<a href="../../src/Swarm/SwarmAutonomy.h">SwarmAutonomy</a>、<a href="../../src/Swarm/SwarmTaskLibrary.cc">SwarmTaskLibrary</a></td>
+</tr>
+<tr>
+<td>阶段和恢复</td>
+<td><a href="../../src/Swarm/SwarmTaskController.cc">SwarmTaskController</a>、<a href="../../src/Swarm/SwarmPersistence.cc">持久化实现</a></td>
+</tr>
+<tr>
+<td>感知和图层</td>
+<td><a href="../services/perception/README.md">感知服务</a>、<a href="../../src/Swarm/SwarmCOPModel.cc">COP 模型</a>、<a href="../../src/FlyView/SwarmSituationLayer.qml">态势图层</a></td>
+</tr>
+<tr>
+<td>基础 QGC 操作</td>
+<td>仓库内 <a href="../../docs/en/qgc-user-guide/index.md">用户指南</a>，旧页面路径与描述由当前代码交叉核对</td>
+</tr>
+<tr>
+<td>当前验证边界</td>
+<td><a href="reports/2026-09-07-execution-safety-validation.md">本版验证摘要</a></td>
+</tr>
+</tbody>
+</table>
+<p>技术依据供保障和审查人员复核。操作员按前述流程使用软件即可，无需编辑源代码。</p></section>
+<footer>依据当前源代码和仓库内文档编写。操作条件与未验证能力已在各章说明。<br>
+源文档 SHA-256：802b87215c645f77c2433774a561b8283866cf580eccde6967a6d66c42c17018</footer></main></div>
+<script>
+(function(){
+  "use strict";
+  var input=document.getElementById("chapter-search");
+  var chapters=Array.from(document.querySelectorAll(".chapter"));
+  var links=Array.from(document.querySelectorAll("nav a[data-chapter]"));
+  var status=document.getElementById("search-status");
+  var empty=document.getElementById("no-results");
+  var toggle=document.getElementById("nav-toggle");
+  function filter(){
+    var words=input.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    var count=0;
+    chapters.forEach(function(section,i){
+      var content=section.textContent.toLocaleLowerCase();
+      var show=words.every(function(word){return content.indexOf(word)!==-1;});
+      section.hidden=!show;links[i].hidden=!show;if(show)count++;
+    });
+    status.textContent=words.length?"找到 "+count+" 个相关章节":"全部 24 章";
+    empty.hidden=count!==0;
+  }
+  input.addEventListener("input",filter);
+  input.addEventListener("keydown",function(e){if(e.key==="Escape"){input.value="";filter();}});
+  toggle.addEventListener("click",function(){
+    var open=document.body.classList.toggle("nav-open");
+    toggle.setAttribute("aria-expanded",String(open));
+  });
+  links.forEach(function(link){link.addEventListener("click",function(){
+    document.body.classList.remove("nav-open");toggle.setAttribute("aria-expanded","false");
+  });});
+  document.addEventListener("keydown",function(e){
+    if(e.key==="/" && document.activeElement.tagName!=="INPUT"){
+      e.preventDefault();document.body.classList.add("nav-open");toggle.setAttribute("aria-expanded","true");input.focus();
+    }
+  });
+  document.getElementById("print-button").addEventListener("click",function(){window.print();});
+  if("IntersectionObserver" in window){
+    var observer=new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if(entry.isIntersecting){
+          links.forEach(function(link){link.classList.toggle("active",link.dataset.chapter===entry.target.dataset.chapter);});
+        }
+      });
+    },{rootMargin:"-5% 0px -75% 0px"});
+    chapters.forEach(function(section){observer.observe(section);});
+  }
+  filter();
+})();
+</script></body></html>
