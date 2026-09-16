@@ -849,7 +849,7 @@ void SwarmAIAgent::_handleActionsJson(const QJsonArray& actionsJson, const QStri
         } else if (type == QStringLiteral("propose_candidates")) {
             _handleCandidates(obj);
         } else if (type == QStringLiteral("abort_swarm_task")) {
-            _swarmManager->taskController()->abort();
+            _requestTaskAbort();
         } else {
             basicActions.append(obj);
         }
@@ -1275,6 +1275,30 @@ void SwarmAIAgent::updatePendingStageCondition(int stageIndex, const QString& co
                              tr("阶段 %1 的完成条件已更新").arg(stageIndex + 1));
 }
 
+void SwarmAIAgent::_requestTaskAbort()
+{
+    // 中止曾经是唯一一条从工具分发直达执行器的路径：它不经 _queueOrExecute，因此既不过
+    // 自主等级闸，也不过交付构建钉死的 _requireConfirm，使「L1 禁止自动执行」和交付告示
+    // 的「所有 AI 动作经人工确认后执行」两处声明同时不成立。现在与其它动作同等对待。
+    if (!_swarmManager->taskController()->running()) {
+        emit agentFeedback(tr("当前没有正在运行的任务"));
+        return;
+    }
+    QString reason;
+    if (_swarmManager->aiExecutionBlocked(&reason)) {
+        _appendChat(tr("系统"), tr("模型请求中止任务已被拒绝：%1").arg(reason));
+        emit agentFeedback(reason);
+        return;
+    }
+    // 中止会终结一项进行中的任务并让全体悬停，不随自主等级或 requireConfirm 放行：
+    // 一律挂起等待操作员确认。操作员自己的中止按钮走 SwarmTaskController::abort，不受影响。
+    _pendingAbort = true;
+    emit planPendingChanged();
+    emit planChanged();
+    _appendChat(tr("系统"), tr("模型请求中止当前任务，待操作员确认。"));
+    emit agentFeedback(tr("模型请求中止任务，请在面板确认"));
+}
+
 void SwarmAIAgent::_queueOrExecute(const QList<SwarmAction>& plan)
 {
     if (plan.isEmpty()) {
@@ -1347,6 +1371,16 @@ void SwarmAIAgent::confirmPlan()
         return;
     }
 
+    if (_pendingAbort) {
+        _pendingAbort = false;
+        // 明确记录发起者：中止原因会同时进审计日志和用户可见消息。
+        _swarmManager->taskController()->abort(tr("AI 请求、操作员确认中止"));
+        emit planPendingChanged();
+        emit planChanged();
+        _appendChat(tr("系统"), tr("操作员已确认，任务中止。"));
+        SwarmAuditLogger::instance()->logPlanConfirmed({tr("中止运行中的任务")});
+        return;
+    }
     if (_pendingTask) {
         const QString taskName = _pendingTaskName;
         const QList<SwarmTaskController::Stage> stages = _pendingStages;
@@ -1391,11 +1425,12 @@ void SwarmAIAgent::confirmPlan()
 
 void SwarmAIAgent::rejectPlan()
 {
-    if (_pendingPlan.isEmpty() && !_pendingTask) {
+    if (_pendingPlan.isEmpty() && !_pendingTask && !_pendingAbort) {
         return;
     }
     _pendingPlan.clear();
     _pendingTask = false;
+    _pendingAbort = false;
     _pendingStages.clear();
     _pendingStagesJson = QJsonArray();
     emit planPendingChanged();

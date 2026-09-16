@@ -145,4 +145,62 @@ void SwarmDispatchLockTest::operatorTaskMustStillRun()
     QTRY_VERIFY_WITH_TIMEOUT(mockLink()->receivedMavCommandCount(MAV_CMD_DO_REPOSITION) > 0, TestTimeout::longMs());
 }
 
+void SwarmDispatchLockTest::modelAbortMustRequireConfirmation()
+{
+    // abort_swarm_task 曾从工具分发直达 taskController()->abort()，绕开自主等级闸和交付
+    // 构建钉死的 _requireConfirm，使交付告示「所有 AI 动作经人工确认后执行」不成立。
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("Reposition \\(MAV_CMD_DO_REPOSITION\\) command not supported")));
+    // 挂起走两条出口：_appendChat 进聊天区，agentFeedback 经 showAppMessage 弹提示；
+    // 「已放弃 AI 行动计划」是 shutdown() 连带清掉这条挂起中止时发出的。
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral(
+                         "(测试清理|模型请求中止当前任务|模型请求中止任务，请在面板确认|已放弃 AI 行动计划)")));
+    _startOperatorTask();
+
+    _manager->aiAgent()->handleActionsJsonForTest(
+        QJsonDocument::fromJson(QByteArrayLiteral(R"([{"type": "abort_swarm_task"}])")).array());
+
+    QVERIFY2(_manager->taskController()->running(), "模型请求的中止未经确认即生效");
+    // 仅断言任务仍在运行不具区分度：请求被静默丢弃也会让任务继续跑。必须证明它确实挂起了。
+    QVERIFY(_manager->aiAgent()->pendingAbort());
+    QVERIFY(_manager->aiAgent()->planPending());
+}
+
+void SwarmDispatchLockTest::confirmedModelAbortMustStopTheTask()
+{
+    // 与上一条互为对照：挂起不能变成“中止永远不生效”，否则模型就丧失了提出中止的能力。
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("Reposition \\(MAV_CMD_DO_REPOSITION\\) command not supported")));
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("(模型请求中止当前任务|模型请求中止任务，请在面板确认|操作员已确认，"
+                                          "任务中止|AI 请求、操作员确认中止)")));
+    _startOperatorTask();
+    _manager->aiAgent()->handleActionsJsonForTest(
+        QJsonDocument::fromJson(QByteArrayLiteral(R"([{"type": "abort_swarm_task"}])")).array());
+    QVERIFY(_manager->aiAgent()->pendingAbort());
+
+    _manager->aiAgent()->confirmPlan();
+
+    QVERIFY(!_manager->taskController()->running());
+    QVERIFY(!_manager->aiAgent()->pendingAbort());
+    QCOMPARE(_manager->taskController()->outcome(), SwarmTaskController::Outcome::Aborted);
+}
+
+void SwarmDispatchLockTest::_startOperatorTask()
+{
+    const QString json = QStringLiteral(R"([{"name": "人工任务",
+        "actions": [{"type": "pause"}],
+        "complete_when": {"kind": "manual", "timeout_sec": 600}}])");
+    QStringList warnings;
+    const auto stages = _manager->taskController()->parseStages(QJsonDocument::fromJson(json.toUtf8()).array(),
+                                                                vehicle()->coordinate(), warnings);
+    QVERIFY(warnings.isEmpty());
+    QVERIFY(_manager->taskController()->startTask(QStringLiteral("人工任务"), stages, true));
+    QVERIFY(_manager->taskController()->running());
+}
+
 UT_REGISTER_TEST(SwarmDispatchLockTest, TestLabel::Integration, TestLabel::Vehicle)

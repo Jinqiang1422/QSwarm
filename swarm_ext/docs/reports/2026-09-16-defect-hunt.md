@@ -127,11 +127,27 @@ _finish(Outcome::Aborted, reason.isEmpty() ? tr("任务被操作员中止") : re
 
 **建议**：README 补充一条——长验证运行期间不得在同一台机器上执行其他重负载任务。
 
-## 处置建议
+## 处置与结果
 
-| 项 | 建议 | 理由 |
+仓库负责人选择**改行为**（发现一）并**立即修复**（发现二）。均已落地：
+
+| 项 | 处置 | 验证 |
 | --- | --- | --- |
-| 发现二 | **应修** | 无可辩护面；三行改动 |
-| 发现一 | **需决策**：改行为（中止也要确认）或改声明（限定「除中止外」） | 两种都自洽；改行为会削弱急停语义，改声明会让交付承诺变弱 |
-| 覆盖盲区 | 纳入锁定构建常规口径 | 零成本，已验证通过 |
-| 验证纪律 | 写入 README | 已两次实际造成假失败 |
+| 发现一 | 新增 `SwarmAIAgent::_requestTaskAbort()`：先过自主等级闸（L1 直接拒绝），再一律挂起等待操作员确认，不随 `requireConfirm` 或自主等级放行 | 锁定构建 `SwarmDispatchLockTest` 9/9 |
+| 发现二 | 模型路径传入 `AI 请求、操作员确认中止`；`SwarmTaskController` 的空 reason 兜底文案改为中性的「任务已中止」 | 同上 |
+| 覆盖盲区 | 锁定构建补跑 QML UI 与完整 Unit | 2/2、187/187 |
+| 验证纪律 | 写入 `swarm_ext/tests/README.md` | — |
+
+新增两条互为对照的用例：`modelAbortMustRequireConfirmation`（模型请求后任务仍在运行，
+且 `pendingAbort` 为真——只断言「仍在运行」不具区分度，请求被静默丢弃也会如此）与
+`confirmedModelAbortMustStopTheTask`（确认后任务确实中止，`outcome` 为 `Aborted`——
+挂起不能变成「中止永远不生效」，否则模型就丧失了提出中止的能力）。
+
+操作员自己的中止按钮（`SwarmAIPanel.qml:794`）与验收服务的中止入口均不经本路径，行为不变。
+
+### 修复后两处声明恢复为真
+
+| 位置 | 声明 | 现状 |
+| --- | --- | --- |
+| `SwarmManager::deliveryNotice()` | 「所有 AI 动作经人工确认后执行」 | 成立 |
+| `FEATURES.md` | 「L1 禁止自动执行」 | 成立 |

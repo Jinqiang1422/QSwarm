@@ -58,6 +58,8 @@ class SwarmAIAgent : public QObject
     Q_PROPERTY(QStringList pendingPlanParamsJson READ pendingPlanParamsJson NOTIFY planChanged)
     /// 待确认多阶段任务的结构化只读模型：各阶段名称/完成条件/动作列表（供逐项编辑 UI 使用）
     Q_PROPERTY(QVariantList pendingTaskModel READ pendingTaskModel NOTIFY planChanged)
+    /// 模型请求中止运行中任务，待操作员确认；确认区据此显示中止请求而非动作列表
+    Q_PROPERTY(bool pendingAbort READ pendingAbort NOTIFY planPendingChanged)
     /// WP3.5：周期态势摘要开关与间隔（秒）
     Q_PROPERTY(bool situationSummaryEnabled READ situationSummaryEnabled WRITE setSituationSummaryEnabled NOTIFY
                    situationSummaryChanged)
@@ -90,7 +92,9 @@ public:
 
     QStringList chatLog() const { return _chatLog; }
 
-    bool planPending() const { return !_pendingPlan.isEmpty() || _pendingTask; }
+    bool planPending() const { return !_pendingPlan.isEmpty() || _pendingTask || _pendingAbort; }
+
+    bool pendingAbort() const { return _pendingAbort; }
 
     QStringList planSummary() const;
     bool planHasDangerous() const;
@@ -187,6 +191,8 @@ private:
     void _runTaskTemplate(const QJsonObject& args);
     void _handleCandidates(const QJsonObject& args);  ///< WP2.2 多候选方案
     void _queueOrExecute(const QList<SwarmAction>& plan);
+    /// 模型请求中止运行中任务：过自主等级闸，再挂起等待操作员确认（绝不直接中止）
+    void _requestTaskAbort();
     void _setBusy(bool busy);
     void _appendChat(const QString& who, const QString& text);
     void _sendSituationSummary();  ///< WP3.5 周期态势摘要
@@ -215,9 +221,10 @@ private:
 #endif
     bool _busy = false;
 
-    QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断
-    QList<SwarmAction> _pendingPlan;  ///< 待确认动作序列
+    QList<QJsonObject> _history;                       ///< 多轮对话（不含 system），定期截断
+    QList<SwarmAction> _pendingPlan;                   ///< 待确认动作序列
     bool _pendingTask = false;
+    bool _pendingAbort = false;                        ///< 模型请求中止运行中任务，等待操作员确认
     QString _pendingTaskName;
     QList<SwarmTaskController::Stage> _pendingStages;  ///< 待确认多阶段任务
     QJsonArray _pendingStagesJson;                     ///< 与 _pendingStages 对应的 JSON 原文，编辑的作用对象

@@ -265,7 +265,9 @@ void SwarmTaskController::abort(const QString& reason)
     }
     SwarmAuditLogger::instance()->logTaskEvent(
         QStringLiteral("task_aborted"), {{QStringLiteral("name"), _taskName}, {QStringLiteral("reason"), reason}});
-    _finish(Outcome::Aborted, reason.isEmpty() ? tr("任务被操作员中止") : reason);
+    // 兜底文案不指认发起者：曾写死「任务被操作员中止」，而全仓唯一不传 reason 的生产
+    // 调用点恰是 AI 路径，等于把模型动作显示成操作员动作。调用方各自传明确的 reason。
+    _finish(Outcome::Aborted, reason.isEmpty() ? tr("任务已中止") : reason);
 }
 
 void SwarmTaskController::proceed()

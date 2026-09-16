@@ -402,7 +402,19 @@ Rectangle {
                     // with headroom so ordinary content never touches it. See Task 7c report.
                     property real _planColumnMaxItemWidth: ScreenTools.defaultFontPixelWidth * 20
 
+                    // 中止请求没有动作列表，下方 planSummary/pendingTaskModel 两个 Repeater 都为空；
+                    // 不单独说明的话操作员会看到一个只有两个按钮的空确认框。
                     QGCLabel {
+                        visible:    _ai.pendingAbort
+                        text:       qsTr("⚠ 模型请求中止当前任务。确认后全体停止自动动作并悬停。")
+                        font.bold:  true
+                        color:      "#ff8080"
+                        wrapMode:   Text.Wrap
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: planColumn._planColumnMaxItemWidth
+                    }
+                    QGCLabel {
+                        visible:    !_ai.pendingAbort
                         text:       _ai.planHasDangerous ? qsTr("⚠ AI 行动计划（含危险动作，请确认）")
                                                          : qsTr("AI 行动计划")
                         font.bold:  true
