@@ -167,6 +167,12 @@ for ((i = 0; i < N; i++)); do
     fi
     if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
         echo "[launch] 实例 $i 在启动宽限期内退出，详见 $INST/px4.log"
+        # 被中断的上一轮会在 /tmp 留下 px4_lock-*/px4-sock-*；进程早没了锁还在，之后每个
+        # 新实例都会立刻自杀。表象是所有场景在 6-8 秒内全灭，极像产品崩溃，实则一行清理即可。
+        if grep -q "PX4 server already running" "$INST/px4.log" 2>/dev/null; then
+            echo "[launch] 根因：/tmp 存在上一轮遗留的 PX4 锁。确认无 px4 进程后清理："
+            echo "[launch]   pgrep -x px4 || rm -f /tmp/px4_lock-* /tmp/px4-sock-*"
+        fi
         exit 1
     fi
 done
