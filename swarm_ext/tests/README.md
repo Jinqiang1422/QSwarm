@@ -62,6 +62,10 @@ PATH=/tmp/pinned-lint-bin:$PATH python3 swarm_ext/tests/run_all.py ...
 
 放行前用 `PATH=... python3 -c "import numpy, pymavlink"` 自检一次。
 
+**长验证运行期间不要在同一台机器上跑其他重负载任务。** 与 20 并行的容器构建重叠时，
+8 机 SITL 场景会在 6–8 秒内「SITL 提前退出」（仿真器进程起不来），`SwarmSafetyTest`
+的实时约束检查也可能失败——两者都是资源饥饿，不是产品缺陷，但排查成本很高。
+
 ### SITL 环境阻塞的判定与防掩盖边界
 
 直连 MAVLink 的场景（03/04/05）在广播 ARM 前先比对各机 `SYS_STATUS` 的传感器 `present`
