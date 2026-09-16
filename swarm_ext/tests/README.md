@@ -47,6 +47,21 @@
 首次遇到 `BLOCKED` 时按提示安装对应版本，不要用 `--allow-blocked` 绕过。逐项的宿主/固定版本
 和比对结果记录在报告的 `environment.json` → `tool_pins`。
 
+**提供固定版工具时，只把需要的二进制放进 `PATH`，不要前置整个 venv 的 `bin` 目录。**
+venv 里的 `python3` 会一并顶掉系统解释器，而 `python.perception` 和直连 MAVLink 的场景
+03/04/05 依赖系统 Python 的 `numpy`、`pymavlink`，会在 0.1 秒内崩于 `ModuleNotFoundError`
+并报成 FAIL——本轮收尾验证即因此产生四个假失败。推荐做法：
+
+```bash
+python3.12 -m venv /tmp/lintvenv
+/tmp/lintvenv/bin/pip install ruff==<pin> shellcheck-py==<pin>
+mkdir -p /tmp/pinned-lint-bin
+ln -sf /tmp/lintvenv/bin/ruff /tmp/lintvenv/bin/shellcheck /tmp/pinned-lint-bin/
+PATH=/tmp/pinned-lint-bin:$PATH python3 swarm_ext/tests/run_all.py ...
+```
+
+放行前用 `PATH=... python3 -c "import numpy, pymavlink"` 自检一次。
+
 ### SITL 环境阻塞的判定与防掩盖边界
 
 直连 MAVLink 的场景（03/04/05）在广播 ARM 前先比对各机 `SYS_STATUS` 的传感器 `present`
