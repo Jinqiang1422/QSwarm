@@ -20,6 +20,7 @@
 #include "SwarmTaskController.h"
 #include "SwarmTrackFusion.h"
 #include "Vehicle.h"
+#include "VehicleLinkManager.h"
 
 SwarmSafetyTest::~SwarmSafetyTest() = default;
 
@@ -93,6 +94,11 @@ void SwarmSafetyTest::addSecondVehicle()
         auto* target = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
         QVERIFY(target);
         QTRY_VERIFY_WITH_TIMEOUT(target->isInitialConnectComplete(), TestTimeout::longMs());
+        // 初连完成不等于 SwarmManager 眼里的“在线”：_vehicleStates 取的是
+        // !communicationLost()，而心跳在机器繁忙时会迟到。少等这一步，_planViolations 就会
+        // 判出 error 级的“目标机缺失或离线”，executeActions 直接返回 false——表现为满载下
+        // 偶发的功能性失败，且与被测的策略撤销逻辑毫无关系。
+        QTRY_VERIFY_WITH_TIMEOUT(!target->vehicleLinkManager()->communicationLost(), TestTimeout::longMs());
     }
     verifyExpectedLogMessage();
     _secondaryLink->clearReceivedMavCommandCounts();

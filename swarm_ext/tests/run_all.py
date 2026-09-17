@@ -360,7 +360,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
         TestSpec(
             "python.acceptance_metrics",
             "L1 Python/算法",
-            "编队几何、距离、COP 真值与解锁就绪门判定",
+            "编队几何、距离、COP 真值与解锁/就绪门判定",
             [
                 sys.executable,
                 "-m",
@@ -369,6 +369,7 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                 "test_qgc_acceptance.py",
                 "test_task_verdict.py",
                 "test_arm_readiness.py",
+                "test_qgc_readiness.py",
             ],
             cwd=SWARM_ROOT / "sim",
         ),
@@ -776,6 +777,18 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
         (REPO_ROOT / ".cache" / "CPM", "/project/source/.cache/CPM", False),
         (release_build_dir, "/project/release", False),
     ]
+    # The lock's behaviour can only be verified in a build that has tests AND autodispatch
+    # off. The Release artifact has QGC_BUILD_TESTING=OFF, so release_audit can confirm the
+    # marker in the binary but not that a model action actually holds for confirmation.
+    locked_build_dir = Path(args.locked_build_dir).resolve()
+    locked_mounts = [
+        (REPO_ROOT, "/project/source", True),
+        (REPO_ROOT / ".cache" / "CPM", "/project/source/.cache/CPM", False),
+        # Container path matches the host directory name: CMakeCache records the build
+        # directory it was configured with, and a mismatch makes ctest fail with "Cannot
+        # create directory". This also matches what one would naturally type by hand.
+        (locked_build_dir, "/project/build-locked", False),
+    ]
 
     def repeated_ctest_command(
         output_name: str,
@@ -892,6 +905,126 @@ def _build_specs(args: argparse.Namespace, report_dir: Path) -> list[TestSpec]:
                         )
                     )
                     else f"缺少 Release QGC：{release_build_dir}",
+                ),
+            ),
+            TestSpec(
+                "qualification.locked_configure",
+                "Q2 发布资格",
+                "配置关闭 AI 自动下发、但保留测试接口的交付构建",
+                _container_command(
+                    args.container_image,
+                    "/opt/Qt/6.11.1/gcc_64/bin/qt-cmake",
+                    [
+                        "-S",
+                        "/project/source",
+                        "-B",
+                        "/project/build-locked",
+                        "-G",
+                        "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Debug",
+                        "-DQGC_BUILD_TESTING=ON",
+                        # The subject under test. It defaults to QGC_BUILD_TESTING, so it
+                        # must be turned off explicitly: otherwise enabling tests enables
+                        # autodispatch and every case in this group becomes vacuous.
+                        "-DQGC_SWARM_AI_AUTODISPATCH=OFF",
+                        "-DQGC_LINK_COMPILE_COMMANDS=OFF",
+                        "-DQT_QML_GENERATE_QMLLS_INI=OFF",
+                        "-DPython3_EXECUTABLE=/opt/qgc-venv/bin/python",
+                        "-DPython_EXECUTABLE=/opt/qgc-venv/bin/python",
+                    ],
+                    locked_mounts,
+                    workdir="/project/source",
+                    environment={"CCACHE_DIR": "/project/build-locked/.ccache"},
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=1800,
+                min_profile="qualification",
+                prerequisite=_docker_image(args.container_image),
+            ),
+            TestSpec(
+                "qualification.locked_build",
+                "Q2 发布资格",
+                "编译交付构建",
+                _container_command(
+                    args.container_image,
+                    "/usr/bin/cmake",
+                    ["--build", "/project/build-locked", "--parallel", str(args.jobs)],
+                    locked_mounts,
+                    workdir="/project/source",
+                    environment={"CCACHE_DIR": "/project/build-locked/.ccache"},
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=_path_exists(
+                    locked_build_dir / "CMakeCache.txt", "交付构建 CMakeCache"
+                ),
+            ),
+            TestSpec(
+                "qualification.locked_behaviour",
+                "Q2 发布资格",
+                "交付构建：AI 动作挂起待确认、确认后下发、以及交付构建独有的面板布局",
+                _container_command(
+                    args.container_image,
+                    "/usr/bin/python3",
+                    [
+                        "/project/source/.github/scripts/cmake_helper.py",
+                        "ctest",
+                        "--junit-output",
+                        "/project/build-locked/locked-behaviour.xml",
+                        "--ctest-output",
+                        "/project/build-locked/locked-behaviour.txt",
+                        "--jobs",
+                        "1",
+                        "--include-labels",
+                        # SwarmDispatchLockTest (the lock itself) and both Swarm QML UI tests
+                        # carry this label, so one selector covers the lock's behaviour and
+                        # the panel layout that only exists once the autonomy controls hide.
+                        # Deliberately not the whole Integration label: SwarmSafetyTest drives
+                        # L3 autonomy, which this build pins away, so it cannot pass here.
+                        "SwarmLocked",
+                        "--exclude-labels",
+                        "Flaky|Network",
+                    ],
+                    locked_mounts,
+                    workdir="/project/build-locked",
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=_path_exists(
+                    locked_build_dir / "Debug" / "QGroundControl", "交付构建 QGC"
+                ),
+            ),
+            TestSpec(
+                "qualification.locked_unit",
+                "Q2 发布资格",
+                "交付构建：全部 Unit 不受锁影响",
+                _container_command(
+                    args.container_image,
+                    "/usr/bin/python3",
+                    [
+                        "/project/source/.github/scripts/cmake_helper.py",
+                        "ctest",
+                        "--junit-output",
+                        "/project/build-locked/locked-unit.xml",
+                        "--ctest-output",
+                        "/project/build-locked/locked-unit.txt",
+                        "--jobs",
+                        str(args.jobs),
+                        "--include-labels",
+                        "Unit",
+                        "--exclude-labels",
+                        "Flaky|Network",
+                    ],
+                    locked_mounts,
+                    workdir="/project/build-locked",
+                    user=f"{os.getuid()}:{os.getgid()}",
+                ),
+                timeout_sec=7200,
+                min_profile="qualification",
+                prerequisite=_path_exists(
+                    locked_build_dir / "Debug" / "QGroundControl", "交付构建 QGC"
                 ),
             ),
             TestSpec(
@@ -1293,6 +1426,7 @@ def main() -> int:
     parser.add_argument("--report-dir", default="")
     parser.add_argument("--build-dir", default=str(REPO_ROOT / "build"))
     parser.add_argument("--release-build-dir", default=str(REPO_ROOT / "build-release"))
+    parser.add_argument("--locked-build-dir", default=str(REPO_ROOT / "build-locked"))
     parser.add_argument("--qt-root", default="")
     parser.add_argument("--container-image", default="qgc-ubuntu-docker:latest")
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 2))

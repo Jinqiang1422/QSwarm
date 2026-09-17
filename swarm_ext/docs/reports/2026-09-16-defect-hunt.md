@@ -93,9 +93,17 @@ _finish(Outcome::Aborted, reason.isEmpty() ? tr("任务被操作员中止") : re
 **不同**；而本分支刚修过一个布局缺陷（应用按钮被裁出可点击区域）。本轮补跑：
 
 - 锁定构建 QML UI：**2/2 通过**
-- 锁定构建 `-L Unit`：**187/187 通过**（无测试隐含假设自动下发可用）
+- 锁定构建 `-L Unit`：**187/187 通过**
 
-交付构建的面板布局至此才第一次被验证。**建议把这两项纳入锁定构建的常规验证口径。**
+交付构建的面板布局至此才第一次被验证。
+
+> **2026-09-17 更正。** 上面「无测试隐含假设自动下发可用」的原始结论只对 `Unit` 标签成立。
+> 把该结论推广到 `Integration` 标签时发现 `SwarmSafetyTest` 正是一个反例：它调
+> `setAutonomyLevel(3)` 与 `setL3AllowedTypes({"arm"})` 来测 L3 策略撤销，而交付构建把两者
+> 都变成空操作并把等级钉死在 L2，于是 `!needsConfirmation(actions)` 必然失败。
+> **它在锁定构建里按设计就不适用**，不是缺陷。因此常规口径用 `-L SwarmLocked`
+> 而非 `-L Integration`，两个 QML UI 测试也已加入该标签（仅在 `QGC_SWARM_AI_AUTODISPATCH=OFF`
+> 时附加）。落地情况见「处置与结果」。
 
 ## 本轮自身暴露的验证纪律问题
 
@@ -167,7 +175,7 @@ EKF 未收敛会被判 FAIL 而非 BLOCKED。**这是设计取舍，不建议为
 | --- | --- | --- |
 | 发现一 | 新增 `SwarmAIAgent::_requestTaskAbort()`：先过自主等级闸（L1 直接拒绝），再一律挂起等待操作员确认，不随 `requireConfirm` 或自主等级放行 | 锁定构建 `SwarmDispatchLockTest` 9/9 |
 | 发现二 | 模型路径传入 `AI 请求、操作员确认中止`；`SwarmTaskController` 的空 reason 兜底文案改为中性的「任务已中止」 | 同上 |
-| 覆盖盲区 | 锁定构建补跑 QML UI 与完整 Unit | 2/2、187/187 |
+| 覆盖盲区 | Q2 档新增 `locked_configure`/`locked_build`/`locked_behaviour`/`locked_unit` 四条 spec，不再依赖人工记得手动跑 | 链路实跑 19s/85s/3-3/186-186 全通过 |
 | 验证纪律 | 写入 `swarm_ext/tests/README.md` | — |
 
 新增两条互为对照的用例：`modelAbortMustRequireConfirmation`（模型请求后任务仍在运行，

@@ -120,6 +120,61 @@ def _start_logged(command: list[str], log_path: Path, env: dict | None = None) -
     return process
 
 
+class QGCEnvironmentBlocked(RuntimeError):
+    """QGC is demonstrably healthy and a minority of sim instances are not: environment, not defect."""
+
+    def __init__(self, reason: str, evidence: dict):
+        super().__init__(reason)
+        self.reason = reason
+        self.evidence = evidence
+
+
+# How long the minority-stall signature must hold before it counts. Far longer than a
+# healthy EKF/GPS convergence, far shorter than --ready-timeout's 2400s, so a dead
+# instance is called in three minutes instead of spinning for forty.
+QGC_MINORITY_STALL_SEC = 180.0
+
+
+def _telemetry_complete(vehicle: dict) -> bool:
+    return all(
+        isinstance(vehicle.get(field), Real) and math.isfinite(float(vehicle[field]))
+        for field in ("lat", "lon", "alt_rel_m")
+    )
+
+
+def _minority_instance_stall(status: dict, expected_vehicles: int) -> dict | None:
+    """Detect "QGC healthy, a minority of sim instances stalled" behind a readiness timeout.
+
+    The anti-masking boundary is the same one F3's sensor gate uses: the reference frame
+    is the fleet's own majority, and the downgrade only fires when QGC can be shown to be
+    working. Any of these failing returns None, which keeps the outcome a plain FAIL:
+
+    1. QGC answers and reports ok. A hung or dead QGC never gets here.
+    2. It reports at least the expected fleet size. Under-reporting is a QGC connection
+       defect and must stay visible.
+    3. Every vehicle finished its initial connect, proving QGC's handshake works fleet-wide.
+    4. The vehicles missing telemetry are a strict minority. A broken telemetry pipeline in
+       QGC would starve every vehicle, not one.
+    5. The fleet has at least two vehicles. One vehicle has no majority to be measured
+       against, so nothing can be discriminated and nothing is excused.
+    """
+    if not status.get("ok"):
+        return None
+    vehicles = status.get("vehicles") or []
+    if expected_vehicles < 2 or len(vehicles) < expected_vehicles:
+        return None
+    if not all(vehicle.get("initial_connect_complete", False) for vehicle in vehicles):
+        return None
+    stalled = [vehicle.get("id") for vehicle in vehicles if not _telemetry_complete(vehicle)]
+    if not stalled or len(stalled) * 2 >= len(vehicles):
+        return None
+    return {
+        "stalled_ids": stalled,
+        "fleet_size": len(vehicles),
+        "reason": "minority_instance_telemetry_stall",
+    }
+
+
 def _wait_qgc(
     client: rs.QGCAcceptanceClient,
     expected_vehicles: int,
@@ -128,6 +183,7 @@ def _wait_qgc(
 ) -> dict:
     deadline = time.monotonic() + timeout_sec
     last_status = {}
+    stall_since: float | None = None
     while time.monotonic() < deadline:
         for process in processes:
             if process.poll() is not None:
@@ -141,14 +197,7 @@ def _wait_qgc(
             )
             flight_telemetry_ready = expected_vehicles == 0 or (
                 len(vehicles) >= expected_vehicles
-                and all(
-                    all(
-                        isinstance(vehicle.get(field), Real)
-                        and math.isfinite(float(vehicle[field]))
-                        for field in ("lat", "lon", "alt_rel_m")
-                    )
-                    for vehicle in vehicles
-                )
+                and all(_telemetry_complete(vehicle) for vehicle in vehicles)
             )
             if (
                 last_status.get("ok")
@@ -157,8 +206,30 @@ def _wait_qgc(
                 and flight_telemetry_ready
             ):
                 return last_status
+            # The signature must hold for QGC_MINORITY_STALL_SEC before it counts, so the
+            # normal staggered startup (instances coming up one by one) is not mistaken for
+            # a dead instance. Any recovery restarts the clock.
+            stall = _minority_instance_stall(last_status, expected_vehicles)
+            if stall is None:
+                stall_since = None
+            else:
+                now = time.monotonic()
+                if stall_since is None:
+                    stall_since = now
+                elif now - stall_since >= QGC_MINORITY_STALL_SEC:
+                    raise QGCEnvironmentBlocked(
+                        "QGC 正常应答且全队握手完成，但 {} 号实例持续 {:.0f}s 未上报遥测"
+                        "（共 {} 架）——该实例的仿真器侧没起来".format(
+                            "/".join(str(i) for i in stall["stalled_ids"]),
+                            QGC_MINORITY_STALL_SEC,
+                            stall["fleet_size"],
+                        ),
+                        {**stall, "last_status": last_status},
+                    )
         except rs.QGCAcceptanceError:
-            pass
+            # Do not accumulate stall time while QGC is unreachable. That is QGC's own
+            # problem and must be allowed to reach the timeout as a FAIL.
+            stall_since = None
         time.sleep(1)
     raise TimeoutError(
         f"QGC 在 {timeout_sec:.0f}s 内未达到 {expected_vehicles} 架可飞状态；末次状态={last_status}"
@@ -404,6 +475,19 @@ def main() -> None:
                     )
                     if not report.get("pass"):
                         error = str(report.get("error", "场景步骤失败"))
+            except QGCEnvironmentBlocked as exc:
+                # Same rule as F3's sensor gate: downgrade only when QGC is demonstrably
+                # healthy (see _minority_instance_stall). cleanup_errors still vetoes below.
+                error = str(exc)
+                report = {
+                    "scenario": scenario["name"],
+                    "pass": False,
+                    "error": error,
+                    "steps": report.get("steps", []),
+                    "environment_block": True,
+                    "environment_block_reason": exc.reason,
+                    "qgc_readiness": exc.evidence,
+                }
             except Exception as exc:
                 error = str(exc)
                 report = {

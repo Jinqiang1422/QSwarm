@@ -53,7 +53,14 @@ add_qgc_test(APMSensorsCalibrationUITest LABELS Integration NoSanitizer TIMEOUT 
 add_qgc_test(PX4AirframeSetupUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(AppCloseWarningUITest LABELS Integration NoSanitizer TIMEOUT 240)
 add_qgc_test(FlyViewProximityRadarUITest LABELS Integration NoSanitizer TIMEOUT 120)
-add_qgc_test(SwarmSituationLayerUITest LABELS Integration NoSanitizer TIMEOUT 120)
-add_qgc_test(SwarmTaskEditorUITest LABELS Integration NoSanitizer TIMEOUT 120)
+# SwarmLocked marks the tests that are meaningful in a delivery build (autodispatch off).
+# These two carry it because that build hides the autonomy controls, which changes the
+# panel layout -- a layout that had never been exercised until it was added here.
+set(SWARM_UI_LOCKED_LABEL "")
+if(NOT QGC_SWARM_AI_AUTODISPATCH)
+    set(SWARM_UI_LOCKED_LABEL SwarmLocked)
+endif()
+add_qgc_test(SwarmSituationLayerUITest LABELS Integration NoSanitizer ${SWARM_UI_LOCKED_LABEL} TIMEOUT 120)
+add_qgc_test(SwarmTaskEditorUITest LABELS Integration NoSanitizer ${SWARM_UI_LOCKED_LABEL} TIMEOUT 120)
 add_qgc_test(NTRIPSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)
 add_qgc_test(RemoteIDSettingsUITest LABELS Integration NoSanitizer TIMEOUT 120)

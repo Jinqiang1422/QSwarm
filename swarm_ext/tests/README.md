@@ -34,7 +34,7 @@
 | L5 SITL/QGC | 8 机覆盖、编队、故障、租约、任务人工门控与中止；局部退出、L3 权限收紧、上传后限高收紧、任务超时判失败 |  |  | ✓ | ✓ |
 | L6 GUI/QML | runner 托管正常 GUI/Xvfb，验证 delegate、时延和地理误差 |  |  | ✓ | ✓ |
 | Q1 稳定性资格 | 生命周期 20 轮、Unit/Integration 50 轮、场景 03 20 轮 |  |  |  | ✓ |
-| Q2 发布资格 | 非测试 Release 构建及验收接口产物审计 |  |  |  | ✓ |
+| Q2 发布资格 | 非测试 Release 构建与产物审计；交付构建（关自动下发）的锁行为、面板布局与全量 Unit |  |  |  | ✓ |
 | L7 外部模型 | 559 条自然语言指令在线评测 |  |  | 可选 | 可选 |
 
 ### L0 lint 的工具版本要求
@@ -84,8 +84,7 @@ PATH=/tmp/pinned-lint-bin:$PATH python3 swarm_ext/tests/run_all.py ...
    会给所有真实解锁缺陷发免罪符。
 2. 必须有正向 `SYS_STATUS` 证据。在线但一条都没收到时维持改动前行为，不判阻塞。
 3. 必须有对照。机队不足 2 架、或全体同样退化时没有多数可依，一律不判阻塞。
-4. 只作用于直连 MAVLink 的 `Fleet.arm_all`。经 QGC 中介的场景里 QGC 本身是被测对象，
-   其 `readiness_timeout` 继续判 FAIL，不做降级。
+4. 只作用于直连 MAVLink 的 `Fleet.arm_all`。经 QGC 中介的场景另有一套更严的判据，见下节。
 5. 只作用于 `arm_all` 一个动作，不是全场景兜底。
 6. `cleanup_errors`（容器/端口残留）一票否决降级——那是 harness 自身缺陷。
 7. `report.json` 保留逐机 `present/enabled/health` 位图、`expected_sensors` 和缺失传感器名，
@@ -94,6 +93,28 @@ PATH=/tmp/pinned-lint-bin:$PATH python3 swarm_ext/tests/run_all.py ...
 
 离线回归见 `sim/test_arm_readiness.py`（9 条，含「预检不过不得降级」「无证据不得阻塞」
 「无对照不得阻塞」「同伴都不报的位不得要求」四条负例）。
+
+### QGC 中介路径：只在能正面证明 QGC 正常时才降级
+
+经 QGC 的场景等待就绪时，`_wait_qgc` 曾在任何原因下都空转满 `--ready-timeout`（默认
+2400 秒）再判一个无法自证的 FAIL。2026-09-10 与 09-16 两轮验证各命中一次，每次吃掉约
+40 分钟墙钟。
+
+现在 `_minority_instance_stall()` 识别「QGC 正常、少数仿真实例掉队」这一签名：持续
+`QGC_MINORITY_STALL_SEC`（180 秒）成立即判环境阻塞并立刻收口，不再空转。
+
+判据与上节的传感器就绪门同源——参照系是机队自身的多数——但方向上更严：这条路径上
+QGC 本身是被测对象，所以只有在能**正面证明 QGC 工作正常**时才降级。下列任何一条
+不成立都仍判 FAIL：
+
+1. QGC 在应答且 `ok`——它挂了或卡了根本取不到 status；
+2. 上报机数达到预期——少报机是 QGC 的连接缺陷，必须暴露；
+3. 每一架 `initial_connect_complete` 均为真——证明握手对全体有效；
+4. 缺遥测的是**严格少数**——QGC 遥测管线若坏了会是全体缺失，不会只缺一架；
+5. 机队至少两架——单机没有多数可参照，无法区分，不降级。
+
+每条守卫在 `sim/test_qgc_readiness.py` 里都有对应反例（13 条）。移除少数派守卫会让
+其中 3 条失败——没有反例的判别式不是判别式，是免罪机器。
 
 ### 场景执行覆盖契约
 
