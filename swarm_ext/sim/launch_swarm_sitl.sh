@@ -42,6 +42,26 @@ command -v setsid >/dev/null || { echo "[launch] 缺少 setsid（util-linux）";
     echo "[launch] 请先在 $PX4_DIR 执行：make px4_sitl gz_x500"; exit 1; }
 [[ -f "$RCS" ]] || { echo "[launch] 未找到启动脚本 rcS：$RCS"; exit 1; }
 
+# ---- 实例占用预检：区分「活进程占用」与「孤儿锁」----
+# PX4 的 /tmp/px4_lock-N 是全机器范围的每实例号锁，本机上任何一个 SITL 机队都会占用它。
+# 两种情形的处置完全相反，混为一谈会给出危险建议：活进程持有时照着删锁会破坏对方机队。
+LIVE_PX4=$(pgrep -x px4 | head -1 || true)
+if [[ -n "$LIVE_PX4" ]]; then
+    LIVE_COUNT=$(pgrep -cx px4)
+    LIVE_OWNER=$(ps -o args= -p "$(ps -o ppid= -p "$LIVE_PX4" | tr -d ' ')" 2>/dev/null | cut -c1-120)
+    echo "[launch] 本机已有 $LIVE_COUNT 个 px4 进程在运行，实例号锁被占用。"
+    echo "[launch] 起始进程 pid=$LIVE_PX4，其父进程：${LIVE_OWNER:-未知}"
+    echo "[launch] 这不是遗留锁，不要删除 /tmp/px4_lock-*：那会破坏正在运行的机队。"
+    echo "[launch] 请等对方机队结束，或在空闲机器上运行。"
+    exit 3   # 环境阻塞：见 strict_regression.EXIT_ENVIRONMENT_BLOCKED
+fi
+STALE_LOCKS=$(find /tmp -maxdepth 1 \( -name "px4_lock-*" -o -name "px4-sock-*" \) 2>/dev/null | wc -l)
+if [[ "$STALE_LOCKS" -gt 0 ]]; then
+    # 无 px4 进程却有锁 = 上一轮被中断留下的孤儿，此时删除是安全的。
+    echo "[launch] 清理上一轮遗留的 $STALE_LOCKS 个孤儿 PX4 锁（当前无 px4 进程）"
+    rm -f /tmp/px4_lock-* /tmp/px4-sock-*
+fi
+
 # ---- 资源预警（lockstep 对 CPU 敏感）----
 LOAD1=$(awk '{print $1}' /proc/loadavg)
 NCPU=$(nproc)
@@ -167,11 +187,12 @@ for ((i = 0; i < N; i++)); do
     fi
     if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
         echo "[launch] 实例 $i 在启动宽限期内退出，详见 $INST/px4.log"
-        # 被中断的上一轮会在 /tmp 留下 px4_lock-*/px4-sock-*；进程早没了锁还在，之后每个
-        # 新实例都会立刻自杀。表象是所有场景在 6-8 秒内全灭，极像产品崩溃，实则一行清理即可。
+        # 孤儿锁已由启动前预检清理，活进程占用也已在那里拦下。能走到这里还报「already
+        # running」，说明锁是在本次启动过程中被别的机队抢走的——仍属环境竞争，不是产品缺陷。
         if grep -q "PX4 server already running" "$INST/px4.log" 2>/dev/null; then
-            echo "[launch] 根因：/tmp 存在上一轮遗留的 PX4 锁。确认无 px4 进程后清理："
-            echo "[launch]   pgrep -x px4 || rm -f /tmp/px4_lock-* /tmp/px4-sock-*"
+            echo "[launch] 实例号锁在本次启动期间被其它 SITL 机队抢占（预检时还是空闲的）。"
+            echo "[launch] 当前 px4 进程数：$(pgrep -cx px4 || echo 0)。请在空闲机器上重跑。"
+            exit 3   # 环境阻塞，同预检
         fi
         exit 1
     fi

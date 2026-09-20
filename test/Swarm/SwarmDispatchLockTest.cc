@@ -190,6 +190,42 @@ void SwarmDispatchLockTest::confirmedModelAbortMustStopTheTask()
     QCOMPARE(_manager->taskController()->outcome(), SwarmTaskController::Outcome::Aborted);
 }
 
+void SwarmDispatchLockTest::staleAbortMustNotKillTheNextTask()
+{
+    // 任务成功结束时 SwarmTaskController::_finish 不调 cancelTargets，挂起态不会被清理。
+    // 若中止请求不绑定目标任务，这条残留请求会在下一个任务上生效——一个已完成任务的
+    // 模型中止请求可以杀掉后续无关任务，而面板上看不出它是过期的。
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("Reposition \\(MAV_CMD_DO_REPOSITION\\) command not supported")));
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("(测试清理|模型请求中止任务|中止请求已过期|已放弃 AI 行动计划)")));
+    _startOperatorTask();
+    _manager->aiAgent()->handleActionsJsonForTest(
+        QJsonDocument::fromJson(QByteArrayLiteral(R"([{"type": "abort_swarm_task"}])")).array());
+    QVERIFY(_manager->aiAgent()->pendingAbort());
+
+    // 第一个任务必须**成功**结束才能复现：_finish 只在失败路径调 cancelTargets
+    // （→ invalidatePendingWork → rejectPlan），成功路径不清理挂起态。用 abort 结束
+    // 会走失败路径顺带清掉 _pendingAbort，测试就不再具备区分度——实测过，守卫移除后
+    // 那种写法照样通过。complete_when=manual 的阶段由 proceed() 推进即告成功。
+    // proceed() 在阶段尚未进入等待态时是空操作：必须先等动作派发完、条件开始监控。
+    QTRY_VERIFY_WITH_TIMEOUT(_manager->taskController()->waitingForProceed(), TestTimeout::longMs());
+    _manager->taskController()->proceed();
+    QTRY_VERIFY_WITH_TIMEOUT(!_manager->taskController()->running(), TestTimeout::longMs());
+    QCOMPARE(_manager->taskController()->outcome(), SwarmTaskController::Outcome::Succeeded);
+    QVERIFY2(_manager->aiAgent()->pendingAbort(), "前提不成立：成功结束本不应清理挂起的中止请求");
+    _startOperatorTask();
+    const QString freshTaskId = _manager->taskController()->taskId();
+
+    _manager->aiAgent()->confirmPlan();
+
+    QVERIFY2(_manager->taskController()->running(), "过期的中止请求中止了另一个任务");
+    QCOMPARE(_manager->taskController()->taskId(), freshTaskId);
+    QVERIFY(!_manager->aiAgent()->pendingAbort());
+}
+
 void SwarmDispatchLockTest::_startOperatorTask()
 {
     const QString json = QStringLiteral(R"([{"name": "人工任务",

@@ -1293,9 +1293,15 @@ void SwarmAIAgent::_requestTaskAbort()
     // 中止会终结一项进行中的任务并让全体悬停，不随自主等级或 requireConfirm 放行：
     // 一律挂起等待操作员确认。操作员自己的中止按钮走 SwarmTaskController::abort，不受影响。
     _pendingAbort = true;
+    _pendingAbortTaskId = _swarmManager->taskController()->taskId();
+    const QString taskName = _swarmManager->taskController()->taskName();
     emit planPendingChanged();
     emit planChanged();
-    _appendChat(tr("系统"), tr("模型请求中止当前任务，待操作员确认。"));
+    _appendChat(tr("系统"), tr("模型请求中止任务「%1」，待操作员确认。").arg(taskName));
+    // 与 _queueOrExecute 的三条挂起路径一致：模型的意图在提出时就要可审计，
+    // 不能等到操作员处置才留下痕迹，否则「模型是否试图中止过」无从追溯。
+    SwarmAuditLogger::instance()->logPlanPending({tr("中止任务「%1」").arg(taskName)},
+                                                 tr("模型请求中止，等待操作员确认"));
     emit agentFeedback(tr("模型请求中止任务，请在面板确认"));
 }
 
@@ -1372,11 +1378,24 @@ void SwarmAIAgent::confirmPlan()
     }
 
     if (_pendingAbort) {
+        SwarmTaskController* task = _swarmManager->taskController();
+        // 这条挂起绑定发起时的任务；任务成功结束不会清理挂起态（_finish 只在失败路径调
+        // cancelTargets），所以确认前必须复核目标仍在、且没被换成另一个任务——否则一条
+        // 过期的中止请求会落到下一个任务头上。abort() 对未运行任务是空操作，仅凭它的
+        // 返回无法区分「中止成功」和「什么都没发生」，不能照旧报成功。
+        const bool stillTargeted = task->running() && task->taskId() == _pendingAbortTaskId;
         _pendingAbort = false;
-        // 明确记录发起者：中止原因会同时进审计日志和用户可见消息。
-        _swarmManager->taskController()->abort(tr("AI 请求、操作员确认中止"));
+        _pendingAbortTaskId.clear();
         emit planPendingChanged();
         emit planChanged();
+        if (!stillTargeted) {
+            _appendChat(tr("系统"), tr("中止请求已过期：目标任务已结束或已被替换，未执行任何操作。"));
+            SwarmAuditLogger::instance()->logPlanRejected();
+            emit agentFeedback(tr("中止请求已过期，未执行"));
+            return;
+        }
+        // 明确记录发起者：中止原因会同时进审计日志和用户可见消息。
+        task->abort(tr("AI 请求、操作员确认中止"));
         _appendChat(tr("系统"), tr("操作员已确认，任务中止。"));
         SwarmAuditLogger::instance()->logPlanConfirmed({tr("中止运行中的任务")});
         return;
@@ -1431,6 +1450,7 @@ void SwarmAIAgent::rejectPlan()
     _pendingPlan.clear();
     _pendingTask = false;
     _pendingAbort = false;
+    _pendingAbortTaskId.clear();
     _pendingStages.clear();
     _pendingStagesJson = QJsonArray();
     emit planPendingChanged();

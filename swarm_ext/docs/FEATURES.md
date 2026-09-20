@@ -17,7 +17,7 @@
 
 工具与模板以 `swarm_ext/tests/llm_eval/tools_schema.json`、`swarm_ext/templates/` 为准。`plan_tactic` 提供规划建议，不能视为对应战术已完成自动飞行闭环。
 
-最近一轮验证：[交付收尾验证记录](reports/2026-09-16-delivery-closure.md)（含交付边界与明确未覆盖项）。测试入口：[测试说明](../tests/README.md)。运行方式：[用户使用手册](用户使用手册.md)、[感知服务](../services/perception/README.md)。
+最近一轮验证：[全量验证与缺陷挖掘](reports/2026-09-20-full-verification.md)；交付边界与明确未覆盖项见[交付收尾验证记录](reports/2026-09-16-delivery-closure.md)第七节。测试入口：[测试说明](../tests/README.md)。运行方式：[用户使用手册](用户使用手册.md)、[感知服务](../services/perception/README.md)。
 
 本次手册编写对按钮行为、模板和状态语义做了额外静态核对，详见 [功能分析与手册核验](功能分析与手册核验.md)。
 

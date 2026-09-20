@@ -221,10 +221,14 @@ private:
 #endif
     bool _busy = false;
 
-    QList<QJsonObject> _history;                       ///< 多轮对话（不含 system），定期截断
-    QList<SwarmAction> _pendingPlan;                   ///< 待确认动作序列
+    QList<QJsonObject> _history;      ///< 多轮对话（不含 system），定期截断
+    QList<SwarmAction> _pendingPlan;  ///< 待确认动作序列
     bool _pendingTask = false;
-    bool _pendingAbort = false;                        ///< 模型请求中止运行中任务，等待操作员确认
+    bool _pendingAbort = false;       ///< 模型请求中止运行中任务，等待操作员确认
+    /// 发起中止请求时那个任务的 id。确认时必须仍是同一个运行中的任务，否则这条挂起已过期：
+    /// 任务成功结束时 SwarmTaskController::_finish 不调 cancelTargets，挂起态不会被清理，
+    /// 于是一条针对已结束任务的中止请求会留在面板上，被确认后中止掉下一个任务。
+    QString _pendingAbortTaskId;
     QString _pendingTaskName;
     QList<SwarmTaskController::Stage> _pendingStages;  ///< 待确认多阶段任务
     QJsonArray _pendingStagesJson;                     ///< 与 _pendingStages 对应的 JSON 原文，编辑的作用对象

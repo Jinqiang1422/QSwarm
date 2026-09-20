@@ -120,8 +120,13 @@ def _start_logged(command: list[str], log_path: Path, env: dict | None = None) -
     return process
 
 
-class QGCEnvironmentBlocked(RuntimeError):
-    """QGC is demonstrably healthy and a minority of sim instances are not: environment, not defect."""
+class EnvironmentBlocked(RuntimeError):
+    """The environment, not the software under test, prevented the scenario from running.
+
+    Two causes reach this today: a minority of simulator instances never reporting
+    telemetry while QGC is demonstrably healthy, and the launcher refusing to start
+    because another SITL fleet on this machine holds the PX4 instance locks.
+    """
 
     def __init__(self, reason: str, evidence: dict):
         super().__init__(reason)
@@ -186,8 +191,16 @@ def _wait_qgc(
     stall_since: float | None = None
     while time.monotonic() < deadline:
         for process in processes:
-            if process.poll() is not None:
-                raise RuntimeError(f"依赖进程提前退出（退出码 {process.returncode}）")
+            if process.poll() is None:
+                continue
+            # The launcher exits 3 when another fleet on this machine holds the PX4
+            # instance locks. That is the environment, not a defect in anything here.
+            if process.returncode == EXIT_ENVIRONMENT_BLOCKED:
+                raise EnvironmentBlocked(
+                    "SITL 启动器判定环境阻塞（退出码 3）：实例号锁被本机其它机队占用",
+                    {"reason": "px4_instance_locks_held", "returncode": process.returncode},
+                )
+            raise RuntimeError(f"依赖进程提前退出（退出码 {process.returncode}）")
         try:
             last_status = client.request("status")
             vehicles = last_status.get("vehicles", [])
@@ -217,7 +230,7 @@ def _wait_qgc(
                 if stall_since is None:
                     stall_since = now
                 elif now - stall_since >= QGC_MINORITY_STALL_SEC:
-                    raise QGCEnvironmentBlocked(
+                    raise EnvironmentBlocked(
                         "QGC 正常应答且全队握手完成，但 {} 号实例持续 {:.0f}s 未上报遥测"
                         "（共 {} 架）——该实例的仿真器侧没起来".format(
                             "/".join(str(i) for i in stall["stalled_ids"]),
@@ -244,6 +257,11 @@ def _wait_mavlink(expected_vehicles: int, timeout_sec: float, sitl: subprocess.P
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         if sitl.poll() is not None:
+            if sitl.returncode == EXIT_ENVIRONMENT_BLOCKED:
+                raise EnvironmentBlocked(
+                    "SITL 启动器判定环境阻塞（退出码 3）：实例号锁被本机其它机队占用",
+                    {"reason": "px4_instance_locks_held", "returncode": sitl.returncode},
+                )
             raise RuntimeError(f"SITL 提前退出（退出码 {sitl.returncode}）")
         message = connection.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
         if message:
@@ -475,7 +493,7 @@ def main() -> None:
                     )
                     if not report.get("pass"):
                         error = str(report.get("error", "场景步骤失败"))
-            except QGCEnvironmentBlocked as exc:
+            except EnvironmentBlocked as exc:
                 # Same rule as F3's sensor gate: downgrade only when QGC is demonstrably
                 # healthy (see _minority_instance_stall). cleanup_errors still vetoes below.
                 error = str(exc)
