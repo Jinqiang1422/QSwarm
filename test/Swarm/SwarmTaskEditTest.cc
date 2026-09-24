@@ -50,6 +50,54 @@ void SwarmTaskEditTest::cleanup()
 }
 
 // 通过 AI 代理的 JSON 入口挂起一个两阶段任务，等价于模型返回 start_swarm_task。
+void SwarmTaskEditTest::humanAndModelAuthoredTasksMustStartIdentically()
+{
+    // 本项目的核心主张：人工与大模型产出的任务共用同一套表达。架构上由三个来源
+    // （SwarmTaskLibrary / SwarmAIAgent / SwarmAcceptanceServer）都经 parseStages 保证，
+    // 但此前没有任何测试断言过等价性——若哪天模型路径长出自己的一套校验或默认值，
+    // 现有测试一条都不会红。这条用例就守住这一点。
+    ignoreLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("(集群任务|阶段 |操作员已确认|任务被|任务已中止|等价用例)")));
+    const QString stagesJson = QStringLiteral(R"([
+        {"name": "起飞", "actions": [{"type": "takeoff", "altitude": 30}],
+         "complete_when": {"kind": "all_airborne", "min_altitude": 25, "timeout_sec": 641}},
+        {"name": "等待", "actions": [],
+         "complete_when": {"kind": "duration", "seconds": 10, "timeout_sec": 642}}
+    ])");
+    const QJsonArray stages = QJsonDocument::fromJson(stagesJson.toUtf8()).array();
+
+    // ---- 人工路径：直接经 parseStages 启动（Plan 视图与模板库走的就是这条）----
+    SwarmTaskController* task = _manager->taskController();
+    QStringList warnings;
+    const auto humanStages = task->parseStages(stages, vehicle()->coordinate(), warnings);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join(QStringLiteral("；"))));
+    QVERIFY(task->startTask(QStringLiteral("等价用例-人工"), humanStages, true));
+    const int humanCount = task->stageCount();
+    const QStringList humanNames = task->stageNames();
+    const int humanTimeout0 = task->stageTimeoutSecForTest(0);
+    const int humanTimeout1 = task->stageTimeoutSecForTest(1);
+    task->abort(QStringLiteral("等价用例：切换到模型路径"));
+    QVERIFY(!task->running());
+
+    // ---- 模型路径：同一份 stages 经 start_swarm_task 工具 + 人工确认启动 ----
+    QJsonObject toolCall{{QStringLiteral("type"), QStringLiteral("start_swarm_task")},
+                         {QStringLiteral("task_name"), QStringLiteral("等价用例-模型")},
+                         {QStringLiteral("stages"), stages}};
+    _manager->aiAgent()->handleActionsJsonForTest(QJsonArray{toolCall});
+    QVERIFY(_manager->aiAgent()->planPending());
+    _manager->aiAgent()->confirmPlan();
+    QVERIFY(task->running());
+
+    // 逐字段相同。641/642 是刻意取的非默认值：若任一路径自行补默认值或改写超时，
+    // 这两条断言就会失败，而仅比较阶段数和名称是发现不了的。
+    QCOMPARE(task->stageCount(), humanCount);
+    QCOMPARE(task->stageNames(), humanNames);
+    QCOMPARE(task->stageTimeoutSecForTest(0), humanTimeout0);
+    QCOMPARE(task->stageTimeoutSecForTest(1), humanTimeout1);
+    QCOMPARE(task->stageTimeoutSecForTest(0), 641);
+    QCOMPARE(task->stageTimeoutSecForTest(1), 642);
+}
+
 void SwarmTaskEditTest::_stagePendingTask()
 {
     const QString json = QStringLiteral(R"([{

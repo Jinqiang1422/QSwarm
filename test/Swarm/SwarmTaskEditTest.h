@@ -26,6 +26,7 @@ private slots:
     void typoKeyEditMustReportNoChange();
     void confirmAfterEditMustStartTheEditedTask();
     void pendingTaskEditMustBeAudited();
+    void humanAndModelAuthoredTasksMustStartIdentically();
 
 private:
     void _stagePendingTask();
