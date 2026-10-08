@@ -170,21 +170,30 @@ SwarmPanel {
                 }
 
                 QGCLabel { text: qsTr("间距(米)") }
+                // 显示编队当前值（AI、验收接口改动后也同步）；数值未改时不下发，焦点进出不会重排队形或打断航段
                 QGCTextField {
                     id: spacingField
                     Layout.fillWidth: true
-                    text: "10"
+                    text: Number(_swarm.formation.spacingMeters.toFixed(2)).toString()
                     validator: DoubleValidator { bottom: 2; top: 500 }
-                    onEditingFinished: _swarm.formation.spacingMeters = parseFloat(text)
+                    onEditingFinished: {
+                        var value = parseFloat(text)
+                        if (value !== Number(_swarm.formation.spacingMeters.toFixed(2)))
+                            _swarm.formation.spacingMeters = value
+                    }
                 }
 
                 QGCLabel { text: qsTr("高度分层(米)") }
                 QGCTextField {
                     id: vstepField
                     Layout.fillWidth: true
-                    text: "3"
+                    text: Number(_swarm.formation.verticalStepMeters.toFixed(2)).toString()
                     validator: DoubleValidator { bottom: 0; top: 50 }
-                    onEditingFinished: _swarm.formation.verticalStepMeters = parseFloat(text)
+                    onEditingFinished: {
+                        var value = parseFloat(text)
+                        if (value !== Number(_swarm.formation.verticalStepMeters.toFixed(2)))
+                            _swarm.formation.verticalStepMeters = value
+                    }
                 }
             }
 
@@ -205,6 +214,18 @@ SwarmPanel {
                     text:    qsTr("停止编队")
                     enabled: _swarm.formation.active
                     onClicked: _swarm.stopFormation()
+                }
+                QGCButton {
+                    text:    qsTr("编队按航线飞")
+                    // 不绑 blocked：单个僚机的保持目标无效会置 blocked，但不妨碍航线（规划器重新校验）
+                    enabled: _swarm.formation.active
+                    onClicked: {
+                        // 只在打开确认框时生成摘要：摘要同时记下待确认的长机与航线指纹
+                        formationRouteConfirm.text = _swarm.formationRouteSummary()
+                        formationRouteConfirm.buttons = _swarm.formationRouteConfirmable()
+                            ? (MessageDialog.Yes | MessageDialog.No) : MessageDialog.Ok
+                        formationRouteConfirm.open()
+                    }
                 }
                 QGCLabel {
                     text: _swarm.formation.statusText
@@ -279,5 +300,12 @@ SwarmPanel {
         text: qsTr("警告：飞行中强制上锁将导致坠机！仅在地面紧急情况下使用。确认继续？")
         buttons: MessageDialog.Yes | MessageDialog.No
         onAccepted: _swarm.emergencyDisarmAll()
+    }
+    MessageDialog {
+        id: formationRouteConfirm
+        title: qsTr("编队按航线飞")
+        buttons: MessageDialog.Yes | MessageDialog.No
+        // 航线不可执行时只有「确定」按钮，onAccepted 不会触发执行（Ok 也会触发 accepted，故再判一次）
+        onAccepted: if (_swarm.formationRouteConfirmable()) _swarm.startFormationRoute()
     }
 }

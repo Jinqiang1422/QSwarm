@@ -1281,6 +1281,7 @@ void Vehicle::_handleHeartbeat(mavlink_message_t& message)
     mavlink_heartbeat_t heartbeat;
 
     mavlink_msg_heartbeat_decode(&message, &heartbeat);
+    _systemStatus = heartbeat.system_status;
 
     bool newArmed = heartbeat.base_mode & MAV_MODE_FLAG_DECODE_POSITION_SAFETY;
 

@@ -2,6 +2,7 @@
 
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDataStream>
+#include <QtCore/QStringList>
 
 #include "Fact.h"
 #include "FirmwarePlugin.h"
@@ -141,4 +142,64 @@ QString SwarmMissionSnapshot::validate(Vehicle* vehicle, const SwarmConstraintCh
     if (minutes / config.enduranceMin * 100.0 > available)
         return QStringLiteral("航线估算耗电超过当前电量与返航余量");
     return {};
+}
+
+QList<QGeoCoordinate> SwarmMissionSnapshot::formationWaypoints(double homeAltitude, bool& trailingRecovery,
+                                                               QString& reason) const
+{
+    trailingRecovery = false;
+    if (!std::isfinite(homeAltitude)) {
+        reason = QStringLiteral("长机 Home 高度无效");
+        return {};
+    }
+    QList<QGeoCoordinate> waypoints;
+    QStringList unsupported;
+    for (int index = 0; index < _items.size(); ++index) {
+        const auto& item = _items[index];
+        const int command = int(item[0]), frame = int(item[1]);
+        if (command == MAV_CMD_NAV_TAKEOFF && index == 0)
+            continue;
+        if (index == _items.size() - 1 && (command == MAV_CMD_NAV_LAND || command == MAV_CMD_NAV_RETURN_TO_LAUNCH)) {
+            trailingRecovery = true;
+            continue;
+        }
+        if (command != MAV_CMD_NAV_WAYPOINT) {
+            unsupported.append(QStringLiteral("#%1(指令 %2)").arg(index + 1).arg(command));
+            continue;
+        }
+        if (frame != MAV_FRAME_GLOBAL && frame != MAV_FRAME_GLOBAL_RELATIVE_ALT) {
+            unsupported.append(QStringLiteral("#%1(坐标系 %2)").arg(index + 1).arg(frame));
+            continue;
+        }
+        if (!SwarmTypes::isValidLatLon(item[6], item[7]) || !std::isfinite(item[8])) {
+            unsupported.append(QStringLiteral("#%1(坐标无效)").arg(index + 1));
+            continue;
+        }
+        if (item[2] != 0.0) {
+            unsupported.append(QStringLiteral("#%1(悬停)").arg(index + 1));
+            continue;
+        }
+        if (item[9] != 1.0) {
+            unsupported.append(QStringLiteral("#%1(非自动继续)").arg(index + 1));
+            continue;
+        }
+        const double altitudeAmsl = item[8] + (frame == MAV_FRAME_GLOBAL_RELATIVE_ALT ? homeAltitude : 0.0);
+        if (altitudeAmsl < homeAltitude - 0.5) {
+            unsupported.append(QStringLiteral("#%1(低于 Home)").arg(index + 1));
+            continue;
+        }
+        waypoints.append(QGeoCoordinate(item[6], item[7], altitudeAmsl));
+    }
+    if (!unsupported.isEmpty()) {
+        reason = QStringLiteral(
+                     "航线包含编队不支持的项：%1（编队航线只支持全局/相对高度坐标系、无悬停的航点；"
+                     "首项起飞、末项降落/返航除外）")
+                     .arg(unsupported.join(QStringLiteral("、")));
+        return {};
+    }
+    if (waypoints.isEmpty()) {
+        reason = QStringLiteral("航线没有可执行的航点");
+        return {};
+    }
+    return waypoints;
 }

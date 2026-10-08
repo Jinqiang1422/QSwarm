@@ -83,8 +83,8 @@ public:
 
     bool armed() const { return (_mavBaseMode & MAV_MODE_FLAG_SAFETY_ARMED) != 0; }
 
-    /// Accept MAV_CMD_DO_REPOSITION and apply its altitude. Off by default: the command is then
-    /// answered MAV_RESULT_UNSUPPORTED, which existing tests rely on.
+    /// Accept MAV_CMD_DO_REPOSITION (COMMAND_LONG and COMMAND_INT) and apply its altitude. Off by default:
+    /// the command is then answered MAV_RESULT_UNSUPPORTED, which existing tests rely on.
     void setRepositionSupported(bool supported) { _repositionSupported = supported; }
 
     /// Sets a failure mode for unit testing

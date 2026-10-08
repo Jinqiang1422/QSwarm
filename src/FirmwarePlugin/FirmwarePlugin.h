@@ -240,6 +240,17 @@ public:
     /// Intended for controllers which require coupled horizontal and vertical setpoints.
     virtual bool guidedModeGotoLocationAndAltitude(Vehicle* vehicle, const QGeoCoordinate& gotoCoord) const;
 
+    /// Command vehicle to move to the specified location and altitude at the given ground speed.
+    /// The base implementation ignores the speed; firmwares supporting a DO_REPOSITION speed override it.
+    /// @param gotoCoord Target location; altitude is an absolute AMSL altitude and is required.
+    /// @param groundSpeed meters/second, <= 0 for the vehicle's default speed. PX4 caps this at
+    ///        MPC_XY_VEL_MAX (fixed-wing vehicles treat it as airspeed instead).
+    /// @warning On PX4 every call is a mode-change request (DO_REPOSITION with CHANGE_MODE): sending it
+    /// while the vehicle is inside a failsafe's delay window cancels that failsafe as a user takeover.
+    /// Callers must not send this to a vehicle that is in failsafe.
+    virtual bool guidedModeGotoLocationAtSpeed(Vehicle* vehicle, const QGeoCoordinate& gotoCoord,
+                                               double groundSpeed) const;
+
     /// Command vehicle to change altitude
     ///     @param altitudeChange If > 0, go up by amount specified, if < 0, go down by amount specified
     ///     @param pauseVehicle true: pause vehicle prior to altitude change

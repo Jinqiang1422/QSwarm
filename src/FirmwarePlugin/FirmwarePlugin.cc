@@ -172,6 +172,13 @@ bool FirmwarePlugin::guidedModeGotoLocationAndAltitude(Vehicle* vehicle, const Q
     return true;
 }
 
+bool FirmwarePlugin::guidedModeGotoLocationAtSpeed(Vehicle* vehicle, const QGeoCoordinate& gotoCoord,
+                                                   double groundSpeed) const
+{
+    Q_UNUSED(groundSpeed);
+    return guidedModeGotoLocationAndAltitude(vehicle, gotoCoord);
+}
+
 void FirmwarePlugin::guidedModeChangeAltitude(Vehicle*, double, bool pauseVehicle)
 {
     Q_UNUSED(pauseVehicle);

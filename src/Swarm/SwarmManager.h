@@ -245,9 +245,20 @@ public:
     Q_INVOKABLE bool startFormation(int leaderVehicleId);
     Q_INVOKABLE void stopFormation();
 
-    /// 地图「飞往位置」。编队运行中对僚机下发时移动整个编队：改由长机飞往该点，僚机保持队形跟随。
+    /// 地图「飞往位置」。编队运行中对任一编队成员下发时移动整个编队：全队同步航段，长机终点为该点。
     Q_INVOKABLE bool gotoLocation(Vehicle* vehicle, const QGeoCoordinate& coordinate,
                                   double forwardFlightLoiterRadius = 0.0);
+
+    /// 「编队按航线飞」确认文本：长机已上传航线的航点数、总长与预计时长；无法执行时返回原因。
+    /// 可执行时记下本次确认的长机与航线，供随后的 startFormationRoute() 核对。
+    Q_INVOKABLE QString formationRouteSummary();
+    /// 编队按长机已上传航线逐点飞行，每个航点全队对齐后再飞下一段。须先调用 formationRouteSummary()，
+    /// 且长机与航线自确认后未变化；每次调用后确认即失效。
+    Q_INVOKABLE bool startFormationRoute();
+
+    /// 是否存在待确认的「编队按航线飞」记录（最近一次 formationRouteSummary() 可执行且尚未被
+    /// startFormationRoute() 消费）。面板确认框据此决定是否提供「确认」按钮。
+    Q_INVOKABLE bool formationRouteConfirmable() const;
 
     /// 经控制租约闸门生成上传区域覆盖任务，或清空已有任务。
     Q_INVOKABLE bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
@@ -325,6 +336,10 @@ private:
     void _cancelSelectedTargets(const QString& reason);
     bool _automationAllowedAtDispatch(int vehicleId, bool requireActiveLease, const QString& commandName);
     bool _formationAutomationAllowed(int vehicleId);
+    struct RouteConfirmation;
+    /// 读取长机已上传航线中编队可执行的航点（AMSL 高度）；route 记下长机、航线指纹与换算所用的 Home 高度
+    bool _leaderRouteWaypoints(QList<QGeoCoordinate>& waypoints, bool& trailingRecovery, RouteConfirmation& route,
+                               QString& reason);
     QStringList _autonomousModes(Vehicle* vehicle) const;
 
     void _loadSettings();
@@ -353,6 +368,16 @@ private:
     QSet<int> _formationTargetIds;
     bool _formationAutomated = false;
     bool _shutdownComplete = false;
+
+    /// 操作员在确认框中看到的「编队按航线飞」：长机、航线指纹与相对高度换算所用的长机 Home 高度
+    struct RouteConfirmation
+    {
+        int leaderId = 0;
+        QString fingerprint;
+        double homeAltitude = 0;
+    };
+
+    std::optional<RouteConfirmation> _pendingRouteConfirmation;
     FormationController* _formation = nullptr;
     SwarmMissionPlanner* _missionPlanner = nullptr;
     SwarmAIAgent* _aiAgent = nullptr;

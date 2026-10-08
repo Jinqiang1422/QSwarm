@@ -9,6 +9,10 @@ target_sources(
     ${CMAKE_PROJECT_NAME}
     PRIVATE FormationController.cc
             FormationController.h
+            FormationLegPlanner.cc
+            FormationLegPlanner.h
+            FormationLegTracker.cc
+            FormationLegTracker.h
             SwarmAction.h
             SwarmAIAgent.cc
             SwarmAIAgent.h

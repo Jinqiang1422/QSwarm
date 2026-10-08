@@ -19,10 +19,13 @@
 #include <QtNetwork/QTcpSocket>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
+#include <cmath>
 
 #include "Fact.h"
 #include "FirmwarePlugin.h"
 #include "FormationController.h"
+#include "MissionItem.h"
+#include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "ParameterManager.h"
 #include "QmlObjectListModel.h"
@@ -32,6 +35,7 @@
 #include "SwarmPerceptionBridge.h"
 #include "SwarmTaskController.h"
 #include "SwarmTaskLibrary.h"
+#include "SwarmTypes.h"
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
 
@@ -106,6 +110,7 @@ SwarmAcceptanceServer::SwarmAcceptanceServer(SwarmManager* manager)
                             {QStringLiteral("success"), success},
                             {QStringLiteral("reason"), reason}};
     });
+    connect(_manager, &SwarmManager::swarmCommandFeedback, this, [this](const QString& m) { _lastFeedback = m; });
 }
 
 bool SwarmAcceptanceServer::startFromEnvironment()
@@ -288,8 +293,76 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
         if (!vehicle) {
             return errorResponse(QStringLiteral("vehicle_not_found"));
         }
+        // Not every gotoLocation() path emits swarmCommandFeedback (e.g. the native fallback); clear the last
+        // message first so the response does not report a stale feedback from an earlier command.
+        _lastFeedback.clear();
         const bool accepted = _manager->gotoLocation(vehicle, requestCoordinate(request));
-        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
+        return {{QStringLiteral("ok"), accepted},
+                {QStringLiteral("message"), _lastFeedback},
+                {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("formation_route")) {
+        // Same entry point as the swarm panel "编队按航线飞" button: confirmation summary, then start.
+        const QString summary = _manager->formationRouteSummary();
+        _lastFeedback.clear();
+        const bool accepted = _manager->startFormationRoute();
+        return {{QStringLiteral("ok"), accepted},
+                {QStringLiteral("summary"), summary},
+                {QStringLiteral("message"), _lastFeedback},
+                {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("upload_route")) {
+        // SITL preparation for the formation route scenario: writes a waypoint-only route.
+        Vehicle* vehicle =
+            MultiVehicleManager::instance()->getVehicleById(request.value(QStringLiteral("vehicle_id")).toInt());
+        if (!vehicle) {
+            return errorResponse(QStringLiteral("vehicle_not_found"));
+        }
+        MissionManager* mission = vehicle->missionManager();
+        if (!mission || !vehicle->homePosition().isValid()) {
+            return errorResponse(QStringLiteral("vehicle_not_ready"));
+        }
+        if (mission->inProgress()) {
+            return errorResponse(QStringLiteral("mission_busy"));
+        }
+        const QJsonArray waypoints = request.value(QStringLiteral("waypoints")).toArray();
+        if (waypoints.isEmpty()) {
+            return errorResponse(QStringLiteral("empty_route"));
+        }
+        // Validate every entry before allocating any MissionItem, so a bad request never leaks mission items.
+        for (qsizetype i = 0; i < waypoints.size(); ++i) {
+            const QJsonValue entry = waypoints.at(i);
+            const QJsonObject point = entry.toObject();
+            const double lat = point.value(QStringLiteral("lat")).toDouble(qQNaN());
+            const double lon = point.value(QStringLiteral("lon")).toDouble(qQNaN());
+            const double altRel = point.value(QStringLiteral("alt_rel_m")).toDouble(qQNaN());
+            if (!entry.isObject() || !SwarmTypes::isValidLatLon(lat, lon) || !std::isfinite(altRel) || altRel <= 0) {
+                return errorResponse(QStringLiteral("invalid_waypoint_%1").arg(i));
+            }
+        }
+        const QGeoCoordinate home = vehicle->homePosition();
+        // Index 0 is the Home placeholder; PlanManager strips it for firmwares that keep Home on board.
+        QList<MissionItem*> items{new MissionItem(0, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL, 0, 0, 0, 0,
+                                                  home.latitude(), home.longitude(), home.altitude(), true, false)};
+        for (const QJsonValue& value : waypoints) {
+            const QJsonObject point = value.toObject();
+            items.append(new MissionItem(items.size(), MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT, 0, 0, 0,
+                                         NAN, point.value(QStringLiteral("lat")).toDouble(),
+                                         point.value(QStringLiteral("lon")).toDouble(),
+                                         point.value(QStringLiteral("alt_rel_m")).toDouble(), true, false));
+        }
+        // Tracked per vehicle rather than reported synchronously: writeMissionItems() only confirms the upload
+        // later, via sendComplete(). Scripts poll status().route_uploads for the outcome.
+        const int vehicleId = vehicle->id();
+        _routeUploads[vehicleId] = QStringLiteral("pending");
+        connect(
+            mission, &MissionManager::sendComplete, this,
+            [this, vehicleId](bool error) {
+                _routeUploads[vehicleId] = error ? QStringLiteral("failed") : QStringLiteral("ok");
+            },
+            Qt::SingleShotConnection);
+        mission->writeMissionItems(items);
+        return {{QStringLiteral("ok"), true}};
     }
     if (command == QStringLiteral("start_mission")) {
         _manager->startMissionAll();
@@ -492,6 +565,7 @@ QJsonObject SwarmAcceptanceServer::_status() const
             {QStringLiteral("alt_rel_m"), facts ? facts->altitudeRelative()->rawValue().toDouble() : 0.0},
             {QStringLiteral("alt_amsl_m"), facts ? facts->altitudeAMSL()->rawValue().toDouble() : 0.0},
             {QStringLiteral("heading_deg"), facts ? facts->heading()->rawValue().toDouble() : 0.0},
+            {QStringLiteral("ground_speed_mps"), facts ? facts->groundSpeed()->rawValue().toDouble() : 0.0},
             {QStringLiteral("lease_state"), _manager->controlLeaseState(vehicle->id())},
             {QStringLiteral("automation_allowed"), _manager->automationAllowed(vehicle->id())},
         });
@@ -506,6 +580,13 @@ QJsonObject SwarmAcceptanceServer::_status() const
     }
 
     FormationController* formation = _manager->formation();
+    QJsonObject formationSlots;
+    const QHash<int, int> slotAssignment = formation->slotAssignment();
+    for (auto it = slotAssignment.cbegin(); it != slotAssignment.cend(); ++it)
+        formationSlots.insert(QString::number(it.key()), it.value());
+    QJsonObject routeUploads;
+    for (auto it = _routeUploads.cbegin(); it != _routeUploads.cend(); ++it)
+        routeUploads.insert(QString::number(it.key()), it.value());
     SwarmTaskController* taskController = _manager->taskController();
     SwarmPerceptionBridge* perception = _manager->perception();
     const int windowCount = QGuiApplication::topLevelWindows().count();
@@ -518,6 +599,7 @@ QJsonObject SwarmAcceptanceServer::_status() const
                      {QStringLiteral("situation_layer_count"), rendered.value(QStringLiteral("situation_layers"))}}},
         {QStringLiteral("vehicle_count"), vehiclesJson.count()},
         {QStringLiteral("dispatch_counts"), _dispatchCounts},
+        {QStringLiteral("route_uploads"), routeUploads},
         {QStringLiteral("execution"), _executionResult},
         {QStringLiteral("execution_states"), QJsonObject::fromVariantMap(_manager->executionStates())},
         {QStringLiteral("execution_message"), _manager->executionMessage()},
@@ -529,7 +611,10 @@ QJsonObject SwarmAcceptanceServer::_status() const
                      {QStringLiteral("follower_count"), formation->followerCount()},
                      {QStringLiteral("type"), formation->formationType()},
                      {QStringLiteral("spacing_m"), formation->spacingMeters()},
-                     {QStringLiteral("vertical_step_m"), formation->verticalStepMeters()}}},
+                     {QStringLiteral("vertical_step_m"), formation->verticalStepMeters()},
+                     {QStringLiteral("heading_deg"), formation->formationHeading()},
+                     {QStringLiteral("slots"), formationSlots},
+                     {QStringLiteral("transit"), QJsonObject::fromVariantMap(formation->transitStatus())}}},
         {QStringLiteral("mission"),
          QJsonObject{
              {QStringLiteral("vehicle_count"), _manager->missionPlanner()->lastPlanVehicleCount()},

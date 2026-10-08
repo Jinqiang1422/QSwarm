@@ -43,6 +43,8 @@ public:
                       std::function<void(bool)> finished) const override;
     void changeAltitudeAsync(Vehicle* vehicle, double altitudeRelative, QObject* context, std::function<bool()> allowed,
                              std::function<void(bool)> finished) const override;
+    bool guidedModeGotoLocationAtSpeed(Vehicle* vehicle, const QGeoCoordinate& gotoCoord,
+                                       double groundSpeed) const override;
     double maximumHorizontalSpeedMultirotorMetersSecond(Vehicle* vehicle) const override;
     double maximumEquivalentAirspeed(Vehicle* vehicle) const override;
     double minimumEquivalentAirspeed(Vehicle* vehicle) const override;

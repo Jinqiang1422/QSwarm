@@ -166,7 +166,7 @@
     "type": "function",
     "function": {
       "name": "stop_formation",
-      "description": "停止编队，僚机原地悬停",
+      "description": "停止编队：不再下发新指令，各机继续飞向最后一次受令目标；需原地悬停请再调用 pause（暂停）",
       "parameters": {
         "type": "object",
         "properties": {}

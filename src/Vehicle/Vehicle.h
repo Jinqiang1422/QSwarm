@@ -508,6 +508,8 @@ public:
     bool            vtolInFwdFlight             () const { return _vtolInFwdFlight; }
     uint8_t         baseMode                    () const { return _base_mode; }
     uint32_t        customMode                  () const { return _custom_mode; }
+    /// system_status (MAV_STATE) from the most recent HEARTBEAT
+    uint8_t         systemStatus                () const { return _systemStatus; }
     /// Custom mode used for health/arming-check mode-group lookups: prefers the
     /// user-intention mode reported via CURRENT_MODE, falling back to HEARTBEAT.
     uint32_t        effectiveCustomMode         () const { return _has_custom_mode_user_intention ? _custom_mode_user_intention : _custom_mode; }
@@ -979,6 +981,7 @@ private:
     bool    _armed = false;         ///< true: vehicle is armed
     uint8_t _base_mode = 0;     ///< base_mode from HEARTBEAT
     uint32_t _custom_mode = 0;  ///< custom_mode from HEARTBEAT
+    uint8_t _systemStatus = MAV_STATE_UNINIT;  ///< system_status (MAV_STATE) from the most recent HEARTBEAT
     uint32_t _custom_mode_user_intention = 0;  ///< custom_mode_user_intention from CURRENT_MODE
     bool _has_custom_mode_user_intention = false;
     QString _lastAnnouncedFlightMode;

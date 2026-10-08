@@ -182,16 +182,19 @@ def formation_geometry_metrics(status: dict) -> dict:
     if not leader or not formation.get("active"):
         return {"pass": False, "error": "formation is not active or leader is missing"}
 
+    slots = {int(vehicle_id): int(slot) for vehicle_id, slot in formation.get("slots", {}).items()}
+    heading = float(formation.get("heading_deg", leader.get("heading_deg", 0.0)))
     followers = [vehicles[vehicle_id] for vehicle_id in sorted(vehicles) if vehicle_id != leader_id]
     horizontal_errors = {}
     vertical_errors = {}
-    for index, follower in enumerate(followers, start=1):
+    for position, follower in enumerate(followers, start=1):
+        index = slots.get(int(follower["id"]), position)
         rank = (index + 1) // 2
         side = -1 if index % 2 == 1 else 1
         expected_lat, expected_lon = destination(
             float(leader["lat"]),
             float(leader["lon"]),
-            float(leader["heading_deg"]) + 180.0 + side * 30.0,
+            heading + 180.0 + side * 30.0,
             spacing * rank,
         )
         horizontal_errors[int(follower["id"])] = round(
@@ -214,6 +217,168 @@ def formation_geometry_metrics(status: dict) -> dict:
         "vertical_error_m": vertical_errors,
         "max_horizontal_error_m": max(horizontal_errors.values(), default=None),
         "max_vertical_error_m": max(vertical_errors.values(), default=None),
+    }
+
+
+def _local_offset(
+    origin_lat: float, origin_lon: float, lat: float, lon: float
+) -> tuple[float, float]:
+    """East/north metres of (lat, lon) relative to the origin (equirectangular, fine for a few km)."""
+    radius = 6371000.0
+    north = math.radians(lat - origin_lat) * radius
+    east = math.radians(lon - origin_lon) * radius * math.cos(math.radians(origin_lat))
+    return east, north
+
+
+def _is_numeric_position(vehicle: dict) -> bool:
+    return all(isinstance(vehicle.get(key), (int, float)) for key in ("lat", "lon", "alt_amsl_m"))
+
+
+def formation_sync_metrics(
+    members: list[dict],
+    samples: list[tuple[float, list[dict]]],
+    tail: list[tuple[float, list[dict]]] = (),
+    member_ids: set[int] | None = None,
+    min_separation_target_m: float = 3.0,
+) -> dict:
+    """Synchronization metrics for one formation leg (2026-10-05 synchronized-legs design, section 4).
+
+    ``members`` are the transit members reported when the leg started (id, speed_mps, start_*/end_*).
+    ``samples`` are (time_s, vehicles) observations while the leg was active; ``tail`` are observations
+    shortly after it ended, used only to catch the last arrivals. Tail samples are excluded from the
+    deviation and separation checks (which only run while the leg is active) — they exist solely to catch
+    arrivals that land just after the leg reports as finished. Zero-speed (holding) members are excluded
+    from timing and deviation. ``member_ids`` (leader + followers, from the status at leg start) restricts
+    the pairwise separation/closest-approach check to actual formation members; a vehicle with a
+    non-numeric lat/lon/alt is skipped everywhere it appears.
+    """
+    moving = [member for member in members if float(member.get("speed_mps", 0.0)) > 0.0]
+    moving_ids = {int(member["id"]) for member in moving}
+    paths = {}
+    for member in moving:
+        member_id = int(member["id"])
+        start_lat, start_lon = float(member["start_lat"]), float(member["start_lon"])
+        path = _local_offset(
+            start_lat, start_lon, float(member["end_lat"]), float(member["end_lon"])
+        )
+        length = math.hypot(*path)
+        unit = (path[0] / length, path[1] / length) if length > 1e-6 else (0.0, 0.0)
+        paths[member_id] = {
+            "start_lat": start_lat,
+            "start_lon": start_lon,
+            "end_lat": float(member["end_lat"]),
+            "end_lon": float(member["end_lon"]),
+            "end_alt_m": float(member["end_alt_m"]),
+            "path": path,
+            "length_sq": path[0] ** 2 + path[1] ** 2,
+            "unit": unit,
+        }
+
+    started: dict[int, float] = {}
+    arrived: dict[int, float] = {}
+    origins: dict[int, tuple[float, float]] = {}
+    max_deviation = 0.0
+    pair_initial: dict[tuple[int, int], float] = {}
+    pair_min: dict[tuple[int, int], float] = {}
+
+    for index, (time_s, vehicles) in enumerate(list(samples) + list(tail)):
+        in_leg = index < len(samples)
+        by_id = {int(vehicle["id"]): vehicle for vehicle in vehicles}
+        geometry = []
+        for member_id, plan in paths.items():
+            vehicle = by_id.get(member_id)
+            if vehicle is None or not _is_numeric_position(vehicle):
+                continue
+            actual = _local_offset(
+                plan["start_lat"], plan["start_lon"], float(vehicle["lat"]), float(vehicle["lon"])
+            )
+            length_sq = plan["length_sq"]
+            if length_sq <= 1e-9:
+                progress = 1.0
+            else:
+                progress = min(
+                    1.0,
+                    max(
+                        0.0, (actual[0] * plan["path"][0] + actual[1] * plan["path"][1]) / length_sq
+                    ),
+                )
+            if in_leg:
+                # The origin is the first *observed* in-leg position (not the nominal start_lat/lon),
+                # so a sample that arrives slightly into the leg does not look like a false start.
+                origin = origins.setdefault(member_id, actual)
+                along = (actual[0] - origin[0]) * plan["unit"][0] + (actual[1] - origin[1]) * plan[
+                    "unit"
+                ][1]
+                if along >= 1.0:
+                    started.setdefault(member_id, time_s)
+                geometry.append((plan["path"], actual, progress))
+            horizontal = distance_m(
+                float(vehicle["lat"]), float(vehicle["lon"]), plan["end_lat"], plan["end_lon"]
+            )
+            close_enough = (
+                horizontal <= 1.0 and abs(float(vehicle["alt_amsl_m"]) - plan["end_alt_m"]) <= 1.0
+            )
+            # A member that happens to start near its own target must not count as "arrived" before it
+            # has actually moved; tail samples (after the leg ends) rely on progress instead of "started".
+            if close_enough and (member_id in started or progress > 0.5):
+                arrived.setdefault(member_id, time_s)
+        if not in_leg:
+            continue
+        if geometry:
+            consensus = sum(progress for _, _, progress in geometry) / len(geometry)
+            for path, actual, _ in geometry:
+                max_deviation = max(
+                    max_deviation,
+                    math.hypot(actual[0] - consensus * path[0], actual[1] - consensus * path[1]),
+                )
+        separation_vehicles = [
+            vehicle
+            for vehicle in vehicles
+            if (member_ids is None or int(vehicle["id"]) in member_ids)
+            and _is_numeric_position(vehicle)
+        ]
+        for i, first in enumerate(separation_vehicles):
+            for second in separation_vehicles[i + 1 :]:
+                first_id, second_id = int(first["id"]), int(second["id"])
+                pair = (first_id, second_id) if first_id < second_id else (second_id, first_id)
+                horizontal = distance_m(
+                    float(first["lat"]),
+                    float(first["lon"]),
+                    float(second["lat"]),
+                    float(second["lon"]),
+                )
+                vertical = float(first["alt_amsl_m"]) - float(second["alt_amsl_m"])
+                separation = math.hypot(horizontal, vertical)
+                pair_initial.setdefault(pair, separation)
+                pair_min[pair] = min(pair_min.get(pair, separation), separation)
+
+    def spread(times: dict[int, float]):
+        if not moving or len(times) < len(moving):
+            return None
+        return round(max(times.values()) - min(times.values()), 2)
+
+    violations = []
+    for pair in sorted(pair_min):
+        minimum = pair_min[pair]
+        threshold = min(min_separation_target_m, pair_initial[pair]) - 0.5
+        if minimum < threshold:
+            violations.append(
+                {
+                    "pair": list(pair),
+                    "min_separation_m": round(minimum, 2),
+                    "initial_separation_m": round(pair_initial[pair], 2),
+                }
+            )
+
+    return {
+        "moving_members": len(moving),
+        "start_spread_s": spread(started),
+        "missing_start": sorted(moving_ids - started.keys()),
+        "arrival_spread_s": spread(arrived),
+        "missing_arrival": sorted(moving_ids - arrived.keys()),
+        "max_deviation_m": round(max_deviation, 2),
+        "min_separation_m": None if not pair_min else round(min(pair_min.values()), 2),
+        "closest_approach_violations": violations,
     }
 
 

@@ -17,12 +17,15 @@
 
 #include "Fact.h"
 #include "FactGroup.h"
+#include "FactMetaData.h"
 #include "FirmwarePlugin.h"
+#include "FlyViewSettings.h"
 #include "FormationController.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
 #include "QGCApplication.h"
 #include "QmlObjectListModel.h"
+#include "SettingsManager.h"
 #include "SwarmAIAgent.h"
 #include "SwarmAuditLogger.h"
 #include "SwarmCOPModel.h"
@@ -39,6 +42,7 @@
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
 #include "VehicleLinkManager.h"
+#include "VehicleSupports.h"
 
 #ifdef QGC_UNITTEST_BUILD
 #include "SwarmAcceptanceServer.h"
@@ -224,6 +228,45 @@ SwarmManager::SwarmManager(QObject* parent)
         }
         return true;
     });
+    _formation->setTransitConstraintsCallback([this] {
+        // 每次规划只取一次约束快照：最小间距与全部路径检查基于同一份配置
+        const SwarmConstraintChecker::Config config = _constraintConfig();
+        FormationController::TransitConstraints constraints;
+        constraints.minSeparation = config.minSeparationM;
+        constraints.pathCheck = [config](int id, const QGeoCoordinate& from, const QGeoCoordinate& to) -> QString {
+            if (!config.error.isEmpty())
+                return tr("约束配置无效：%1").arg(config.error);
+            Vehicle* vehicle = MultiVehicleManager::instance()->getVehicleById(id);
+            if (!vehicle)
+                return tr("找不到该机");
+            if (!std::isfinite(from.altitude()) || !std::isfinite(to.altitude()))
+                return tr("高度无效");
+            // 高度上下限对每架机按各自 Home 生效（与航线核验 validate() 一致）；只看终点，
+            // 当前已越限的成员仍可飞回限内
+            const QGeoCoordinate home = vehicle->homePosition();
+            if (!home.isValid() || !std::isfinite(home.altitude()))
+                return tr("Home 未知，无法校验高度");
+            if (to.altitude() < home.altitude() - 0.5)
+                return tr("低于 Home");
+            if (config.maxAltitudeM > 0 && to.altitude() - home.altitude() > config.maxAltitudeM)
+                return tr("超出高度上限");
+            if (!SwarmConstraintChecker::segmentAllowed({from.latitude(), from.longitude()},
+                                                        {to.latitude(), to.longitude()}, config))
+                return tr("越出电子围栏");
+            return QString();
+        };
+        return constraints;
+    });
+    // 队列连接：反馈处理不得在 FormationController 状态更新途中重入它（例如在 stop() 内再下发 goto）。
+    (void) connect(
+        _formation, &FormationController::transitFinished, this,
+        [this](bool success, const QString& reason, const QString& kind) {
+            // 自动变队形的结果已体现在编队状态文本中，不再弹出提示
+            if (_shutdownComplete || kind == QStringLiteral("reshape"))
+                return;
+            emit swarmCommandFeedback(success ? tr("编队已到位") : tr("编队航段结束：%1").arg(reason));
+        },
+        Qt::QueuedConnection);
     _missionPlanner->setVehicleAutomationAllowedCallback([this](int vehicleId) {
         return !_automationExcludedIds.contains(vehicleId) &&
                (!_dispatchTargetIds || _dispatchTargetIds->contains(vehicleId)) &&
@@ -1133,24 +1176,151 @@ bool SwarmManager::gotoLocation(Vehicle* vehicle, const QGeoCoordinate& coordina
     if (!vehicle) {
         return false;
     }
-    const int leaderId = _formation->leaderVehicleId();
-    if (!_formation->active() || vehicle->id() == leaderId || !_formationTargetIds.contains(vehicle->id())) {
+    // 编队未在引导该机（编队未运行、该机不在队，或失效保护返航中、在地面、无自动控制许可的僚机）时按原生飞往
+    if (!_formation->guides(vehicle->id())) {
         return vehicle->guidedModeGotoLocation(coordinate, forwardFlightLoiterRadius);
     }
-    // 僚机的位置由编队每个周期重新指令，单独飞往会被立即覆盖。编队运行中「飞往位置」
-    // 移动的是整个编队：改由长机飞往该点，僚机槽位随长机移动。
-    Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(leaderId);
-    if (!leader || !leader->guidedModeGotoLocation(coordinate, forwardFlightLoiterRadius)) {
+    // 编队运行中「飞往位置」移动整个编队：全队（含长机）同步航段，长机终点为目标点。
+    // 编队航段不使用 forwardFlightLoiterRadius：编队成员为多旋翼，PX4 也忽略该参数。
+    const QString blocked = _formation->transitBlockedReason();
+    if (!blocked.isEmpty()) {
+        emit swarmCommandFeedback(tr("编队飞往目标点被拒绝：%1；如需单机飞往请先停止编队").arg(blocked));
         return false;
     }
-    SwarmAuditLogger::instance()->log(QStringLiteral("formation"), QStringLiteral("operator_goto_via_leader"),
+    // 与原生飞往（Vehicle::guidedModeGotoLocation）相同的限制，以长机为准：支持引导模式，且目标点距长机
+    // 不超过「飞往位置」最大距离
+    Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(_formation->leaderVehicleId());
+    VehicleSupports* leaderSupports = leader ? leader->supports() : nullptr;
+    if (!leaderSupports || !leaderSupports->guidedMode()) {
+        emit swarmCommandFeedback(
+            tr("编队飞往目标点被拒绝：%1").arg(tr("长机 %1 不支持引导模式").arg(_formation->leaderVehicleId())));
+        return false;
+    }
+    const double maxDistance =
+        SettingsManager::instance()->flyViewSettings()->maxGoToLocationDistance()->rawValue().toDouble();
+    if (leader->coordinate().distanceTo(coordinate) > maxDistance) {
+        emit swarmCommandFeedback(
+            tr("编队飞往目标点被拒绝：%1")
+                .arg(tr("目标点过远：须小于 %1 %2")
+                         .arg(qRound(FactMetaData::metersToAppSettingsHorizontalDistanceUnits(maxDistance).toDouble()))
+                         .arg(FactMetaData::appSettingsHorizontalDistanceUnitsString())));
+        return false;
+    }
+    QString reason;
+    if (!_formation->gotoFormation(coordinate, &reason)) {
+        emit swarmCommandFeedback(tr("编队飞往目标点被拒绝：%1").arg(reason));
+        return false;
+    }
+    SwarmAuditLogger::instance()->log(QStringLiteral("formation"), QStringLiteral("operator_goto_formation_leg"),
                                       {{QStringLiteral("vehicle_id"), vehicle->id()},
-                                       {QStringLiteral("leader_id"), leaderId},
+                                       {QStringLiteral("leader_id"), _formation->leaderVehicleId()},
                                        {QStringLiteral("lat"), coordinate.latitude()},
                                        {QStringLiteral("lon"), coordinate.longitude()}});
     emit swarmCommandFeedback(
-        tr("%1 号机在编队中：改由长机 %2 飞往目标点，编队随长机移动").arg(vehicle->id()).arg(leaderId));
+        tr("编队整体飞往目标点：%1 架同步，预计 %2 秒")
+            .arg(_formation->transitStatus().value(QStringLiteral("members")).toList().size())
+            .arg(qRound(_formation->transitStatus().value(QStringLiteral("total_duration_s")).toDouble())));
     return true;
+}
+
+bool SwarmManager::_leaderRouteWaypoints(QList<QGeoCoordinate>& waypoints, bool& trailingRecovery,
+                                         RouteConfirmation& route, QString& reason)
+{
+    Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(_formation->leaderVehicleId());
+    if (!_formation->active() || !leader) {
+        reason = tr("编队未运行");
+        return false;
+    }
+    const QGeoCoordinate home = leader->homePosition();
+    if (!home.isValid() || !std::isfinite(home.altitude())) {
+        reason = tr("长机 Home 无效，无法换算航点高度");
+        return false;
+    }
+    MissionManager* mission = leader->missionManager();
+    if (!mission || mission->inProgress()) {
+        reason = tr("长机航线正在读写，请稍后再试");
+        return false;
+    }
+    const auto snapshot =
+        SwarmMissionSnapshot::capture(mission->missionItems(), leader->firmwarePlugin()->sendHomePositionToVehicle());
+    if (snapshot.empty()) {
+        reason = tr("长机 %1 没有已上传的航线").arg(leader->id());
+        return false;
+    }
+    route = {leader->id(), snapshot.fingerprint(), home.altitude()};
+    waypoints = snapshot.formationWaypoints(home.altitude(), trailingRecovery, reason);
+    return !waypoints.isEmpty();
+}
+
+QString SwarmManager::formationRouteSummary()
+{
+    _pendingRouteConfirmation.reset();
+    QList<QGeoCoordinate> waypoints;
+    bool trailingRecovery = false;
+    RouteConfirmation route;
+    QString reason;
+    if (!_leaderRouteWaypoints(waypoints, trailingRecovery, route, reason))
+        return tr("无法按航线飞行：%1").arg(reason);
+    const FormationLegPlanner::Plan plan = _formation->planRoute(waypoints);
+    if (!plan.ok())
+        return tr("无法按航线飞行：%1").arg(plan.error);
+    _pendingRouteConfirmation = route;
+    Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(_formation->leaderVehicleId());
+    double length = 0;
+    QGeoCoordinate previous = leader ? leader->coordinate() : waypoints.first();
+    for (const QGeoCoordinate& waypoint : std::as_const(waypoints)) {
+        length += previous.distanceTo(waypoint);
+        previous = waypoint;
+    }
+    const int seconds = qRound(plan.durationSec());
+    QString text = tr("长机 %1 的航线：%2 个航点，总长 %3 米，预计 %4 分 %5 秒")
+                       .arg(_formation->leaderVehicleId())
+                       .arg(waypoints.size())
+                       .arg(qRound(length))
+                       .arg(seconds / 60)
+                       .arg(seconds % 60);
+    if (trailingRecovery)
+        text += tr("。末尾降落/返航需另行操作");
+    return text;
+}
+
+bool SwarmManager::startFormationRoute()
+{
+    // 确认只用一次：无论本次是否执行，再次执行都须重新确认
+    const std::optional<RouteConfirmation> confirmation = _pendingRouteConfirmation;
+    _pendingRouteConfirmation.reset();
+    QList<QGeoCoordinate> waypoints;
+    bool trailingRecovery = false;
+    RouteConfirmation route;
+    QString reason;
+    // 先读航线：不支持的航线项、Home 无效等原因优先于「需（重新）确认」报告
+    bool accepted = _leaderRouteWaypoints(waypoints, trailingRecovery, route, reason);
+    // 相对高度航点按长机 Home 换算，Home 高度变化同样改变航线
+    if (accepted && !confirmation) {
+        reason = tr("请先查看并确认航线");
+        accepted = false;
+    } else if (accepted &&
+               (confirmation->leaderId != route.leaderId || confirmation->fingerprint != route.fingerprint ||
+                !(std::abs(confirmation->homeAltitude - route.homeAltitude) <= 0.5))) {
+        reason = tr("长机或航线已变化，请重新确认");
+        accepted = false;
+    }
+    if (!accepted || !_formation->startRoute(waypoints, &reason)) {
+        emit swarmCommandFeedback(tr("编队按航线飞被拒绝：%1").arg(reason));
+        return false;
+    }
+    SwarmAuditLogger::instance()->log(QStringLiteral("formation"), QStringLiteral("operator_formation_route"),
+                                      {{QStringLiteral("leader_id"), _formation->leaderVehicleId()},
+                                       {QStringLiteral("waypoint_count"), waypoints.size()},
+                                       {QStringLiteral("fingerprint"), route.fingerprint}});
+    emit swarmCommandFeedback(
+        tr("编队按航线飞：%1 个航点，共 %2 段").arg(waypoints.size()).arg(_formation->transitLegCount()));
+    return true;
+}
+
+bool SwarmManager::formationRouteConfirmable() const
+{
+    return _pendingRouteConfirmation.has_value();
 }
 
 bool SwarmManager::planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,

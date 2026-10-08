@@ -45,4 +45,11 @@ private:
     QHash<QTcpSocket*, QByteArray> _buffers;
     QJsonObject _dispatchCounts;
     QJsonObject _executionResult;
+    /// Most recent SwarmManager::swarmCommandFeedback message, queued ones included. goto/formation_route
+    /// responses only ever observe the synchronously emitted ones: a queued transitFinished() message cannot
+    /// land before the response that reads this field is already built and sent.
+    QString _lastFeedback;
+    /// Per-vehicle outcome of the most recent "upload_route" write ("pending"/"ok"/"failed"), surfaced in
+    /// _status() so the SITL script can poll for completion instead of trusting the synchronous "ok" reply.
+    QHash<int, QString> _routeUploads;
 };

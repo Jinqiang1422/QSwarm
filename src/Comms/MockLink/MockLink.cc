@@ -1760,6 +1760,11 @@ void MockLink::_handleCommandLong(const mavlink_message_t& msg)
                 if (std::isfinite(request.param7)) {
                     _vehicleAltitudeAMSL = request.param7;
                 }
+                // Like PX4, a reposition allowed to change mode puts the vehicle in Hold (AUTO_LOITER).
+                if ((_firmwareType == MAV_AUTOPILOT_PX4) &&
+                    (static_cast<int>(request.param2) & MAV_DO_REPOSITION_FLAGS_CHANGE_MODE)) {
+                    _mavCustomMode = PX4CustomMode::AUTO_LOITER;
+                }
                 commandResult = MAV_RESULT_ACCEPTED;
             }
             break;
@@ -1827,11 +1832,22 @@ void MockLink::_handleCommandInt(const mavlink_message_t& msg)
     mavlink_command_int_t request{};
     mavlink_msg_command_int_decode(&msg, &request);
 
-    // MockLink does not implement any COMMAND_INT commands yet, so it reports them as
-    // unsupported (mirroring the COMMAND_LONG default for unrecognized commands). This
-    // lets unit tests exercise "try command, fall back to legacy message" code paths
-    // such as Vehicle::setEstimatorOrigin.
-    const uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
+    // Only DO_REPOSITION is implemented, and only when enabled; everything else is reported as
+    // unsupported (mirroring the COMMAND_LONG default for unrecognized commands). This lets unit
+    // tests exercise "try command, fall back to legacy message" code paths such as
+    // Vehicle::setEstimatorOrigin.
+    uint8_t commandResult = MAV_RESULT_UNSUPPORTED;
+    if (request.command == MAV_CMD_DO_REPOSITION && _repositionSupported) {
+        if (std::isfinite(request.z)) {
+            _vehicleAltitudeAMSL = request.z;
+        }
+        // Like PX4, a reposition allowed to change mode puts the vehicle in Hold (AUTO_LOITER).
+        if ((_firmwareType == MAV_AUTOPILOT_PX4) &&
+            (static_cast<int>(request.param2) & MAV_DO_REPOSITION_FLAGS_CHANGE_MODE)) {
+            _mavCustomMode = PX4CustomMode::AUTO_LOITER;
+        }
+        commandResult = MAV_RESULT_ACCEPTED;
+    }
 
     mavlink_message_t commandAck{};
     (void) mavlink_msg_command_ack_pack_chan(_vehicleSystemId, _vehicleComponentId, _outgoingMavlinkChannel,

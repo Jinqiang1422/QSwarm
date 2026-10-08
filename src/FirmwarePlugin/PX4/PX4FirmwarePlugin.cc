@@ -421,6 +421,23 @@ bool PX4FirmwarePlugin::guidedModeGotoLocation(Vehicle* vehicle, const QGeoCoord
     return true;
 }
 
+bool PX4FirmwarePlugin::guidedModeGotoLocationAtSpeed(Vehicle* vehicle, const QGeoCoordinate& gotoCoord,
+                                                      double groundSpeed) const
+{
+    if (!vehicle || !gotoCoord.isValid() || !std::isfinite(gotoCoord.altitude())) {
+        QGC::showAppMessage(tr("Unable to go to location, target position or altitude not known."));
+        return false;
+    }
+    // param1 is the ground speed (-1: default). Yaw (param4) stays NaN: PX4 v1.15 reads it as radians,
+    // unlike the MAVLink definition in degrees, so heading is left to the vehicle's yaw mode.
+    vehicle->sendMavCommandInt(vehicle->defaultComponentId(), MAV_CMD_DO_REPOSITION, MAV_FRAME_GLOBAL,
+                               true,  // show error if command fails
+                               groundSpeed > 0 ? static_cast<float>(groundSpeed) : -1.0f,
+                               MAV_DO_REPOSITION_FLAGS_CHANGE_MODE, 0.0f, NAN, gotoCoord.latitude(),
+                               gotoCoord.longitude(), static_cast<float>(gotoCoord.altitude()));
+    return true;
+}
+
 typedef struct
 {
     PX4FirmwarePlugin* plugin;

@@ -1,11 +1,9 @@
 #include "SwarmRegressionTest.h"
 
-#include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QScopeGuard>
-#include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtNetwork/QUdpSocket>
 #include <QtQml/QQmlComponent>
@@ -58,8 +56,6 @@ void SwarmRegressionTest::px4FlightModesRetainMeaningAcrossProtocolVersions()
     QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_MISSION), "Mission");
     QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, externalMode), "Renamed external survey");
 }
-
-SwarmRegressionTest::~SwarmRegressionTest() = default;
 
 void SwarmRegressionTest::activeFormationEditsUpdateTargets()
 {
@@ -115,13 +111,19 @@ void SwarmRegressionTest::activeFormationEditsUpdateTargets()
             QCOMPARE(target.altitude(), follower->altitudeAMSL()->rawValue().toDouble());
         }
     };
+    // MockLink varies yaw in its telemetry; use a fixed reference for convergence assertions. A leader
+    // moving faster than 1 m/s skips the synchronized reshape leg, so this test covers station keeping.
+    const auto driveLeader = [&] {
+        vehicle()->heading()->setRawValue(formationHeading);
+        setLeaderGroundSpeed(vehicle(), 2.0);
+    };
     const auto tick = [&](qint64 milliseconds = 1000) {
         now += milliseconds;
-        // MockLink varies yaw in its telemetry; use a fixed reference for convergence assertions.
-        vehicle()->heading()->setRawValue(formationHeading);
+        driveLeader();
         QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
         waitCommands();
     };
+    driveLeader();
     QVERIFY(formation.start(vehicle()->id()));
     verifyMeasuredTargets();
     const QList<FormationController::FormationType> shapes{
@@ -208,6 +210,7 @@ void SwarmRegressionTest::activeFormationEditsUpdateTargets()
     const double movedAltitude = movedFollower->altitudeAMSL()->rawValue().toDouble();
     formation.setFormationType(FormationController::FormationLine);
     now += 1000;
+    driveLeader();
     QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
     QVERIFY(targets.value(movedFollower->id()).distanceTo(moved) < 0.1);
     QCOMPARE(targets.value(movedFollower->id()).altitude(), movedAltitude);
@@ -216,6 +219,7 @@ void SwarmRegressionTest::activeFormationEditsUpdateTargets()
     targets.clear();
     tick();
     QVERIFY(targets.isEmpty());
+    driveLeader();
     QVERIFY(formation.start(vehicle()->id()));
     verifyMeasuredTargets();
 }
@@ -276,6 +280,8 @@ void SwarmRegressionTest::formationSkipsFollowerAwaitingRepositionAck()
         ++commandedCycles;
         return true;
     });
+    // A moving leader skips the synchronized reshape leg; this test covers station keeping.
+    setLeaderGroundSpeed(vehicle(), 2.0);
     // start() runs one cycle immediately. Its reposition ACK is not processed until the event loop runs.
     QVERIFY(formation.start(vehicle()->id()));
     QCOMPARE(commandedCycles, 1);
@@ -340,6 +346,8 @@ void SwarmRegressionTest::formationRebuildsSlotsWhenMemberLacksOne()
         QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
         QTRY_COMPARE_WITH_TIMEOUT(pendingCommands, 0, TestTimeout::longMs());
     };
+    // A moving leader skips the synchronized reshape leg; this test covers station keeping.
+    setLeaderGroundSpeed(vehicle(), 2.0);
     QVERIFY(formation.start(vehicle()->id()));
     for (int i = 0; i < 15; ++i)
         tick();
@@ -354,154 +362,6 @@ void SwarmRegressionTest::formationRebuildsSlotsWhenMemberLacksOne()
     QVERIFY2(targets.contains(followers.first()->id()), "existing member must keep receiving commands");
     QVERIFY2(targets.contains(followers.last()->id()), "added member must start receiving commands");
     formation.stop();
-}
-
-void SwarmRegressionTest::operatorGotoMovesWholeFormation()
-{
-    // The headless test host has no physical pressure sensor backend.
-    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
-                     QRegularExpression("Failed to connect to pressure backend|Error Initializing Pressure Sensor"));
-    addVehicles(2);
-    auto* mvm = MultiVehicleManager::instance();
-    QList<Vehicle*> followers;
-    for (int i = 0; i < mvm->vehicles()->count(); ++i) {
-        auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
-        QVERIFY(member);
-        member->sendMavCommand(member->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0, 10);
-        if (member != vehicle())
-            followers.append(member);
-    }
-    QTRY_VERIFY_WITH_TIMEOUT(
-        std::all_of(followers.begin(), followers.end(),
-                    [](Vehicle* v) { return v->armed() && v->altitudeRelative()->rawValue().toDouble() >= 9; }) &&
-            vehicle()->armed() && vehicle()->altitudeRelative()->rawValue().toDouble() >= 9,
-        TestTimeout::longMs());
-    mockLink()->setRepositionSupported(true);
-    QVERIFY(_manager->startFormation(vehicle()->id()));
-    MockLink* followerLink = _extraLinks.at(1);
-    Vehicle* follower = mvm->getVehicleById(followerLink->vehicleId());
-    QVERIFY(follower);
-    QTRY_VERIFY_WITH_TIMEOUT(followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION) >= 2, TestTimeout::longMs());
-
-    // MockLink does not advertise COMMAND_INT, so an operator goto arrives as COMMAND_LONG while
-    // formation slot commands always use COMMAND_INT.
-    const auto operatorGotoTarget = [](MockLink* link) {
-        mavlink_message_t message{};
-        if (!link->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_LONG, message))
-            return QGeoCoordinate();
-        mavlink_command_long_t command{};
-        mavlink_msg_command_long_decode(&message, &command);
-        return command.command == MAV_CMD_DO_REPOSITION ? QGeoCoordinate(command.param5, command.param6)
-                                                        : QGeoCoordinate();
-    };
-    QSignalSpy leaderResults(vehicle(), &Vehicle::mavCommandResult);
-    QSignalSpy feedback(_manager.get(), &SwarmManager::swarmCommandFeedback);
-
-    // A goto on a follower moves the whole formation: the leader flies there, the follower keeps its slot.
-    const QGeoCoordinate formationGoal = vehicle()->coordinate().atDistanceAndAzimuth(150, 0);
-    QVERIFY(_manager->gotoLocation(follower, formationGoal));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        operatorGotoTarget(mockLink()).isValid() && operatorGotoTarget(mockLink()).distanceTo(formationGoal) < 1.0,
-        TestTimeout::longMs());
-    QVERIFY(!operatorGotoTarget(followerLink).isValid());
-    QVERIFY(!feedback.isEmpty());
-    QVERIFY(_manager->formation()->active());
-    const int slotCommands = followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION);
-    QTRY_VERIFY_WITH_TIMEOUT(followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION) > slotCommands,
-                             TestTimeout::longMs());
-
-    // A goto on the leader is flown by the leader itself. Wait for the first goto's ACK so the
-    // command queue does not reject the second one as a duplicate.
-    QTRY_VERIFY_WITH_TIMEOUT(!leaderResults.isEmpty(), TestTimeout::longMs());
-    const QGeoCoordinate leaderGoal = vehicle()->coordinate().atDistanceAndAzimuth(100, 90);
-    QVERIFY(_manager->gotoLocation(vehicle(), leaderGoal));
-    QTRY_VERIFY_WITH_TIMEOUT(operatorGotoTarget(mockLink()).distanceTo(leaderGoal) < 1.0, TestTimeout::longMs());
-
-    // Without an active formation the goto applies to the selected vehicle.
-    _manager->stopFormation();
-    QTRY_VERIFY_WITH_TIMEOUT(!follower->isMavCommandPending(follower->defaultComponentId(), MAV_CMD_DO_REPOSITION),
-                             TestTimeout::longMs());
-    const QGeoCoordinate soloGoal = follower->coordinate().atDistanceAndAzimuth(80, 180);
-    QVERIFY(_manager->gotoLocation(follower, soloGoal));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        operatorGotoTarget(followerLink).isValid() && operatorGotoTarget(followerLink).distanceTo(soloGoal) < 1.0,
-        TestTimeout::longMs());
-}
-
-void SwarmRegressionTest::init()
-{
-    setAutopilotType(QString::fromLatin1(QTest::currentDataTag()).contains("ArduPilot") ? MAV_AUTOPILOT_ARDUPILOTMEGA
-                                                                                        : MAV_AUTOPILOT_PX4);
-    VehicleTest::init();
-    ignoreLogMessage("ComponentInformation.RequestMetaDataTypeStateMachine", QtWarningMsg,
-                     QRegularExpression("failed to load metadata"));
-    ignoreLogMessage("FirmwarePlugin.ParameterMetaData", QtWarningMsg,
-                     QRegularExpression("Skipping invalid enum value"));
-    QVERIFY(vehicle());
-    ignoreLogMessage(
-        "API.QGCApplication.AppMessage", QtDebugMsg,
-        QRegularExpression("(集群任务|阶段 |阶段「|检测到重启前未完成任务|[0-9]+ 号机：|Reposition "
-                           "\\(MAV_CMD_DO_REPOSITION\\) command not supported|operator stop probe|Mission transfer "
-                           "failed. Error: Mission write mission count failed, maximum retries exceeded.)"));
-    _configPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/SwarmConfig/fences.json";
-    QFile file(_configPath);
-    _hadConfig = file.exists();
-    _previousConfig = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
-    file.close();
-    QDir().mkpath(QFileInfo(_configPath).absolutePath());
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    QCOMPARE(file.write("{}"), 2);
-    file.close();
-    QFile::remove(QFileInfo(_configPath).absolutePath() + "/tasks.json");
-    _manager = std::make_unique<SwarmManager>();
-    _manager->setAutonomyLevel(2);
-    mockLink()->clearReceivedMavCommandCounts();
-}
-
-void SwarmRegressionTest::cleanup()
-{
-    SwarmClock::setTestClock({});
-    if (_manager)
-        _manager->shutdown();
-    _manager.reset();
-    QFile::remove(QFileInfo(_configPath).absolutePath() + "/tasks.json");
-    for (const auto& link : std::as_const(_extraLinks))
-        if (link)
-            link->disconnect();
-    _extraLinks.clear();
-    if (_secondaryLink) {
-        MultiVehicleManager::instance()->setActiveVehicle(vehicle());
-        _secondaryLink->disconnect();
-        _secondaryLink = nullptr;
-        QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->vehicles()->count(), 1, TestTimeout::longMs());
-    }
-    QFile file(_configPath);
-    if (_hadConfig) {
-        QVERIFY(file.open(QIODevice::WriteOnly));
-        QCOMPARE(file.write(_previousConfig), _previousConfig.size());
-    } else
-        file.remove();
-    MultiVehicleManager::instance()->deselectAllVehicles();
-    QTRY_COMPARE_WITH_TIMEOUT(MultiVehicleManager::instance()->vehicles()->count(), 1, TestTimeout::longMs());
-    VehicleTest::cleanup();
-}
-
-void SwarmRegressionTest::addVehicles(int count)
-{
-    auto* mvm = MultiVehicleManager::instance();
-    const int initial = mvm->vehicles()->count();
-    for (int i = 0; i < count; ++i) {
-        expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
-                         QRegularExpression("Connected to Vehicle [0-9]+"));
-        _extraLinks.append(MockLink::startPX4MockLink());
-        QTRY_COMPARE_WITH_TIMEOUT(mvm->vehicles()->count(), initial + i + 1, TestTimeout::longMs());
-        for (int v = 0; v < mvm->vehicles()->count(); ++v) {
-            auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(v));
-            QVERIFY(member);
-            QTRY_VERIFY_WITH_TIMEOUT(member->isInitialConnectComplete(), TestTimeout::longMs());
-        }
-        verifyExpectedLogMessage();
-    }
 }
 
 void SwarmRegressionTest::remainingMembersContinueLaterStages()

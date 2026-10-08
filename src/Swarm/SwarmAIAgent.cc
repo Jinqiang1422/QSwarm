@@ -340,7 +340,10 @@ QJsonArray SwarmAIAgent::_toolsJson() const
                         "spacing":{"type":"number","description":"队形间距（米），缺省 10"},
                         "vertical_step":{"type":"number","description":"高度分层（米），缺省 3"}
                     },"required":["leader_id","formation"]})")));
-    tools.append(fn(QStringLiteral("stop_formation"), QStringLiteral("停止编队，僚机原地悬停"), noParams));
+    tools.append(
+        fn(QStringLiteral("stop_formation"),
+           QStringLiteral("停止编队：不再下发新指令，各机继续飞向最后一次受令目标；需原地悬停请再调用 pause（暂停）"),
+           noParams));
     tools.append(fn(QStringLiteral("plan_coverage"),
                     QStringLiteral("矩形区域覆盖任务规划并上传（不改变当前飞行状态）；缺省中心为当前地图中心"),
                     params(R"({"type":"object","properties":{

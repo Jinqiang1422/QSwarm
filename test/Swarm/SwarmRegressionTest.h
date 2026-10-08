@@ -1,19 +1,13 @@
 #pragma once
-#include <QtCore/QPointer>
-#include <memory>
 
-#include "BaseClasses/VehicleTest.h"
-class SwarmManager;
+#include "SwarmVehicleTest.h"
 
-class SwarmRegressionTest : public VehicleTest
+class SwarmRegressionTest : public SwarmVehicleTest
 {
     Q_OBJECT
 public:
-    using VehicleTest::VehicleTest;
-    ~SwarmRegressionTest() override;
+    using SwarmVehicleTest::SwarmVehicleTest;
 private slots:
-    void init() override;
-    void cleanup() override;
     void queuedArmingMustBeCancelledByPause();
     void queuedArmingMustBeCancelledByPause_data();
     void taskAbortMustStopFormation();
@@ -39,14 +33,4 @@ private slots:
     void guidanceTargetTracksSlotMotion();
     void formationSkipsFollowerAwaitingRepositionAck();
     void formationRebuildsSlotsWhenMemberLacksOne();
-    void operatorGotoMovesWholeFormation();
-
-private:
-    std::unique_ptr<SwarmManager> _manager;
-    QPointer<MockLink> _secondaryLink;
-    QList<QPointer<MockLink>> _extraLinks;
-    void addVehicles(int count);
-    QString _configPath;
-    QByteArray _previousConfig;
-    bool _hadConfig = false;
 };

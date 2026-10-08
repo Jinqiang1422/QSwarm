@@ -19,6 +19,7 @@ P4 将扩展至 ≥10 场景与 16/32 机回归。
 | `test_qgc_lifecycle.py` | 重复验证 SIGINT/SIGTERM/正常 quit、启动中断、令牌脱敏、端口及容器清理 |
 | `run_official_sitl.sh` | **官方 PX4 SITL docker 方案**：拉官方镜像 + 源码副本 fresh build，打通起飞(本机固件环境受阻的推荐路径，见测试流程 §9) |
 | `auto_official_test.sh` | 官方 Docker 共享机队 L1 冒烟（03/04/05）；全量验收使用 `strict_regression.py` |
+| `formation_sync_check.py` | **同步编队航段 SITL 验收**（S1–S5）：经 QGC 验收接口驱动启动/goto/航线/掉头，输出起步与到达时间差、偏离同步理想位置与最小间距 |
 | `新功能验收checklist.md` | 控制租约 / 任务持久化两项新功能的可勾选验收单(A 8 例 / B 5 例) |
 
 ## 控制安全与可靠性（Lattice 安全收尾）
