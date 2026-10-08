@@ -49,7 +49,7 @@ PX4FirmwarePlugin::PX4FirmwarePlugin()
     const QString vtolTakeoffFlightModeName = tr("VTOL Takeoff");
     const QString guidedCourseFlightModeName = tr("Guided Course");
 
-    _setModeEnumToModeStringMapping({
+    _builtinModeNames = {
         {PX4CustomMode::MANUAL, manualFlightModeName},
         {PX4CustomMode::STABILIZED, stabilizedFlightModeName},
         {PX4CustomMode::ACRO, acroFlightModeName},
@@ -72,7 +72,8 @@ PX4FirmwarePlugin::PX4FirmwarePlugin()
         {PX4CustomMode::AUTO_TAKEOFF, takeoffFlightModeName},
         {PX4CustomMode::AUTO_VTOL_TAKEOFF, vtolTakeoffFlightModeName},
         {PX4CustomMode::AUTO_GUIDED_COURSE, guidedCourseFlightModeName},
-    });
+    };
+    _setModeEnumToModeStringMapping(_builtinModeNames);
 
     static FlightModeList availableFlightModes = {
         // Mode Name                    Custom Mode                         CanBeSet  adv
@@ -760,6 +761,12 @@ void PX4FirmwarePlugin::updateAvailableFlightModes(FlightModeList& modeList)
 {
     for (auto& mode : modeList) {
         PX4CustomMode::Mode cMode = static_cast<PX4CustomMode::Mode>(mode.custom_mode);
+        // PX4 releases using the development standard-mode enum advertise different numbers.
+        // Its custom-mode values are stable, so retain canonical names for built-in modes.
+        const auto builtinName = _builtinModeNames.constFind(mode.custom_mode);
+        if (builtinName != _builtinModeNames.cend()) {
+            mode.mode_name = builtinName.value();
+        }
 
         // Update Multi Rotor
         switch (cMode) {
@@ -920,4 +927,41 @@ void PX4FirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject*
     deadline->start(10000);
     vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, NAN, NAN, 0, NAN, NAN, NAN,
                             float(amsl));
+}
+
+void PX4FirmwarePlugin::changeAltitudeAsync(Vehicle* vehicle, double altitudeRelative, QObject* context,
+                                            std::function<bool()> allowed, std::function<void(bool)> finished) const
+{
+    if (!vehicle || !context || !allowed() || !vehicle->homePosition().isValid()) {
+        finished(false);
+        return;
+    }
+    const double amsl = vehicle->homePosition().altitude() + altitudeRelative;
+    if (!std::isfinite(amsl)) {
+        finished(false);
+        return;
+    }
+    auto* deadline = new QTimer(context);
+    deadline->setSingleShot(true);
+    QPointer<Vehicle> target(vehicle);
+    connect(deadline, &QTimer::timeout, deadline, [target, deadline, finished] {
+        if (target)
+            disconnect(target, nullptr, deadline, nullptr);
+        deadline->deleteLater();
+        finished(false);
+    });
+    connect(vehicle, &Vehicle::mavCommandResult, deadline,
+            [target, deadline, allowed, finished](int, int component, int command, int result, int) {
+                if (!target || component != target->defaultComponentId() || command != MAV_CMD_DO_REPOSITION ||
+                    result == MAV_RESULT_IN_PROGRESS)
+                    return;
+                disconnect(target, nullptr, deadline, nullptr);
+                deadline->stop();
+                deadline->deleteLater();
+                finished(result == MAV_RESULT_ACCEPTED && allowed());
+            });
+    deadline->start(10000);
+    // NaN yaw/lat/lon keep the current heading and horizontal position; only the altitude changes.
+    vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_DO_REPOSITION, true, -1.0f,
+                            MAV_DO_REPOSITION_FLAGS_CHANGE_MODE, 0.0f, NAN, NAN, NAN, float(amsl));
 }

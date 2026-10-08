@@ -85,6 +85,12 @@ public:
     /// 以 leaderVehicleId 为长机开始编队。长机由人工/任务驾驶，僚机自动跟随队形。
     bool start(int leaderVehicleId);
 
+    /// 推进单架僚机的引导目标。目标先随槽位目的地整体平移（跟随长机运动，不限速），
+    /// 再朝目的地做限速追赶：限速只约束追赶，避免单拍大幅跳变或时钟跳变放大指令。
+    /// previousDestination 无效（首拍）时从 current 起步。
+    static QGeoCoordinate advanceGuidanceTarget(const QGeoCoordinate& current, const QGeoCoordinate& previousDestination,
+                                                const QGeoCoordinate& destination, double dtSeconds);
+
     /// 停止自动编队引导；不改变各机飞行模式
     Q_INVOKABLE void stop();
 
@@ -115,6 +121,7 @@ private:
                           double& altitudeStepMeters) const;
 
     void _setStatusText(const QString& text);
+    void _rebuildSlots();
 
     FormationType _formationType = FormationWedge;
     double _spacingMeters = 10.0;
@@ -140,6 +147,18 @@ private:
     };
 
     QHash<int, Slot> _slots;
+
+    struct GuidanceTarget
+    {
+        QGeoCoordinate coordinate;
+        qint64 updatedMs = 0;
+        QGeoCoordinate destination;  ///< 上一拍实际下发的槽位目的地；用于随长机运动平移目标
+    };
+
+    QHash<int, GuidanceTarget> _guidanceTargets;
+    // Limit target motion, independently of the aircraft's own velocity controller.
+    static constexpr double _horizontalTargetSpeed = 2.0;  ///< m/s
+    static constexpr double _verticalTargetSpeed = 1.0;    ///< m/s
     bool _membersBound = false;
     bool _handover();
 };

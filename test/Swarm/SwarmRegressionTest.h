@@ -21,6 +21,8 @@ private slots:
     void invalidTemplateNumberMustBeRejected();
     void coverageRoundTripMustRetainTakeoff();
     void coverageRoundTripMustRetainTakeoff_data();
+    void coverageLeavesHeadingToVehicle();
+    void coverageLeavesHeadingToVehicle_data();
     void missionMustWaitForUploadAcknowledgement();
     void remainingMembersContinueLaterStages();
     void withdrawnGroupDoesNotBlockFutureGroups();
@@ -32,6 +34,12 @@ private slots:
     void missionReplacementBlocksLaterStart_data();
     void formationLeaderWithdrawalKeepsRemainingMembers();
     void durationUsesMonotonicDeadline();
+    void px4FlightModesRetainMeaningAcrossProtocolVersions();
+    void activeFormationEditsUpdateTargets();
+    void guidanceTargetTracksSlotMotion();
+    void formationSkipsFollowerAwaitingRepositionAck();
+    void formationRebuildsSlotsWhenMemberLacksOne();
+    void operatorGotoMovesWholeFormation();
 
 private:
     std::unique_ptr<SwarmManager> _manager;

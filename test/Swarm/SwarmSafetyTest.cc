@@ -283,6 +283,19 @@ void SwarmSafetyTest::missionSnapshotValidation()
                          coordinate.latitude(), coordinate.longitude(), 20, true, false);
     const auto original = SwarmMissionSnapshot::capture({&waypoint}, false);
     QVERIFY(original.validate(vehicle(), {}, 100).isEmpty());
+    // A landed vehicle's altitude estimate can drift below the saved Home altitude.
+    // The current position is measured state; mission destinations must still respect the altitude floor.
+    {
+        auto* altitude = vehicle()->altitudeAMSL();
+        const auto previousAltitude = altitude->rawValue();
+        const auto restoreAltitude =
+            qScopeGuard([altitude, previousAltitude] { altitude->setRawValue(previousAltitude); });
+        altitude->setRawValue(vehicle()->homePosition().altitude() - 0.75);
+        QVERIFY2(original.validate(vehicle(), {}, 100).isEmpty(), qPrintable(original.validate(vehicle(), {}, 100)));
+        waypoint.setParam7(-1);
+        QVERIFY(!SwarmMissionSnapshot::capture({&waypoint}, false).validate(vehicle(), {}, 100).isEmpty());
+        waypoint.setParam7(20);
+    }
     waypoint.setFrame(MAV_FRAME_GLOBAL_RELATIVE_ALT);
     const auto normalized = SwarmMissionSnapshot::capture({&waypoint}, false);
     QVERIFY(original.equivalent(normalized));

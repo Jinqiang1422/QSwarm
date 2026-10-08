@@ -11,12 +11,123 @@
 #endif
 #include <QtCore/QMetaProperty>
 #include <QtCore/QSettings>
+#include <QtNetwork/QNetworkDatagram>
+#include <QtNetwork/QUdpSocket>
 #include <QtTest/QSignalSpy>
 #include <memory>
 
 #include "Fixtures/RAIIFixtures.h"
+#include "QGCMAVLink.h"
 #include "TCPLink.h"
 #include "UDPLink.h"
+
+void LinkConfigurationTest::_testUdpRoutesVehicleCommands_data()
+{
+    QTest::addColumn<bool>("mavlink1");
+    QTest::addColumn<bool>("commandInt");
+    QTest::addColumn<int>("targetSystem");
+    QTest::addColumn<bool>("signedFrames");
+    QTest::newRow("v1-command-long") << true << false << 1 << false;
+    QTest::newRow("v2-command-long") << false << false << 1 << false;
+    QTest::newRow("v2-command-int") << false << true << 1 << false;
+    QTest::newRow("routed-system") << false << true << 3 << false;
+    QTest::newRow("broadcast") << false << true << 0 << false;
+    QTest::newRow("unknown-system") << false << true << 99 << false;
+    QTest::newRow("signed-command") << false << true << 1 << true;
+    QTest::newRow("combined-signed-commands") << false << true << -1 << true;
+}
+
+void LinkConfigurationTest::_testUdpRoutesVehicleCommands()
+{
+    QFETCH(bool, mavlink1);
+    QFETCH(bool, commandInt);
+    QFETCH(int, targetSystem);
+    QFETCH(bool, signedFrames);
+    UDPConfiguration config(QStringLiteral("Routing test"));
+    UDPWorker worker(&config);
+    worker.setupSocket();
+    worker.connectLink();
+    QVERIFY(worker.isConnected());
+    auto* socket = worker.findChild<QUdpSocket*>();
+    QVERIFY(socket);
+    const quint16 port = socket->localPort();
+    QUdpSocket first;
+    QUdpSocket second;
+    QVERIFY(first.bind(QHostAddress::LocalHost, 0));
+    QVERIFY(second.bind(QHostAddress::LocalHost, 0));
+
+    const auto bytes = [](const mavlink_message_t& message) {
+        QByteArray data(MAVLINK_MAX_PACKET_LEN, '\0');
+        data.resize(mavlink_msg_to_send_buffer(reinterpret_cast<uint8_t*>(data.data()), &message));
+        return data;
+    };
+    mavlink_status_t status{};
+    status.flags = mavlink1 ? MAVLINK_STATUS_FLAG_OUT_MAVLINK1 : 0;
+    mavlink_signing_t signing{};
+    signing.flags = MAVLINK_SIGNING_FLAG_SIGN_OUTGOING;
+    signing.timestamp = 12345;
+    status.signing = signedFrames ? &signing : nullptr;
+    const auto heartbeat = [&](uint8_t systemId) {
+        mavlink_message_t message{};
+        mavlink_heartbeat_t payload{};
+        payload.autopilot = MAV_AUTOPILOT_PX4;
+        mavlink_msg_heartbeat_encode_status(systemId, MAV_COMP_ID_AUTOPILOT1, &status, &message, &payload);
+        return bytes(message);
+    };
+
+    QSignalSpy received(&worker, &UDPWorker::dataReceived);
+    const QByteArray firstHeartbeat = heartbeat(1) + heartbeat(3);
+    QCOMPARE(first.writeDatagram(firstHeartbeat, QHostAddress::LocalHost, port), firstHeartbeat.size());
+    QTRY_COMPARE_WITH_TIMEOUT(received.count(), 1, 1000);
+    const QByteArray secondHeartbeat = heartbeat(2);
+    QCOMPARE(second.writeDatagram(secondHeartbeat, QHostAddress::LocalHost, port), secondHeartbeat.size());
+    QTRY_COMPARE_WITH_TIMEOUT(received.count(), 2, 1000);
+
+    mavlink_message_t message{};
+    if (commandInt) {
+        mavlink_command_int_t command{};
+        command.target_system = targetSystem == -1 ? 1 : targetSystem;
+        command.target_component = MAV_COMP_ID_AUTOPILOT1;
+        command.command = MAV_CMD_DO_REPOSITION;
+        command.param2 = MAV_DO_REPOSITION_FLAGS_CHANGE_MODE;
+        mavlink_msg_command_int_encode_status(255, MAV_COMP_ID_MISSIONPLANNER, &status, &message, &command);
+    } else {
+        mavlink_command_long_t command{};
+        command.target_system = targetSystem;
+        command.target_component = MAV_COMP_ID_AUTOPILOT1;
+        command.command = MAV_CMD_DO_REPOSITION;
+        command.param2 = MAV_DO_REPOSITION_FLAGS_CHANGE_MODE;
+        mavlink_msg_command_long_encode_status(255, MAV_COMP_ID_MISSIONPLANNER, &status, &message, &command);
+    }
+    const QByteArray command = bytes(message);
+    QByteArray otherCommand;
+    if (targetSystem == -1) {
+        mavlink_command_int_t other{};
+        other.target_system = 2;
+        other.target_component = MAV_COMP_ID_AUTOPILOT1;
+        other.command = MAV_CMD_DO_REPOSITION;
+        other.param2 = MAV_DO_REPOSITION_FLAGS_CHANGE_MODE;
+        mavlink_msg_command_int_encode_status(255, MAV_COMP_ID_MISSIONPLANNER, &status, &message, &other);
+        otherCommand = bytes(message);
+    }
+    worker.writeData(command + otherCommand);
+    // This broadcast is an ordering barrier: the other drone must receive it first,
+    // without having received a reposition command addressed to its neighbour.
+    const QByteArray broadcast = heartbeat(255);
+    worker.writeData(broadcast);
+    QTRY_VERIFY_WITH_TIMEOUT(first.hasPendingDatagrams() && second.hasPendingDatagrams(), 1000);
+    QCOMPARE(first.receiveDatagram().data(), command);
+    QTRY_VERIFY_WITH_TIMEOUT(first.hasPendingDatagrams(), 1000);
+    QCOMPARE(first.receiveDatagram().data(), broadcast);
+    if (targetSystem == 0 || targetSystem == 99) {
+        QCOMPARE(second.receiveDatagram().data(), command);
+        QTRY_VERIFY_WITH_TIMEOUT(second.hasPendingDatagrams(), 1000);
+    } else if (targetSystem == -1) {
+        QCOMPARE(second.receiveDatagram().data(), otherCommand);
+        QTRY_VERIFY_WITH_TIMEOUT(second.hasPendingDatagrams(), 1000);
+    }
+    QCOMPARE(second.receiveDatagram().data(), broadcast);
+}
 
 // ============================================================================
 // LinkConfiguration base tests (exercised via TCPConfiguration)

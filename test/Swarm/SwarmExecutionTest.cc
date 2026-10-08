@@ -1,6 +1,7 @@
 #include "SwarmExecutionTest.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -10,6 +11,7 @@
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
 
+#include "Fact.h"
 #include "MultiVehicleManager.h"
 #include "QmlObjectListModel.h"
 #include "SwarmAIAgent.h"
@@ -348,6 +350,151 @@ void SwarmExecutionTest::_candidateCoverageKeepsCoordinates()
     verifyExpectedLogMessage();
     QVERIFY(!ai->planPending());
     QVERIFY(ai->candidates().isEmpty());
+}
+
+double SwarmExecutionTest::_altitudeRelative(Vehicle* target) const
+{
+    return (target ? target : vehicle())->altitudeRelative()->rawValue().toDouble();
+}
+
+void SwarmExecutionTest::_putAirborne(double altitudeRelative, Vehicle* target, MockLink* link)
+{
+    target = target ? target : vehicle();
+    link = link ? link : mockLink();
+    // The headless image has no pressure backend; takeoff can initialize the sensor singleton.
+    ignoreLogMessage(
+        "Utilities.QGCSensors", QtWarningMsg,
+        QRegularExpression("QGCPressure.*(Failed to connect to pressure backend|Error Initializing Pressure Sensor)"));
+    QTRY_VERIFY_WITH_TIMEOUT(target->homePosition().isValid(), TestTimeout::longMs());
+    // MockLink's takeoff handler arms the simulated vehicle and lifts it to param7 above home.
+    target->sendMavCommand(target->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false, 0, 0, 0, 0, 0, 0,
+                           static_cast<float>(altitudeRelative));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        target->armed() && target->flying() && qAbs(_altitudeRelative(target) - altitudeRelative) < 0.1,
+        TestTimeout::longMs());
+    link->clearReceivedMavCommandCounts();
+}
+
+bool SwarmExecutionTest::_runTakeoff(double altitude)
+{
+    ignoreLogMessage(
+        "Utilities.QGCSensors", QtWarningMsg,
+        QRegularExpression("QGCPressure.*(Failed to connect to pressure backend|Error Initializing Pressure Sensor)"));
+    QSignalSpy finished(_manager.get(), &SwarmManager::executionFinished);
+    QStringList errors;
+    const auto plan = _manager->parseAndValidate({QJsonObject{{"type", "takeoff"}, {"altitude", altitude}}},
+                                                 vehicle()->coordinate(), errors);
+    if (plan.isEmpty() || !_manager->executeActions(plan, "test", SwarmManager::ExecutionApproval::OperatorConfirmed))
+        return false;
+    if (!QTest::qWaitFor([&finished] { return !finished.isEmpty(); }, TestTimeout::longMs()))
+        return false;
+    return finished.first().at(1).toBool();
+}
+
+void SwarmExecutionTest::_groundTakeoffStillTakesOff()
+{
+    QVERIFY(!vehicle()->flying());
+    QVERIFY(_runTakeoff(10));
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 1);
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_DO_REPOSITION), 0);
+}
+
+void SwarmExecutionTest::_airborneTakeoffChangesAltitudeInstead_data()
+{
+    QTest::addColumn<double>("start");
+    QTest::addColumn<double>("target");
+    QTest::newRow("climb") << 20.0 << 30.0;
+    QTest::newRow("descend") << 40.0 << 30.0;
+}
+
+void SwarmExecutionTest::_airborneTakeoffChangesAltitudeInstead()
+{
+    QFETCH(double, start);
+    QFETCH(double, target);
+    mockLink()->setRepositionSupported(true);
+    _putAirborne(start);
+    QVERIFY(_runTakeoff(target));
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_DO_REPOSITION), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(_altitudeRelative() - target) < 0.1, TestTimeout::longMs());
+}
+
+void SwarmExecutionTest::_airborneTakeoffAtTargetSendsNothing()
+{
+    mockLink()->setRepositionSupported(true);
+    _putAirborne(30);
+    QVERIFY(_runTakeoff(30.3));
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_DO_REPOSITION), 0);
+}
+
+void SwarmExecutionTest::_rejectedAltitudeChangeNeverFallsBackToTakeoff()
+{
+    _putAirborne(20);
+    // MockLink answers the reposition UNSUPPORTED here; Vehicle reports that as a user-facing message.
+    ignoreLogMessage(
+        "API.QGCApplication.AppMessage", QtDebugMsg,
+        QRegularExpression(QStringLiteral("Reposition \\(MAV_CMD_DO_REPOSITION\\) command not supported")));
+    QVERIFY(!_runTakeoff(30));
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_DO_REPOSITION), 1);
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
+}
+
+void SwarmExecutionTest::_airborneTaskTakeoffStageAdvancesWithoutTakeoff()
+{
+    mockLink()->setRepositionSupported(true);
+    _putAirborne(20);
+    QStringList errors;
+    const auto takeoff = _manager->parseAndValidate({QJsonObject{{"type", "takeoff"}, {"altitude", 30.0}}},
+                                                    vehicle()->coordinate(), errors);
+    QVERIFY(!takeoff.isEmpty());
+    auto* task = _manager->taskController();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg,
+                     QRegularExpression(QStringLiteral("阶段「takeoff」完成条件满足，自动推进")));
+    QVERIFY(task->startTask(
+        "switch while airborne",
+        {{"takeoff", takeoff, "all_airborne", {{"min_altitude", 25}, {"grace_sec", 0}}}, {"hold", {}, "manual", {}}},
+        true));
+    QTRY_VERIFY_WITH_TIMEOUT(task->waitingForProceed(), TestTimeout::longMs());
+    verifyExpectedLogMessage();
+    QCOMPARE(task->currentStageIndex(), 1);
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
+}
+
+void SwarmExecutionTest::_airborneTakeoffSkipsTakeoffStagger()
+{
+    auto* mvm = MultiVehicleManager::instance();
+    expectLogMessage("API.QGCApplication.AppMessage", QtDebugMsg, QRegularExpression("Connected to Vehicle [0-9]+"));
+    _secondaryLink = MockLink::startPX4MockLink();
+    QVERIFY(_secondaryLink);
+    QTRY_COMPARE_WITH_TIMEOUT(mvm->vehicles()->count(), 2, TestTimeout::longMs());
+    Vehicle* secondary = nullptr;
+    for (int i = 0; i < mvm->vehicles()->count(); ++i) {
+        auto* candidate = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
+        if (candidate && candidate != vehicle())
+            secondary = candidate;
+    }
+    QVERIFY(secondary);
+    QTRY_VERIFY_WITH_TIMEOUT(secondary->isInitialConnectComplete(), TestTimeout::longMs());
+    verifyExpectedLogMessage();
+    mockLink()->setRepositionSupported(true);
+    _secondaryLink->setRepositionSupported(true);
+    _putAirborne(20);
+    _putAirborne(20, secondary, _secondaryLink);
+    QElapsedTimer clock;
+    clock.start();
+    QList<qint64> dispatchedAt;
+    QObject scope;  // disconnects before the captured locals go out of scope
+    connect(_manager.get(), &SwarmManager::actionDispatched, &scope,
+            [&clock, &dispatchedAt](quint64, int, const QString&) { dispatchedAt.append(clock.elapsed()); });
+    QVERIFY(_runTakeoff(30));
+    QCOMPARE(dispatchedAt.size(), 2);
+    // Ground takeoffs are spaced 2500 ms apart (a coarse timer may fire up to 5% early); airborne altitude
+    // changes use the ordinary 300 ms command interval.
+    QVERIFY2(dispatchedAt.at(1) - dispatchedAt.at(0) < 1500,
+             qPrintable(QStringLiteral("dispatch gap %1 ms").arg(dispatchedAt.at(1) - dispatchedAt.at(0))));
+    QCOMPARE(mockLink()->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
+    QCOMPARE(_secondaryLink->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
 }
 
 UT_REGISTER_TEST(SwarmExecutionTest, TestLabel::Integration, TestLabel::Vehicle)

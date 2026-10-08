@@ -45,6 +45,14 @@
 #endif
 
 namespace {
+/// 一架机在空中时再发起飞没有意义（PX4 会在当前高度上再爬升一个起飞高度），takeoff 改为调整到目标高度
+constexpr double kAirborneAltitudeToleranceM = 0.5;
+
+bool isAirborne(const Vehicle* vehicle)
+{
+    return vehicle && vehicle->armed() && vehicle->flying();
+}
+
 QString validateActionInput(const QJsonObject& obj)
 {
     const QString type = obj.value(QStringLiteral("type")).toString();
@@ -1120,6 +1128,31 @@ void SwarmManager::stopFormation()
     _formation->stop();
 }
 
+bool SwarmManager::gotoLocation(Vehicle* vehicle, const QGeoCoordinate& coordinate, double forwardFlightLoiterRadius)
+{
+    if (!vehicle) {
+        return false;
+    }
+    const int leaderId = _formation->leaderVehicleId();
+    if (!_formation->active() || vehicle->id() == leaderId || !_formationTargetIds.contains(vehicle->id())) {
+        return vehicle->guidedModeGotoLocation(coordinate, forwardFlightLoiterRadius);
+    }
+    // 僚机的位置由编队每个周期重新指令，单独飞往会被立即覆盖。编队运行中「飞往位置」
+    // 移动的是整个编队：改由长机飞往该点，僚机槽位随长机移动。
+    Vehicle* leader = MultiVehicleManager::instance()->getVehicleById(leaderId);
+    if (!leader || !leader->guidedModeGotoLocation(coordinate, forwardFlightLoiterRadius)) {
+        return false;
+    }
+    SwarmAuditLogger::instance()->log(QStringLiteral("formation"), QStringLiteral("operator_goto_via_leader"),
+                                      {{QStringLiteral("vehicle_id"), vehicle->id()},
+                                       {QStringLiteral("leader_id"), leaderId},
+                                       {QStringLiteral("lat"), coordinate.latitude()},
+                                       {QStringLiteral("lon"), coordinate.longitude()}});
+    emit swarmCommandFeedback(
+        tr("%1 号机在编队中：改由长机 %2 飞往目标点，编队随长机移动").arg(vehicle->id()).arg(leaderId));
+    return true;
+}
+
 bool SwarmManager::planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
                                          double angleDeg, const QString& assignMode)
 {
@@ -1931,9 +1964,23 @@ void SwarmManager::_dispatchExecutionAction(const std::shared_ptr<Execution>& ex
                 vehicle->missionManager()->beginMissionExecution();
                 vehicle->firmwarePlugin()->startMissionAsync(vehicle, execution->context, allowed, finished);
             } else if (action.type == QStringLiteral("takeoff")) {
-                vehicle->firmwarePlugin()->takeoffAsync(vehicle,
-                                                        action.params.value(QStringLiteral("altitude")).toDouble(),
-                                                        execution->context, allowed, finished);
+                const double altitude = action.params.value(QStringLiteral("altitude")).toDouble();
+                if (isAirborne(vehicle)) {
+                    const double current = vehicle->altitudeRelative()->rawValue().toDouble();
+                    const bool atTarget = qAbs(current - altitude) <= kAirborneAltitudeToleranceM;
+                    SwarmAuditLogger::instance()->log(QStringLiteral("exec"), QStringLiteral("takeoff_airborne"),
+                                                      {{QStringLiteral("vehicle_id"), id},
+                                                       {QStringLiteral("altitude_rel"), current},
+                                                       {QStringLiteral("target_altitude_rel"), altitude},
+                                                       {QStringLiteral("adjusted"), !atTarget}});
+                    if (atTarget)
+                        finished(true);
+                    else
+                        vehicle->firmwarePlugin()->changeAltitudeAsync(vehicle, altitude, execution->context, allowed,
+                                                                       finished);
+                } else {
+                    vehicle->firmwarePlugin()->takeoffAsync(vehicle, altitude, execution->context, allowed, finished);
+                }
             } else if (action.type == QStringLiteral("arm") || action.type == QStringLiteral("disarm")) {
                 const bool armed =
                     action.type == QStringLiteral("arm") && action.params.value(QStringLiteral("arm"), true).toBool();
@@ -1964,8 +2011,11 @@ void SwarmManager::_dispatchExecutionAction(const std::shared_ptr<Execution>& ex
             }
             emit actionDispatched(execution->id, id, action.type);
         });
-        if (action.type != QStringLiteral("pause") && action.type != QStringLiteral("emergency_disarm"))
-            delay += action.type == QStringLiteral("takeoff") ? _takeoffStaggerMs : _commandIntervalMs;
+        if (action.type != QStringLiteral("pause") && action.type != QStringLiteral("emergency_disarm")) {
+            // 起飞错峰只为地面同时爬升而设；空中机的 takeoff 只是调高，用常规间隔
+            const bool groundTakeoff = action.type == QStringLiteral("takeoff") && !isAirborne(target.data());
+            delay += groundTakeoff ? _takeoffStaggerMs : _commandIntervalMs;
+        }
     }
 }
 

@@ -8,6 +8,8 @@
 #include <utility>
 
 #include "FirmwarePlugin.h"
+#include "MissionCommandTree.h"
+#include "MissionCommandUIInfo.h"
 #include "MissionItem.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
@@ -16,6 +18,22 @@
 #include "SwarmTaskAllocator.h"
 #include "SwarmTypes.h"
 #include "Vehicle.h"
+
+namespace {
+/// Yaw (param4) for a flown takeoff/waypoint item, taken from the firmware's mission command definition
+/// like a new Plan view item. Where the firmware honours it, NaN leaves the heading to the vehicle: face
+/// the next waypoint, and hold the heading on reaching the last one (0 would turn PX4 aircraft north).
+/// Firmware that does not store the field (ArduCopter) gets 0, which is also what it reads back.
+double headingParam(Vehicle* vehicle, MAV_CMD command)
+{
+    bool yawShown = false;
+    const MissionCommandUIInfo* uiInfo =
+        vehicle ? MissionCommandTree::instance()->getUIInfo(vehicle, QGCMAVLink::VehicleClassGeneric, command)
+                : nullptr;
+    const MissionCmdParamInfo* yaw = uiInfo ? uiInfo->getParamInfo(4, yawShown) : nullptr;
+    return (yaw && yawShown && yaw->nanUnchanged()) ? qQNaN() : 0.0;
+}
+}  // namespace
 
 SwarmMissionPlanner::SwarmMissionPlanner(QObject* parent) : QObject(parent)
 {
@@ -60,7 +78,7 @@ QGeoCoordinate SwarmMissionPlanner::_localToGeo(const QGeoCoordinate& center, do
 // ---------------------------------------------------------------------------
 // 任务项构建（与上传分离；使用与 QGC Plan 视图相同的 MissionItem 原语）
 // ---------------------------------------------------------------------------
-QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCoordinate& homeCoord,
+QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(Vehicle* vehicle, const QGeoCoordinate& homeCoord,
                                                                    const QGeoCoordinate& center, double lengthMeters,
                                                                    double widthMeters, double angleDeg, double bandMin,
                                                                    double bandMax) const
@@ -85,12 +103,14 @@ QList<MissionItem*> SwarmMissionPlanner::buildCoverageMissionItems(const QGeoCoo
     // PlanManager consumes the Home placeholder according to FirmwarePlugin policy.
     items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL, 0, 0, 0, 0, homeCoord.latitude(),
                                  homeCoord.longitude(), homeCoord.altitude(), true, false));
-    items.append(new MissionItem(seq++, MAV_CMD_NAV_TAKEOFF, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, 0, 0, 0, 0,
-                                 homeCoord.latitude(), homeCoord.longitude(), _surveyAltitude, true /*autoContinue*/,
+    items.append(new MissionItem(seq++, MAV_CMD_NAV_TAKEOFF, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, 0, 0, 0,
+                                 headingParam(vehicle, MAV_CMD_NAV_TAKEOFF), homeCoord.latitude(),
+                                 homeCoord.longitude(), _surveyAltitude, true /*autoContinue*/,
                                  true /*isCurrentItem*/));
+    const double waypointYaw = headingParam(vehicle, MAV_CMD_NAV_WAYPOINT);
     for (const QGeoCoordinate& wp : waypoints) {
         items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, 0 /*hold*/,
-                                     0 /*acceptRadius 默认*/, 0 /*passRadius*/, 0 /*yaw*/, wp.latitude(),
+                                     0 /*acceptRadius 默认*/, 0 /*passRadius*/, waypointYaw, wp.latitude(),
                                      wp.longitude(), _surveyAltitude, true, false));
     }
     items.append(
@@ -214,7 +234,7 @@ bool SwarmMissionPlanner::planAndUploadCoverage(const QGeoCoordinate& center, do
         const QGeoCoordinate homeCoord = targets[v]->coordinate().isValid() ? targets[v]->coordinate() : center;
 
         QList<MissionItem*> items =
-            buildCoverageMissionItems(homeCoord, center, lengthMeters, widthMeters, angleDeg, bandMin, bandMax);
+            buildCoverageMissionItems(target, homeCoord, center, lengthMeters, widthMeters, angleDeg, bandMin, bandMax);
         totalWaypoints += items.count() - 3;  // 去掉起飞/返航项
 
         // 与人工 Plan 视图“上传”相同的通道：PlanManager::writeMissionItems

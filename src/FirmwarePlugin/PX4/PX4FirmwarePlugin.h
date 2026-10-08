@@ -41,6 +41,8 @@ public:
     void guidedModeTakeoff(Vehicle* vehicle, double takeoffAltRel) const override;
     void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
                       std::function<void(bool)> finished) const override;
+    void changeAltitudeAsync(Vehicle* vehicle, double altitudeRelative, QObject* context, std::function<bool()> allowed,
+                             std::function<void(bool)> finished) const override;
     double maximumHorizontalSpeedMultirotorMetersSecond(Vehicle* vehicle) const override;
     double maximumEquivalentAirspeed(Vehicle* vehicle) const override;
     double minimumEquivalentAirspeed(Vehicle* vehicle) const override;
@@ -94,6 +96,8 @@ private slots:
     void _mavCommandResult(int vehicleId, int component, int command, int result, int failureCode);
 
 private:
+    FlightModeCustomModeMap _builtinModeNames;
+
     void _handleAutopilotVersion(Vehicle* vehicle, mavlink_message_t* message);
 
     QString _getLatestVersionFileUrl(Vehicle* vehicle) const override;

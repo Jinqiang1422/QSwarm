@@ -43,7 +43,7 @@
     "type": "function",
     "function": {
       "name": "takeoff",
-      "description": "集群起飞到相对高度（米）",
+      "description": "集群起飞到相对高度（米）；已在空中的飞机不再起飞，直接调整到该高度",
       "parameters": {
         "type": "object",
         "properties": {

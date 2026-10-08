@@ -1755,6 +1755,14 @@ void MockLink::_handleCommandLong(const mavlink_message_t& msg)
             _handleTakeoff(request);
             commandResult = MAV_RESULT_ACCEPTED;
             break;
+        case MAV_CMD_DO_REPOSITION:
+            if (_repositionSupported) {
+                if (std::isfinite(request.param7)) {
+                    _vehicleAltitudeAMSL = request.param7;
+                }
+                commandResult = MAV_RESULT_ACCEPTED;
+            }
+            break;
         case MAV_CMD_MOCKLINK_ALWAYS_RESULT_ACCEPTED:
             // Test command which always returns MAV_RESULT_ACCEPTED
             commandResult = MAV_RESULT_ACCEPTED;

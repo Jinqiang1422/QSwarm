@@ -30,9 +30,19 @@ private slots:
     void _coverageCoordinatesReachTheChecker();
     void _candidateCoverageKeepsCoordinates();
     void _credentialsAreSessionOnly();
+    void _groundTakeoffStillTakesOff();
+    void _airborneTakeoffChangesAltitudeInstead_data();
+    void _airborneTakeoffChangesAltitudeInstead();
+    void _airborneTakeoffAtTargetSendsNothing();
+    void _rejectedAltitudeChangeNeverFallsBackToTakeoff();
+    void _airborneTaskTakeoffStageAdvancesWithoutTakeoff();
+    void _airborneTakeoffSkipsTakeoffStagger();
 
 private:
     void _requestPlan(const QJsonArray& actions, bool functionCalling = false);
+    void _putAirborne(double altitudeRelative, Vehicle* target = nullptr, MockLink* link = nullptr);
+    bool _runTakeoff(double altitude);
+    double _altitudeRelative(Vehicle* target = nullptr) const;
     void _writeConfig(const QJsonObject& config);
     std::unique_ptr<SwarmManager> _manager;
     QPointer<MockLink> _secondaryLink;

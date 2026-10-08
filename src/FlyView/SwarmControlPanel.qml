@@ -20,50 +20,22 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FlyView
 
-Rectangle {
-    id:     _root
-    width:  ScreenTools.defaultFontPixelWidth * 24
-    height: expanded ? Math.min(mainColumn.implicitHeight + _margin * 2, maxHeight) : headerRow.implicitHeight + _margin * 2
-    radius: ScreenTools.defaultFontPixelWidth / 2
-    color:  qgcPal.windowShade
-    border.color: qgcPal.text
-    border.width: 1
-    opacity: 0.95
-
-    property bool expanded:   true
-    property real maxHeight:  600
-    property real _margin:    ScreenTools.defaultFontPixelWidth / 2
-    property var  qgcPal:     QGroundControl.globalPalette
+SwarmPanel {
+    id: _root
+    contentHeight: mainColumn.implicitHeight
     property var  _swarm:     QGroundControl.swarmManager
     property var  _mvm:       QGroundControl.multiVehicleManager
 
-    // ---------------------------------------------------------------- 标题栏
-    RowLayout {
-        id:             headerRow
-        anchors.left:   parent.left
-        anchors.right:  parent.right
-        anchors.top:    parent.top
-        anchors.margins: _margin
-        spacing:        _margin
-
-        QGCLabel {
-            text:               qsTr("集群指挥控制 (%1 架)").arg(_mvm.vehicles.count)
-            font.bold:          true
-            Layout.fillWidth:   true
-        }
-        QGCButton {
-            text:       _root.expanded ? qsTr("收起") : qsTr("展开")
-            onClicked:  _root.expanded = !_root.expanded
-        }
-    }
+    title: qsTr("集群指挥控制 (%1 架)").arg(_mvm.vehicles.count)
 
     // ---------------------------------------------------------------- 主内容
     QGCFlickable {
         anchors.left:           parent.left
         anchors.right:          parent.right
-        anchors.top:            headerRow.bottom
+        anchors.top:            _root.headerItem.bottom
         anchors.bottom:         parent.bottom
         anchors.margins:        _margin
+        anchors.bottomMargin:   _margin + ScreenTools.defaultFontPixelHeight
         contentWidth:           mainColumn.width
         contentHeight:          mainColumn.height
         visible:                _root.expanded

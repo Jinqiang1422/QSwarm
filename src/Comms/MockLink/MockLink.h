@@ -83,6 +83,10 @@ public:
 
     bool armed() const { return (_mavBaseMode & MAV_MODE_FLAG_SAFETY_ARMED) != 0; }
 
+    /// Accept MAV_CMD_DO_REPOSITION and apply its altitude. Off by default: the command is then
+    /// answered MAV_RESULT_UNSUPPORTED, which existing tests rely on.
+    void setRepositionSupported(bool supported) { _repositionSupported = supported; }
+
     /// Sets a failure mode for unit testing
     ///     @param failureMode Type of failure to simulate
     ///     @param failureAckResult Error to send if one the ack error modes
@@ -456,6 +460,7 @@ private:
 
     double _vehicleAltitudeAMSL = _defaultVehicleHomeAltitude;
     std::atomic<bool> _commLost = false;
+    std::atomic<bool> _repositionSupported = false;
     bool _signingEnabled = false;
     bool _highLatencyTransmissionEnabled = true;
 

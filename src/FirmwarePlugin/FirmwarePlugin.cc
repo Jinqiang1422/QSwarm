@@ -745,3 +745,13 @@ void FirmwarePlugin::takeoffAsync(Vehicle* vehicle, double altitude, QObject* co
     Q_UNUSED(allowed);
     finished(false);
 }
+
+void FirmwarePlugin::changeAltitudeAsync(Vehicle* vehicle, double altitudeRelative, QObject* context,
+                                         std::function<bool()> allowed, std::function<void(bool)> finished) const
+{
+    Q_UNUSED(vehicle);
+    Q_UNUSED(altitudeRelative);
+    Q_UNUSED(context);
+    Q_UNUSED(allowed);
+    finished(false);
+}

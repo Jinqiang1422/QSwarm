@@ -19,57 +19,27 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FlyView
 
-Rectangle {
-    id:     _root
-    width:  ScreenTools.defaultFontPixelWidth * 24
-    height: expanded ? Math.min(mainColumn.implicitHeight + _margin * 2, maxHeight) : headerRow.implicitHeight + _margin * 2
-    radius: ScreenTools.defaultFontPixelWidth / 2
-    color:  qgcPal.windowShade
-    border.color: qgcPal.text
-    border.width: 1
-    opacity: 0.95
-
-    property bool expanded:   true
-    property real maxHeight:  700
-    property real _margin:    ScreenTools.defaultFontPixelWidth / 2
-    property var  qgcPal:     QGroundControl.globalPalette
+SwarmPanel {
+    id: _root
+    contentHeight: mainColumn.implicitHeight
     property var  _swarm:     QGroundControl.swarmManager
     property var  _ai:        QGroundControl.swarmManager.aiAgent
     property var  _task:      QGroundControl.swarmManager.taskController
     property var  _lib:       QGroundControl.swarmManager.taskLibrary
 
-    // ---------------------------------------------------------------- 标题栏
-    RowLayout {
-        id:             headerRow
-        anchors.left:   parent.left
-        anchors.right:  parent.right
-        anchors.top:    parent.top
-        anchors.margins: _margin
-        spacing:        _margin
-
-        QGCLabel {
-            text:               qsTr("AI 集群指挥") + (_ai.busy ? qsTr("（思考中…）") : "")
-            font.bold:          true
-            Layout.fillWidth:   true
-        }
-        QGCButton {
-            text:       qsTr("配置")
-            onClicked:  configColumn.visible = !configColumn.visible
-        }
-        QGCButton {
-            text:       _root.expanded ? qsTr("收起") : qsTr("展开")
-            onClicked:  _root.expanded = !_root.expanded
-        }
-    }
+    title: qsTr("AI 集群指挥") + (_ai.busy ? qsTr("（思考中…）") : "")
+    showSettingsButton: true
+    onSettingsRequested: configColumn.visible = !configColumn.visible
 
     // ---------------------------------------------------------------- 主内容
     QGCFlickable {
         objectName:             "swarmAIPanelFlickable"
         anchors.left:           parent.left
         anchors.right:          parent.right
-        anchors.top:            headerRow.bottom
+        anchors.top:            _root.headerItem.bottom
         anchors.bottom:         parent.bottom
         anchors.margins:        _margin
+        anchors.bottomMargin:   _margin + ScreenTools.defaultFontPixelHeight
         contentWidth:           mainColumn.width
         contentHeight:          mainColumn.height
         visible:                _root.expanded
@@ -346,16 +316,21 @@ Rectangle {
             }
 
             // ==================== 指令输入 ====================
+            QGCTextField {
+                id:                 inputField
+                objectName:         "swarmAIInputField"
+                width:              parent.width
+                placeholderText:    qsTr("输入集群任务，如：全体起飞到30米后楔形编队")
+                enabled:            !_ai.busy
+                onAccepted: {
+                    if (sendButton.enabled) {
+                        sendButton.clicked()
+                    }
+                }
+            }
             RowLayout {
                 width:   parent.width
                 spacing: _margin
-                QGCTextField {
-                    id:                 inputField
-                    Layout.fillWidth:   true
-                    placeholderText:    qsTr("输入集群任务，如：全体起飞到30米后楔形编队")
-                    enabled:            !_ai.busy
-                    onAccepted:         sendButton.clicked()
-                }
                 QGCButton {
                     id:         sendButton
                     text:       qsTr("发送")
@@ -371,6 +346,7 @@ Rectangle {
                     text:       qsTr("新会话")
                     onClicked:  _ai.clearHistory()
                 }
+                Item { Layout.fillWidth: true }
             }
 
             // ==================== 计划确认区 ====================
@@ -389,18 +365,8 @@ Rectangle {
                     anchors.margins: _margin
                     spacing:        _margin / 2
 
-                    // Shared ceiling for every wrapping QGCLabel and QGCTextField below that sits
-                    // alone on its own row (Layout.fillWidth: true, nothing else sharing the row).
-                    // ColumnLayout has exactly one column, so EVERY row is forced as wide as ITS
-                    // OWN preferred size -- a Text item with wrapMode set but no width cap reports
-                    // its full *unwrapped* line as implicitWidth/Layout.preferredWidth, and that
-                    // alone (not Layout.minimumWidth, which measurement showed has no effect here)
-                    // is what a single-column ColumnLayout uses to override anchors.fill's ~132px
-                    // and inflate the whole column -- dragging every other row (including these
-                    // fields) out past swarmAIPanelFlickable's clip bounds with it. Set below the
-                    // panel's real available width (measured 132px, 22 * defaultFontPixelWidth)
-                    // with headroom so ordinary content never touches it. See Task 7c report.
-                    property real _planColumnMaxItemWidth: ScreenTools.defaultFontPixelWidth * 20
+                    // Keep wrapping labels and editors inside the available panel width.
+                    property real _planColumnMaxItemWidth: _root.width - _margin * 4
 
                     // 中止请求没有动作列表，下方 planSummary/pendingTaskModel 两个 Repeater 都为空；
                     // 不单独说明的话操作员会看到一个只有两个按钮的空确认框。

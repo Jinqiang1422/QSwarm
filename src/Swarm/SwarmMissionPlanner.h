@@ -75,9 +75,10 @@ public:
 
     /// 构建单架机的区域覆盖任务项序列（起飞→航点→返航）。
     /// 与上传逻辑分离，供预览/测试/其他调用方复用；调用方负责释放返回的 MissionItem。
-    QList<MissionItem*> buildCoverageMissionItems(const QGeoCoordinate& homeCoord, const QGeoCoordinate& center,
-                                                  double lengthMeters, double widthMeters, double angleDeg,
-                                                  double bandMin, double bandMax) const;
+    /// vehicle 决定起飞/航点的航向参数按哪种固件的任务命令定义填写。
+    QList<MissionItem*> buildCoverageMissionItems(Vehicle* vehicle, const QGeoCoordinate& homeCoord,
+                                                  const QGeoCoordinate& center, double lengthMeters, double widthMeters,
+                                                  double angleDeg, double bandMin, double bandMax) const;
 
     QVariantMap missionStatus() const { return _missionStatus; }
     Q_PROPERTY(QVariantMap uploadStates READ uploadStates NOTIFY missionStatusChanged)

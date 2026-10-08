@@ -78,25 +78,122 @@ void SwarmTaskEditorUITest::cleanup()
     QmlUITestBase::cleanup();
 }
 
-// The default offscreen QQuickWindow size (derived from Screen.pixelDensity, see
-// MainWindowSavedState.qml) is too short once a MockLink vehicle makes both
-// SwarmControlPanel and SwarmAIPanel visible and they stack in the left column:
-// SwarmAIPanel's maxHeight (parent.height - toolStrip.height - swarmControlPanel.height
-// - margins, set in FlyViewWidgetLayer.qml) goes negative, collapsing its QGCFlickable to
-// zero/negative height so nothing inside it -- including editParamsToggle -- can be
-// scrolled to a clickable position. Growing the window is a test-only viewport change
-// (like a user maximizing their window); it does not touch the panel's fixed
-// ScreenTools.defaultFontPixelWidth * 24 width that the assertions below check, and it
-// does not touch any production visibility/layout condition.
+// Exercise the editor at a normal desktop size, including both swarm panels.
 void SwarmTaskEditorUITest::_growWindowForPanel()
 {
-    _window->resize(900, 1600);
+    _window->resize(1280, 800);
     QVERIFY(QTest::qWaitFor(
         [this]() {
             QQuickItem* const flickable = findVisibleItem(_rootItem, QStringLiteral("swarmAIPanelFlickable"), 0);
             return flickable && flickable->height() > 0;
         },
         3000));
+}
+
+void SwarmTaskEditorUITest::_testPanelsFitViewport_data()
+{
+    QTest::addColumn<QSize>("viewport");
+    QTest::newRow("desktop") << QSize(1920, 1080);
+    QTest::newRow("laptop") << QSize(1280, 800);
+    QTest::newRow("compact") << QSize(900, 600);
+}
+
+void SwarmTaskEditorUITest::_testPanelsFitViewport()
+{
+    QFETCH(QSize, viewport);
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this, viewport](QPointer<MockLink>, Vehicle*) {
+            _window->resize(viewport);
+            QQuickItem* const panel = findVisibleItem(_rootItem, QStringLiteral("swarmAIPanel"));
+            QQuickItem* const controls = findVisibleItem(_rootItem, QStringLiteral("swarmControlPanel"));
+            QQuickItem* const flickable = findVisibleItem(_rootItem, QStringLiteral("swarmAIPanelFlickable"));
+            QVERIFY(panel);
+            QVERIFY(controls);
+            QVERIFY(flickable);
+            QTRY_VERIFY_WITH_TIMEOUT(panel->width() >= 320 && flickable->height() >= 120, 3000);
+            QVERIFY(panel->mapToScene(QPointF()).y() >= controls->mapToScene(QPointF(0, controls->height())).y());
+            QVERIFY(panel->mapToScene(QPointF(panel->width(), panel->height())).x() <= _window->width());
+            QVERIFY(panel->mapToScene(QPointF(panel->width(), panel->height())).y() <= _window->height());
+            const qreal expandedHeight = flickable->height();
+            QVERIFY(controls->setProperty("expanded", false));
+            QTRY_VERIFY_WITH_TIMEOUT(flickable->height() > expandedHeight, 3000);
+        });
+}
+
+void SwarmTaskEditorUITest::_testPanelWindowControls_data()
+{
+    QTest::addColumn<QString>("panelName");
+    QTest::newRow("controls") << QStringLiteral("swarmControlPanel");
+    QTest::newRow("AI") << QStringLiteral("swarmAIPanel");
+}
+
+void SwarmTaskEditorUITest::_testPanelWindowControls()
+{
+    QFETCH(QString, panelName);
+    runWithMockLink(
+        [] { return MockLink::startPX4MockLink(); },
+        [this, panelName](QPointer<MockLink>, Vehicle*) {
+            _window->resize(1920, 1080);
+            QQuickItem* const panel = findVisibleItem(_rootItem, panelName);
+            QVERIFY(panel);
+            QTRY_VERIFY_WITH_TIMEOUT(panel->parentItem()->width() > 1900, 3000);
+            QVERIFY(_waitForContentHeightSettled(QStringLiteral("swarmAIPanelFlickable")));
+            QTRY_VERIFY_WITH_TIMEOUT(panel->height() > 100, 3000);
+            const QPointF dockedPosition = panel->position();
+            const auto drag = [this](QQuickItem* handle, const QPoint& delta) {
+                const QPoint start = handle->mapToScene(QPointF(handle->width() / 2, handle->height() / 2)).toPoint();
+                QTest::mousePress(_window, Qt::LeftButton, Qt::NoModifier, start);
+                QTest::mouseMove(_window, start + delta / 2);
+                QTest::mouseMove(_window, start + delta);
+                QTest::mouseRelease(_window, Qt::LeftButton, Qt::NoModifier, start + delta);
+            };
+            QQuickItem* const title = findVisibleItem(_rootItem, panelName + "DragHandle");
+            QVERIFY(title);
+            const QPoint delta = QPoint(600, 100) - panel->position().toPoint();
+            drag(title, delta);
+            QTRY_VERIFY_WITH_TIMEOUT((panel->position() - QPointF(600, 100)).manhattanLength() < 3, 3000);
+
+            QQuickItem* const grip = findVisibleItem(_rootItem, panelName + "ResizeHandle");
+            QVERIFY(grip);
+            const QSizeF initialSize = panel->size();
+            drag(grip, QPoint(160, 80));
+            QTRY_VERIFY_WITH_TIMEOUT(
+                panel->width() > initialSize.width() + 150 && panel->height() > initialSize.height() + 70, 3000);
+            drag(grip, QPoint(-80, -40));
+            QTRY_VERIFY_WITH_TIMEOUT(qAbs(panel->width() - initialSize.width() - 80) < 3 &&
+                                         qAbs(panel->height() - initialSize.height() - 40) < 3,
+                                     3000);
+            const QSizeF resized = panel->size();
+            const QPointF moved = panel->position();
+            QVERIFY(clickButton(panelName + "Collapse"));
+            QTRY_VERIFY_WITH_TIMEOUT(panel->height() < resized.height(), 3000);
+            QVERIFY(clickButton(panelName + "Collapse"));
+            QTRY_COMPARE_WITH_TIMEOUT(panel->size(), resized, 3000);
+
+            QVERIFY(clickButton(panelName + "FullScreen"));
+            QTRY_COMPARE_WITH_TIMEOUT(panel->size(), panel->parentItem()->size(), 3000);
+            QCOMPARE(panel->position(), QPointF(0, 0));
+            _window->resize(900, 600);
+            QTRY_COMPARE_WITH_TIMEOUT(panel->size(), panel->parentItem()->size(), 3000);
+            QVERIFY(clickButton(panelName + "FullScreen"));
+            QTRY_VERIFY_WITH_TIMEOUT(panel->x() >= 0 && panel->y() >= 0 &&
+                                         panel->x() + panel->width() <= panel->parentItem()->width() &&
+                                         panel->y() + panel->height() <= panel->parentItem()->height(),
+                                     3000);
+            _window->resize(1920, 1080);
+            QTRY_COMPARE_WITH_TIMEOUT(panel->size(), resized, 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(panel->position(), moved, 3000);
+            QVERIFY(clickButton(panelName + "Reset"));
+            QTRY_COMPARE_WITH_TIMEOUT(panel->position(), dockedPosition, 3000);
+            QVERIFY(!panel->property("floating").toBool());
+            const qreal expandedHeight = panel->height();
+            QVERIFY(clickButton(panelName + "Collapse"));
+            drag(title, QPoint(100, -30));
+            QVERIFY(clickButton(panelName + "Collapse"));
+            QTRY_COMPARE_WITH_TIMEOUT(panel->height(), expandedHeight, 3000);
+            QVERIFY(clickButton(panelName + "Reset"));
+        });
 }
 
 // Enabling "编辑参数" reveals previously height-0 rows, growing mainColumn's implicit

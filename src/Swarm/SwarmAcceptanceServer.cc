@@ -31,6 +31,7 @@
 #include "SwarmMissionPlanner.h"
 #include "SwarmPerceptionBridge.h"
 #include "SwarmTaskController.h"
+#include "SwarmTaskLibrary.h"
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
 
@@ -280,6 +281,16 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
         _manager->stopFormation();
         return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
     }
+    if (command == QStringLiteral("goto")) {
+        // Same entry point as the Fly View map "Go to location" action.
+        Vehicle* vehicle =
+            MultiVehicleManager::instance()->getVehicleById(request.value(QStringLiteral("vehicle_id")).toInt());
+        if (!vehicle) {
+            return errorResponse(QStringLiteral("vehicle_not_found"));
+        }
+        const bool accepted = _manager->gotoLocation(vehicle, requestCoordinate(request));
+        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
+    }
     if (command == QStringLiteral("start_mission")) {
         _manager->startMissionAll();
         return {{QStringLiteral("ok"), true}};
@@ -315,6 +326,52 @@ QJsonObject SwarmAcceptanceServer::_handleRequest(const QJsonObject& request)
     if (command == QStringLiteral("abort_task")) {
         _manager->taskController()->abort(QStringLiteral("acceptance_test"));
         return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("retry_task")) {
+        _manager->taskController()->retryBlockedStage();
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("templates")) {
+        _manager->taskLibrary()->reload();
+        return {{QStringLiteral("ok"), true},
+                {QStringLiteral("templates"), QJsonArray::fromVariantList(_manager->taskLibrary()->templates())}};
+    }
+    if (command == QStringLiteral("run_template")) {
+        const auto center = requestCoordinate(request);
+        const bool accepted =
+            _manager->taskLibrary()->runTemplate(request.value(QStringLiteral("name")).toString(),
+                                                 request.value(QStringLiteral("parameters")).toObject().toVariantMap(),
+                                                 center.latitude(), center.longitude());
+        return {{QStringLiteral("ok"), accepted}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("set_selection")) {
+        auto* vehicles = MultiVehicleManager::instance();
+        const auto ids = request.value(QStringLiteral("vehicle_ids")).toArray();
+        for (const auto& id : ids) {
+            if (!vehicles->getVehicleById(id.toInt())) {
+                return errorResponse(QStringLiteral("vehicle_not_found"));
+            }
+        }
+        vehicles->deselectAllVehicles();
+        for (const auto& id : ids) {
+            vehicles->selectVehicle(id.toInt());
+        }
+        return {{QStringLiteral("ok"), true}, {QStringLiteral("status"), _status()}};
+    }
+    if (command == QStringLiteral("land_all")) {
+        _manager->landAll();
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("emergency_disarm_all")) {
+        _manager->emergencyDisarmAll();
+        return {{QStringLiteral("ok"), true}};
+    }
+    if (command == QStringLiteral("set_perception")) {
+        if (request.value(QStringLiteral("enabled")).toBool()) {
+            return {{QStringLiteral("ok"), _manager->startPerception()}};
+        }
+        _manager->stopPerception();
+        return {{QStringLiteral("ok"), true}};
     }
     return errorResponse(QStringLiteral("unknown_command"));
 }
@@ -462,6 +519,8 @@ QJsonObject SwarmAcceptanceServer::_status() const
         {QStringLiteral("vehicle_count"), vehiclesJson.count()},
         {QStringLiteral("dispatch_counts"), _dispatchCounts},
         {QStringLiteral("execution"), _executionResult},
+        {QStringLiteral("execution_states"), QJsonObject::fromVariantMap(_manager->executionStates())},
+        {QStringLiteral("execution_message"), _manager->executionMessage()},
         {QStringLiteral("perception_diagnostics"), QJsonObject::fromVariantMap(_manager->perceptionDiagnostics())},
         {QStringLiteral("vehicles"), vehiclesJson},
         {QStringLiteral("formation"),
@@ -478,6 +537,7 @@ QJsonObject SwarmAcceptanceServer::_status() const
              {QStringLiteral("status"), QJsonObject::fromVariantMap(_manager->missionPlanner()->missionStatus())}}},
         {QStringLiteral("task"),
          QJsonObject{{QStringLiteral("running"), taskController->running()},
+                     {QStringLiteral("can_retry"), taskController->canRetry()},
                      {QStringLiteral("blocked"), taskController->blocked()},
                      {QStringLiteral("task_id"), taskController->taskId()},
                      {QStringLiteral("outcome"),

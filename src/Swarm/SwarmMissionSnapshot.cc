@@ -118,7 +118,9 @@ QString SwarmMissionSnapshot::validate(Vehicle* vehicle, const SwarmConstraintCh
     double distance = 0.0, vertical = 0.0;
     for (int i = 0; i < route.size(); ++i) {
         const auto& point = route[i];
-        if (!std::isfinite(point.altitude()) || point.altitude() < home.altitude() - 0.5 ||
+        // The first point is measured state, not a commanded destination. Sensor drift after landing
+        // can place it slightly below Home; apply the altitude floor to planned destinations only.
+        if (!std::isfinite(point.altitude()) || (i > 0 && point.altitude() < home.altitude() - 0.5) ||
             (config.maxAltitudeM > 0 && point.altitude() - home.altitude() > config.maxAltitudeM))
             return QStringLiteral("航线高度超出当前限制");
         const auto& previous = route[qMax(0, i - 1)];

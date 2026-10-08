@@ -1,15 +1,15 @@
 #pragma once
 
-#include "LinkConfiguration.h"
-#include "LinkInterface.h"
-
 #include <QtCore/QByteArray>
+#include <QtCore/QHash>
 #include <QtCore/QList>
 #include <QtCore/QMutex>
 #include <QtCore/QString>
 #include <QtNetwork/QHostAddress>
-
 #include <atomic>
+
+#include "LinkConfiguration.h"
+#include "LinkInterface.h"
 
 class QUdpSocket;
 class QThread;
@@ -18,29 +18,18 @@ class QThread;
 
 struct UDPClient
 {
-    UDPClient(const QHostAddress &addr, quint16 portNum)
-        : address(addr)
-        , port(portNum)
+    UDPClient(const QHostAddress& addr, quint16 portNum) : address(addr), port(portNum) {}
+
+    UDPClient(const QString& host, const QHostAddress& addr, quint16 portNum)
+        : hostname(host), address(addr), port(portNum)
     {}
 
-    UDPClient(const QString &host, const QHostAddress &addr, quint16 portNum)
-        : hostname(host)
-        , address(addr)
-        , port(portNum)
+    explicit UDPClient(const UDPClient* other) : hostname(other->hostname), address(other->address), port(other->port)
     {}
 
-    explicit UDPClient(const UDPClient *other)
-        : hostname(other->hostname)
-        , address(other->address)
-        , port(other->port)
-    {}
+    bool operator==(const UDPClient& other) const { return ((address == other.address) && (port == other.port)); }
 
-    bool operator==(const UDPClient &other) const
-    {
-        return ((address == other.address) && (port == other.port));
-    }
-
-    UDPClient &operator=(const UDPClient &other)
+    UDPClient& operator=(const UDPClient& other)
     {
         hostname = other.hostname;
         address = other.address;
@@ -64,28 +53,41 @@ class UDPConfiguration : public LinkConfiguration
     Q_PROPERTY(quint16 localPort READ localPort WRITE setLocalPort NOTIFY localPortChanged)
 
 public:
-    explicit UDPConfiguration(const QString &name, QObject *parent = nullptr);
-    explicit UDPConfiguration(const UDPConfiguration *source, QObject *parent = nullptr);
+    explicit UDPConfiguration(const QString& name, QObject* parent = nullptr);
+    explicit UDPConfiguration(const UDPConfiguration* source, QObject* parent = nullptr);
     virtual ~UDPConfiguration();
 
-    Q_INVOKABLE void addHost(const QString &host);
-    Q_INVOKABLE void addHost(const QString &host, quint16 port);
-    Q_INVOKABLE void removeHost(const QString &host);
-    Q_INVOKABLE void removeHost(const QString &host, quint16 port);
+    Q_INVOKABLE void addHost(const QString& host);
+    Q_INVOKABLE void addHost(const QString& host, quint16 port);
+    Q_INVOKABLE void removeHost(const QString& host);
+    Q_INVOKABLE void removeHost(const QString& host, quint16 port);
 
     LinkType type() const override { return LinkConfiguration::TypeUdp; }
+
     void setAutoConnect(bool autoc = true) override;
-    void copyFrom(const LinkConfiguration *source) override;
-    void loadSettings(QSettings &settings, const QString &root) override;
-    void saveSettings(QSettings &settings, const QString &root) const override;
+    void copyFrom(const LinkConfiguration* source) override;
+    void loadSettings(QSettings& settings, const QString& root) override;
+    void saveSettings(QSettings& settings, const QString& root) const override;
+
     QString settingsURL() const override { return QStringLiteral("UdpSettings.qml"); }
+
     QString settingsTitle() const override { return tr("UDP Link Settings"); }
 
     QStringList hostList() const { return _hostList; }
+
     QList<std::shared_ptr<UDPClient>> targetHosts() const { return _targetHosts; }
+
     void resolveHosts() const;
+
     quint16 localPort() const { return _localPort; }
-    void setLocalPort(quint16 port) { if (port != _localPort) { _localPort = port; emit localPortChanged(); } }
+
+    void setLocalPort(quint16 port)
+    {
+        if (port != _localPort) {
+            _localPort = port;
+            emit localPortChanged();
+        }
+    }
 
 signals:
     void hostListChanged();
@@ -94,7 +96,7 @@ signals:
 private:
     void _updateHostList();
 
-    static QString _getIpAddress(const QString &address);
+    static QString _getIpAddress(const QString& address);
 
     QStringList _hostList;
     QList<std::shared_ptr<UDPClient>> _targetHosts;
@@ -108,7 +110,7 @@ class UDPWorker : public QObject
     Q_OBJECT
 
 public:
-    explicit UDPWorker(const UDPConfiguration *config, QObject *parent = nullptr);
+    explicit UDPWorker(const UDPConfiguration* config, QObject* parent = nullptr);
     virtual ~UDPWorker();
 
     bool isConnected() const;
@@ -117,14 +119,14 @@ public slots:
     void setupSocket();
     void connectLink();
     void disconnectLink();
-    void writeData(const QByteArray &data);
+    void writeData(const QByteArray& data);
 
 signals:
     void connected();
     void disconnected();
-    void errorOccurred(const QString &errorString);
-    void dataReceived(const QByteArray &data);
-    void dataSent(const QByteArray &data);
+    void errorOccurred(const QString& errorString);
+    void dataReceived(const QByteArray& data);
+    void dataSent(const QByteArray& data);
 
 private slots:
     void _onSocketConnected();
@@ -134,10 +136,11 @@ private slots:
     void _onSocketErrorOccurred(QAbstractSocket::SocketError socketError);
 
 private:
-    const UDPConfiguration *_udpConfig = nullptr;
-    QUdpSocket *_socket = nullptr;
+    const UDPConfiguration* _udpConfig = nullptr;
+    QUdpSocket* _socket = nullptr;
     QMutex _sessionTargetsMutex;
     QList<std::shared_ptr<UDPClient>> _sessionTargets;
+    QHash<quint8, QList<std::shared_ptr<UDPClient>>> _systemTargets;
     bool _isConnected = false;
     bool _errorEmitted = false;
     QSet<QHostAddress> _localAddresses;
@@ -152,7 +155,7 @@ class UDPLink : public LinkInterface
     Q_OBJECT
 
 public:
-    explicit UDPLink(SharedLinkConfigurationPtr &config, QObject *parent = nullptr);
+    explicit UDPLink(SharedLinkConfigurationPtr& config, QObject* parent = nullptr);
     virtual ~UDPLink();
 
     bool isConnected() const override;
@@ -163,16 +166,16 @@ protected:
     bool _connect() override;
 
 private slots:
-    void _writeBytes(const QByteArray &data) override;
+    void _writeBytes(const QByteArray& data) override;
     void _onConnected();
     void _onDisconnected();
-    void _onErrorOccurred(const QString &errorString);
-    void _onDataReceived(const QByteArray &data);
-    void _onDataSent(const QByteArray &data);
+    void _onErrorOccurred(const QString& errorString);
+    void _onDataReceived(const QByteArray& data);
+    void _onDataSent(const QByteArray& data);
 
 private:
-    const UDPConfiguration *_udpConfig = nullptr;
-    UDPWorker *_worker = nullptr;
-    QThread *_workerThread = nullptr;
+    const UDPConfiguration* _udpConfig = nullptr;
+    UDPWorker* _worker = nullptr;
+    QThread* _workerThread = nullptr;
     std::atomic<bool> _disconnectedEmitted{false};
 };

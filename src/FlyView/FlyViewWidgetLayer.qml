@@ -35,6 +35,10 @@ Item {
     property real   _layoutMargin:          ScreenTools.defaultFontPixelWidth * 0.75
     property bool   _layoutSpacing:         ScreenTools.defaultFontPixelWidth
     property bool   _showSingleVehicleUI:   true
+    readonly property real _swarmPanelWidth: Math.min(ScreenTools.defaultFontPixelWidth * 80,
+                                                     Math.max(ScreenTools.defaultFontPixelWidth * 64, width * 0.3),
+                                                     width - _toolsMargin * 2)
+    readonly property real _swarmPanelHeight: Math.max(0, height - toolStrip.y - toolStrip.height - _toolsMargin * 3)
 
     QGCToolInsets {
         id:                     _totalToolInsets
@@ -63,27 +67,32 @@ Item {
         property real rightEdgeCenterInset: rightEdgeTopInset
     }
 
-    //-- 集群指挥控制扩展（Kimi_Agent_QGC 集成）
-    // 集群指控面板：停靠在左侧工具条下方，可折叠
+    property var _frontSwarmPanel: swarmAIPanel
+
     SwarmControlPanel {
         id:                     swarmControlPanel
-        anchors.left:           parent.left
-        anchors.leftMargin:     _toolsMargin
-        anchors.top:            toolStrip.bottom
-        anchors.topMargin:      _toolsMargin
-        maxHeight:              parent.height - toolStrip.height - (_toolsMargin * 4)
-        z:                      QGroundControl.zOrderWidgets
+        objectName:             "swarmControlPanel"
+        defaultWidth:           _swarmPanelWidth
+        defaultX:               _toolsMargin
+        defaultY:               toolStrip.y + toolStrip.height + _toolsMargin
+        maxHeight:              swarmAIPanel.expanded ? _swarmPanelHeight * 0.42
+                                                     : _swarmPanelHeight - swarmAIPanel.headerHeight
+        z:                      QGroundControl.zOrderWidgets + (fullScreen ? 2 : 0)
+                                + (_root._frontSwarmPanel === swarmControlPanel ? 1 : 0)
+        onRaiseRequested:       _root._frontSwarmPanel = swarmControlPanel
         visible:                QGroundControl.multiVehicleManager.vehicles.count > 0
     }
 
-    // AI 集群指挥面板：停靠在集群面板下方，可折叠
     SwarmAIPanel {
-        anchors.left:           parent.left
-        anchors.leftMargin:     _toolsMargin
-        anchors.top:            swarmControlPanel.bottom
-        anchors.topMargin:      _toolsMargin
-        maxHeight:              parent.height - toolStrip.height - swarmControlPanel.height - (_toolsMargin * 6)
-        z:                      QGroundControl.zOrderWidgets
+        id:                     swarmAIPanel
+        objectName:             "swarmAIPanel"
+        defaultWidth:           _swarmPanelWidth
+        defaultX:               _toolsMargin
+        defaultY:               swarmControlPanel.defaultY + swarmControlPanel.dockedHeight + _toolsMargin
+        maxHeight:              Math.max(0, parent.height - defaultY - _toolsMargin)
+        z:                      QGroundControl.zOrderWidgets + (fullScreen ? 2 : 0)
+                                + (_root._frontSwarmPanel === swarmAIPanel ? 1 : 0)
+        onRaiseRequested:       _root._frontSwarmPanel = swarmAIPanel
         visible:                QGroundControl.multiVehicleManager.vehicles.count > 0
     }
 
@@ -91,7 +100,7 @@ Item {
     SwarmSituationLayer {
         map:                    mapControl
         swarmManager:           QGroundControl.swarmManager
-        showHeatmap:            true
+        showHeatmap:            false
         showThreats:            true
         showTracks:             true
     }

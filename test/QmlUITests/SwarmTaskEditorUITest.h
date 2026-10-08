@@ -21,10 +21,13 @@ private slots:
     void _testStageActionFieldIsVisibleAndWide();
     void _testEditRoundTripsThroughUI();
     void _testSetSelectionActionFieldDisabled();
+    void _testPanelsFitViewport_data();
+    void _testPanelsFitViewport();
+    void _testPanelWindowControls_data();
+    void _testPanelWindowControls();
 
 private:
-    /// Grows the offscreen test window so SwarmAIPanel's QGCFlickable gets a positive
-    /// height once SwarmControlPanel is also visible above it. See the definition for why.
+    /// Uses a normal desktop viewport for the editor interaction tests.
     void _growWindowForPanel();
 
     /// Waits for the named QGCFlickable's contentHeight to stop changing across

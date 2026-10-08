@@ -11,6 +11,8 @@
 #include <QtQml/QQmlComponent>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
+#include <algorithm>
+#include <cmath>
 
 #include "Fact.h"
 #include "FirmwarePlugin.h"
@@ -18,6 +20,7 @@
 #include "MissionItem.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
+#include "PX4FirmwarePlugin.h"
 #include "QmlObjectListModel.h"
 #include "RCToParamDialogController.h"
 #include "SwarmClock.h"
@@ -29,8 +32,401 @@
 #include "SwarmTunnelProtocol.h"
 #include "Vehicle.h"
 #include "VehicleFactGroup.h"
+#include "px4_custom_mode.h"
+
+void SwarmRegressionTest::px4FlightModesRetainMeaningAcrossProtocolVersions()
+{
+    PX4FirmwarePlugin plugin;
+    constexpr uint32_t externalMode = 0x7f040000;
+    FlightModeList modes{
+        {"Land", 7, PX4CustomMode::AUTO_MISSION, true, true}, {"Mission", 6, PX4CustomMode::AUTO_RTL, true, true},
+        {"Takeoff", 8, PX4CustomMode::AUTO_LAND, true, true}, {"", 9, PX4CustomMode::AUTO_TAKEOFF, false, true},
+        {"External survey", 0, externalMode, true, true},
+    };
+    plugin.updateAvailableFlightModes(modes);
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_MISSION), "Mission");
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_RTL), "Return");
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_LAND), "Land");
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_TAKEOFF), "Takeoff");
+    uint8_t baseMode = 0;
+    uint32_t customMode = 0;
+    QVERIFY(plugin.setFlightMode("Mission", &baseMode, &customMode));
+    QCOMPARE(customMode, uint32_t(PX4CustomMode::AUTO_MISSION));
+    modes.last().mode_name = "Renamed external survey";
+    modes.first().mode_name = "Land";
+    plugin.updateAvailableFlightModes(modes);
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4CustomMode::AUTO_MISSION), "Mission");
+    QCOMPARE(plugin.flightMode(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, externalMode), "Renamed external survey");
+}
 
 SwarmRegressionTest::~SwarmRegressionTest() = default;
+
+void SwarmRegressionTest::activeFormationEditsUpdateTargets()
+{
+    // The headless test host has no physical pressure sensor backend.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression("Failed to connect to pressure backend|Error Initializing Pressure Sensor"));
+    addVehicles(4);
+    auto* mvm = MultiVehicleManager::instance();
+    QList<Vehicle*> followers;
+    QSet<int> members;
+    for (int i = 0; i < mvm->vehicles()->count(); ++i) {
+        auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
+        QVERIFY(member);
+        member->sendMavCommand(member->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0, 10);
+        members.insert(member->id());
+        if (member != vehicle())
+            followers.append(member);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        std::all_of(followers.begin(), followers.end(),
+                    [](Vehicle* v) { return v->armed() && v->altitudeRelative()->rawValue().toDouble() >= 9; }) &&
+            vehicle()->armed() && vehicle()->altitudeRelative()->rawValue().toDouble() >= 9,
+        TestTimeout::longMs());
+    std::sort(followers.begin(), followers.end(), [](Vehicle* a, Vehicle* b) { return a->id() < b->id(); });
+    const double formationHeading = 90;
+    qint64 now = 1000;
+    SwarmClock::setTestClock([&now] { return now; });
+    const auto resetClock = qScopeGuard([] { SwarmClock::setTestClock({}); });
+    FormationController formation;
+    formation.setMembers(members);
+    QHash<int, QGeoCoordinate> targets;
+    bool allowTargets = true;
+    int pendingCommands = 0;
+    for (auto* follower : followers) {
+        connect(follower, &Vehicle::mavCommandResult, &formation, [&](int, int, int command, int, int) {
+            if (command == MAV_CMD_DO_REPOSITION)
+                --pendingCommands;
+        });
+    }
+    const auto waitCommands = [&] { QTRY_COMPARE_WITH_TIMEOUT(pendingCommands, 0, TestTimeout::longMs()); };
+    formation.setTargetAllowedCallback([&](int id, const QGeoCoordinate& coordinate) {
+        targets[id] = coordinate;
+        if (allowTargets)
+            ++pendingCommands;
+        return allowTargets;
+    });
+    const auto verifyMeasuredTargets = [&] {
+        waitCommands();
+        QCOMPARE(targets.size(), 4);
+        for (auto* follower : followers) {
+            const auto target = targets.value(follower->id());
+            QVERIFY(target.distanceTo(follower->coordinate()) < 0.01);
+            QCOMPARE(target.altitude(), follower->altitudeAMSL()->rawValue().toDouble());
+        }
+    };
+    const auto tick = [&](qint64 milliseconds = 1000) {
+        now += milliseconds;
+        // MockLink varies yaw in its telemetry; use a fixed reference for convergence assertions.
+        vehicle()->heading()->setRawValue(formationHeading);
+        QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
+        waitCommands();
+    };
+    QVERIFY(formation.start(vehicle()->id()));
+    verifyMeasuredTargets();
+    const QList<FormationController::FormationType> shapes{
+        FormationController::FormationColumn, FormationController::FormationLine, FormationController::FormationCircle,
+        FormationController::FormationWedge};
+    for (auto shape : shapes) {
+        // Mock aircraft stay at their measured positions while targets move ahead. Each subsequent
+        // switch must discard those unreached targets, including changes midway through a transition.
+        formation.setFormationType(shape);
+        tick();
+        verifyMeasuredTargets();
+        auto previous = targets;
+        for (int step = 0; step < 3; ++step) {
+            tick();
+            for (auto* follower : followers) {
+                const auto target = targets.value(follower->id());
+                QVERIFY(target.distanceTo(previous.value(follower->id())) <= 2.01);
+                QVERIFY(qAbs(target.altitude() - previous.value(follower->id()).altitude()) <= 1.01);
+            }
+            previous = targets;
+        }
+        QVERIFY(targets.value(followers.first()->id()).distanceTo(followers.first()->coordinate()) > 0.1);
+    }
+
+    formation.setSpacingMeters(20);
+    tick();
+    verifyMeasuredTargets();
+    formation.setVerticalStepMeters(6);
+    tick();
+    verifyMeasuredTargets();
+    // Clock jumps (e.g. a busy UI) must not yield a large target jump.
+    const auto beforeDelay = targets;
+    tick(60000);
+    for (auto* follower : followers) {
+        QVERIFY(targets.value(follower->id()).distanceTo(beforeDelay.value(follower->id())) <= 2.01);
+    }
+    // Rejected targets must not advance the transition behind the constraint checker.
+    allowTargets = false;
+    tick();
+    const auto rejected = targets;
+    for (int step = 0; step < 5; ++step)
+        tick();
+    for (auto* follower : followers)
+        QCOMPARE(targets.value(follower->id()), rejected.value(follower->id()));
+    allowTargets = true;
+    int transitionTicks = 0;
+    QHash<int, QGeoCoordinate> expectedTargets;
+    for (int i = 0; i < followers.size(); ++i) {
+        const int rank = (i + 2) / 2;
+        const int side = i % 2 == 0 ? -1 : 1;
+        const auto expected =
+            vehicle()->coordinate().atDistanceAndAzimuth(20 * rank, formationHeading + 180 + side * 30);
+        auto destination = expected;
+        destination.setAltitude(vehicle()->altitudeAMSL()->rawValue().toDouble() + 6 * rank);
+        expectedTargets.insert(followers[i]->id(), destination);
+        transitionTicks =
+            qMax(transitionTicks, int(std::ceil(followers[i]->coordinate().distanceTo(destination) / 2)) + 2);
+        transitionTicks = qMax(
+            transitionTicks,
+            int(std::ceil(std::abs(destination.altitude() - followers[i]->altitudeAMSL()->rawValue().toDouble()))) + 2);
+    }
+    for (int step = 0; step < transitionTicks; ++step)
+        tick();
+    for (auto* follower : followers) {
+        const auto expected = expectedTargets.value(follower->id());
+        QVERIFY2(targets.value(follower->id()).distanceTo(expected) < 0.01,
+                 qPrintable(QStringLiteral("Remaining target distance: %1 m")
+                                .arg(targets.value(follower->id()).distanceTo(expected))));
+        QCOMPARE(targets.value(follower->id()).altitude(), expected.altitude());
+    }
+
+    // A subsequent shape change must use new telemetry, not the position at the first start.
+    Vehicle* movedFollower = mvm->getVehicleById(_extraLinks.first()->vehicleId());
+    QVERIFY(movedFollower);
+    const auto moved = movedFollower->coordinate().atDistanceAndAzimuth(25, 65);
+    mavlink_message_t position{};
+    mavlink_msg_global_position_int_pack(movedFollower->id(), movedFollower->defaultComponentId(), &position, 0,
+                                         qRound(moved.latitude() * 1e7), qRound(moved.longitude() * 1e7),
+                                         qRound(movedFollower->altitudeAMSL()->rawValue().toDouble() * 1000), 10000, 0,
+                                         0, 0, 0);
+    _extraLinks.first()->respondWithMavlinkMessage(position);
+    QTRY_VERIFY_WITH_TIMEOUT(movedFollower->coordinate().distanceTo(moved) < 0.1, TestTimeout::longMs());
+    movedFollower->altitudeAMSL()->setRawValue(movedFollower->altitudeAMSL()->rawValue().toDouble() + 4);
+    const double movedAltitude = movedFollower->altitudeAMSL()->rawValue().toDouble();
+    formation.setFormationType(FormationController::FormationLine);
+    now += 1000;
+    QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
+    QVERIFY(targets.value(movedFollower->id()).distanceTo(moved) < 0.1);
+    QCOMPARE(targets.value(movedFollower->id()).altitude(), movedAltitude);
+    waitCommands();
+    formation.stop();
+    targets.clear();
+    tick();
+    QVERIFY(targets.isEmpty());
+    QVERIFY(formation.start(vehicle()->id()));
+    verifyMeasuredTargets();
+}
+
+void SwarmRegressionTest::guidanceTargetTracksSlotMotion()
+{
+    const QGeoCoordinate origin(47.397, 8.5455, 500);
+
+    // The leader flies north at 10 m/s, e.g. after a map "go to location". A target on its slot must
+    // move with the slot instead of being pinned by the 2 m/s catch-up cap.
+    QGeoCoordinate slot = origin;
+    QGeoCoordinate target = origin;
+    for (int step = 0; step < 4; ++step) {
+        QGeoCoordinate next = slot.atDistanceAndAzimuth(10, 0);
+        next.setAltitude(slot.altitude() + 3);
+        target = FormationController::advanceGuidanceTarget(target, slot, next, 1.0);
+        QVERIFY2(target.distanceTo(next) < 0.01,
+                 qPrintable(QStringLiteral("target is %1 m from a slot that moved 10 m").arg(target.distanceTo(next))));
+        QVERIFY(qAbs(target.altitude() - next.altitude()) < 0.01);
+        slot = next;
+    }
+
+    // A target still converging is carried along with the slot, then closes at most 2 m of the
+    // remaining horizontal gap and 1 m of the vertical gap per second.
+    QGeoCoordinate lagging = origin.atDistanceAndAzimuth(20, 270);
+    lagging.setAltitude(origin.altitude() - 5);
+    QGeoCoordinate moved = origin.atDistanceAndAzimuth(10, 0);
+    moved.setAltitude(origin.altitude());
+    const QGeoCoordinate carried = lagging.atDistanceAndAzimuth(10, 0);
+    const QGeoCoordinate advanced = FormationController::advanceGuidanceTarget(lagging, origin, moved, 1.0);
+    QVERIFY(qAbs(advanced.distanceTo(carried) - 2.0) < 0.01);
+    QVERIFY(qAbs(advanced.distanceTo(moved) - (carried.distanceTo(moved) - 2.0)) < 0.01);
+    QVERIFY(qAbs(advanced.altitude() - (origin.altitude() - 4)) < 0.01);
+
+    // The first cycle has no previous slot position and starts from the measured position.
+    const QGeoCoordinate first = FormationController::advanceGuidanceTarget(lagging, QGeoCoordinate(), moved, 1.0);
+    QVERIFY(qAbs(first.distanceTo(lagging) - 2.0) < 0.01);
+}
+
+void SwarmRegressionTest::formationSkipsFollowerAwaitingRepositionAck()
+{
+    // The headless test host has no physical pressure sensor backend.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression("Failed to connect to pressure backend|Error Initializing Pressure Sensor"));
+    addVehicles(1);
+    Vehicle* follower = MultiVehicleManager::instance()->getVehicleById(_extraLinks.first()->vehicleId());
+    QVERIFY(follower);
+    for (Vehicle* member : {vehicle(), follower})
+        member->sendMavCommand(member->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0, 10);
+    QTRY_VERIFY_WITH_TIMEOUT(follower->armed() && follower->altitudeRelative()->rawValue().toDouble() >= 9 &&
+                                 vehicle()->armed() && vehicle()->altitudeRelative()->rawValue().toDouble() >= 9,
+                             TestTimeout::longMs());
+
+    FormationController formation;
+    formation.setMembers({vehicle()->id(), follower->id()});
+    int commandedCycles = 0;
+    formation.setTargetAllowedCallback([&](int, const QGeoCoordinate&) {
+        ++commandedCycles;
+        return true;
+    });
+    // start() runs one cycle immediately. Its reposition ACK is not processed until the event loop runs.
+    QVERIFY(formation.start(vehicle()->id()));
+    QCOMPARE(commandedCycles, 1);
+    QVERIFY(follower->isMavCommandPending(follower->defaultComponentId(), MAV_CMD_DO_REPOSITION));
+    // The next cycle must wait for that ACK instead of sending a duplicate the command queue rejects.
+    QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
+    QCOMPARE(commandedCycles, 1);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!follower->isMavCommandPending(follower->defaultComponentId(), MAV_CMD_DO_REPOSITION),
+                             TestTimeout::longMs());
+    const int beforeCycle = commandedCycles;
+    QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
+    QCOMPARE(commandedCycles, beforeCycle + 1);
+    formation.stop();
+}
+
+void SwarmRegressionTest::formationRebuildsSlotsWhenMemberLacksOne()
+{
+    // The headless test host has no physical pressure sensor backend.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression("Failed to connect to pressure backend|Error Initializing Pressure Sensor"));
+    addVehicles(2);
+    auto* mvm = MultiVehicleManager::instance();
+    QList<Vehicle*> followers;
+    QSet<int> memberIds;
+    for (int i = 0; i < mvm->vehicles()->count(); ++i) {
+        auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
+        QVERIFY(member);
+        member->sendMavCommand(member->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0, 10);
+        memberIds.insert(member->id());
+        if (member != vehicle())
+            followers.append(member);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        std::all_of(followers.begin(), followers.end(),
+                    [](Vehicle* v) { return v->armed() && v->altitudeRelative()->rawValue().toDouble() >= 9; }) &&
+            vehicle()->armed() && vehicle()->altitudeRelative()->rawValue().toDouble() >= 9,
+        TestTimeout::longMs());
+    std::sort(followers.begin(), followers.end(), [](Vehicle* a, Vehicle* b) { return a->id() < b->id(); });
+
+    qint64 now = 1000;
+    SwarmClock::setTestClock([&now] { return now; });
+    const auto resetClock = qScopeGuard([] { SwarmClock::setTestClock({}); });
+    FormationController formation;
+    formation.setMembers(QSet<int>{vehicle()->id(), followers.first()->id()});
+    QHash<int, QGeoCoordinate> targets;
+    int pendingCommands = 0;
+    for (auto* follower : followers) {
+        connect(follower, &Vehicle::mavCommandResult, &formation, [&](int, int, int command, int, int) {
+            if (command == MAV_CMD_DO_REPOSITION)
+                --pendingCommands;
+        });
+    }
+    formation.setTargetAllowedCallback([&](int id, const QGeoCoordinate& coordinate) {
+        targets[id] = coordinate;
+        ++pendingCommands;
+        return true;
+    });
+    const auto tick = [&] {
+        now += 1000;
+        vehicle()->heading()->setRawValue(90);
+        QVERIFY(QMetaObject::invokeMethod(&formation, "_updateFormation", Qt::DirectConnection));
+        QTRY_COMPARE_WITH_TIMEOUT(pendingCommands, 0, TestTimeout::longMs());
+    };
+    QVERIFY(formation.start(vehicle()->id()));
+    for (int i = 0; i < 15; ++i)
+        tick();
+    QVERIFY(targets.contains(followers.first()->id()));
+    QVERIFY(!targets.contains(followers.last()->id()));
+
+    // Membership refresh while active clears all slots: the same stranded state a handover leaves
+    // when a member's coordinate was momentarily invalid. The next cycle must heal it.
+    targets.clear();
+    formation.setMembers(memberIds);
+    tick();
+    QVERIFY2(targets.contains(followers.first()->id()), "existing member must keep receiving commands");
+    QVERIFY2(targets.contains(followers.last()->id()), "added member must start receiving commands");
+    formation.stop();
+}
+
+void SwarmRegressionTest::operatorGotoMovesWholeFormation()
+{
+    // The headless test host has no physical pressure sensor backend.
+    ignoreLogMessage("Utilities.QGCSensors", QtWarningMsg,
+                     QRegularExpression("Failed to connect to pressure backend|Error Initializing Pressure Sensor"));
+    addVehicles(2);
+    auto* mvm = MultiVehicleManager::instance();
+    QList<Vehicle*> followers;
+    for (int i = 0; i < mvm->vehicles()->count(); ++i) {
+        auto* member = qobject_cast<Vehicle*>(mvm->vehicles()->get(i));
+        QVERIFY(member);
+        member->sendMavCommand(member->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true, 0, 0, 0, 0, 0, 0, 10);
+        if (member != vehicle())
+            followers.append(member);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        std::all_of(followers.begin(), followers.end(),
+                    [](Vehicle* v) { return v->armed() && v->altitudeRelative()->rawValue().toDouble() >= 9; }) &&
+            vehicle()->armed() && vehicle()->altitudeRelative()->rawValue().toDouble() >= 9,
+        TestTimeout::longMs());
+    mockLink()->setRepositionSupported(true);
+    QVERIFY(_manager->startFormation(vehicle()->id()));
+    MockLink* followerLink = _extraLinks.at(1);
+    Vehicle* follower = mvm->getVehicleById(followerLink->vehicleId());
+    QVERIFY(follower);
+    QTRY_VERIFY_WITH_TIMEOUT(followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION) >= 2, TestTimeout::longMs());
+
+    // MockLink does not advertise COMMAND_INT, so an operator goto arrives as COMMAND_LONG while
+    // formation slot commands always use COMMAND_INT.
+    const auto operatorGotoTarget = [](MockLink* link) {
+        mavlink_message_t message{};
+        if (!link->lastReceivedMavlinkMessage(MAVLINK_MSG_ID_COMMAND_LONG, message))
+            return QGeoCoordinate();
+        mavlink_command_long_t command{};
+        mavlink_msg_command_long_decode(&message, &command);
+        return command.command == MAV_CMD_DO_REPOSITION ? QGeoCoordinate(command.param5, command.param6)
+                                                        : QGeoCoordinate();
+    };
+    QSignalSpy leaderResults(vehicle(), &Vehicle::mavCommandResult);
+    QSignalSpy feedback(_manager.get(), &SwarmManager::swarmCommandFeedback);
+
+    // A goto on a follower moves the whole formation: the leader flies there, the follower keeps its slot.
+    const QGeoCoordinate formationGoal = vehicle()->coordinate().atDistanceAndAzimuth(150, 0);
+    QVERIFY(_manager->gotoLocation(follower, formationGoal));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        operatorGotoTarget(mockLink()).isValid() && operatorGotoTarget(mockLink()).distanceTo(formationGoal) < 1.0,
+        TestTimeout::longMs());
+    QVERIFY(!operatorGotoTarget(followerLink).isValid());
+    QVERIFY(!feedback.isEmpty());
+    QVERIFY(_manager->formation()->active());
+    const int slotCommands = followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION);
+    QTRY_VERIFY_WITH_TIMEOUT(followerLink->receivedMavCommandCount(MAV_CMD_DO_REPOSITION) > slotCommands,
+                             TestTimeout::longMs());
+
+    // A goto on the leader is flown by the leader itself. Wait for the first goto's ACK so the
+    // command queue does not reject the second one as a duplicate.
+    QTRY_VERIFY_WITH_TIMEOUT(!leaderResults.isEmpty(), TestTimeout::longMs());
+    const QGeoCoordinate leaderGoal = vehicle()->coordinate().atDistanceAndAzimuth(100, 90);
+    QVERIFY(_manager->gotoLocation(vehicle(), leaderGoal));
+    QTRY_VERIFY_WITH_TIMEOUT(operatorGotoTarget(mockLink()).distanceTo(leaderGoal) < 1.0, TestTimeout::longMs());
+
+    // Without an active formation the goto applies to the selected vehicle.
+    _manager->stopFormation();
+    QTRY_VERIFY_WITH_TIMEOUT(!follower->isMavCommandPending(follower->defaultComponentId(), MAV_CMD_DO_REPOSITION),
+                             TestTimeout::longMs());
+    const QGeoCoordinate soloGoal = follower->coordinate().atDistanceAndAzimuth(80, 180);
+    QVERIFY(_manager->gotoLocation(follower, soloGoal));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        operatorGotoTarget(followerLink).isValid() && operatorGotoTarget(followerLink).distanceTo(soloGoal) < 1.0,
+        TestTimeout::longMs());
+}
 
 void SwarmRegressionTest::init()
 {
@@ -383,6 +779,35 @@ void SwarmRegressionTest::coverageRoundTripMustRetainTakeoff_data()
     TestData::addAutopilotRows();
 }
 
+void SwarmRegressionTest::coverageLeavesHeadingToVehicle()
+{
+    // PX4 flies takeoff/waypoint param4 as an absolute yaw, so 0 turns every aircraft north. NaN keeps
+    // its heading mode: face the next waypoint, and hold the heading on reaching the last one.
+    // ArduCopter does not store the field and reads it back as 0, so it must stay 0 there.
+    const QGeoCoordinate here = vehicle()->coordinate();
+    const auto items = _manager->missionPlanner()->buildCoverageMissionItems(vehicle(), here, here, 60, 30, 0, -15, 15);
+    const auto release = qScopeGuard([&items] { qDeleteAll(items); });
+    int flownItems = 0;
+    for (int i = 1; i < items.size(); ++i) {  // Item 0 is the Home placeholder.
+        const MissionItem* item = items[i];
+        if (item->command() != MAV_CMD_NAV_WAYPOINT && item->command() != MAV_CMD_NAV_TAKEOFF)
+            continue;
+        ++flownItems;
+        const QString context =
+            QStringLiteral("item %1 (command %2) yaw %3").arg(i).arg(item->command()).arg(item->param4());
+        if (vehicle()->px4Firmware())
+            QVERIFY2(std::isnan(item->param4()), qPrintable(context));
+        else
+            QVERIFY2(item->param4() == 0.0, qPrintable(context));
+    }
+    QVERIFY(flownItems > 2);
+}
+
+void SwarmRegressionTest::coverageLeavesHeadingToVehicle_data()
+{
+    TestData::addAutopilotRows();
+}
+
 void SwarmRegressionTest::missionCompletionRequiresCurrentExecutionEvidence()
 {
     QTRY_VERIFY_WITH_TIMEOUT(vehicle()->homePosition().isValid(), TestTimeout::longMs());
@@ -509,7 +934,7 @@ void SwarmRegressionTest::missionReplacementBlocksLaterStart()
     if (replace) {
         _manager->missionPlanner()->setSurveyAltitude(45);
         const auto items = _manager->missionPlanner()->buildCoverageMissionItems(
-            vehicle()->homePosition(), vehicle()->coordinate(), 30, 30, 0, -15, 15);
+            vehicle(), vehicle()->homePosition(), vehicle()->coordinate(), 30, 30, 0, -15, 15);
         QSignalSpy sent(mission, &MissionManager::sendComplete);
         mission->writeMissionItems(items);
         QTRY_VERIFY_WITH_TIMEOUT(!sent.isEmpty(), TestTimeout::longMs());

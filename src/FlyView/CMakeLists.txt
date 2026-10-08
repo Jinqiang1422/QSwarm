@@ -66,6 +66,7 @@ qt_add_qml_module(FlyViewModule
         RoverChecklist.qml
         SubChecklist.qml
         SwarmAIPanel.qml
+        SwarmPanel.qml
         SwarmControlPanel.qml
         SwarmSituationLayer.qml
         TelemetryValuesBar.qml

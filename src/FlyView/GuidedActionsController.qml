@@ -622,7 +622,9 @@ Item {
             }
             break
         case actionGoto:
-            if (!_activeVehicle.guidedModeGotoLocation(
+            // Routed through the swarm manager: in an active formation a goto moves the whole formation
+            if (!QGroundControl.swarmManager.gotoLocation(
+                _activeVehicle,
                 actionData,
                 _vehicleInFwdFlight /* forwardFlightLoiterRadius */
                     ? _flyViewSettings.forwardFlightGoToLocationLoiterRad.value

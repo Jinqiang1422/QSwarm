@@ -245,6 +245,10 @@ public:
     Q_INVOKABLE bool startFormation(int leaderVehicleId);
     Q_INVOKABLE void stopFormation();
 
+    /// 地图「飞往位置」。编队运行中对僚机下发时移动整个编队：改由长机飞往该点，僚机保持队形跟随。
+    Q_INVOKABLE bool gotoLocation(Vehicle* vehicle, const QGeoCoordinate& coordinate,
+                                  double forwardFlightLoiterRadius = 0.0);
+
     /// 经控制租约闸门生成上传区域覆盖任务，或清空已有任务。
     Q_INVOKABLE bool planAndUploadCoverage(const QGeoCoordinate& center, double lengthMeters, double widthMeters,
                                            double angleDeg, const QString& assignMode = QStringLiteral("sequential"));

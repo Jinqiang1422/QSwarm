@@ -249,7 +249,7 @@ QString SwarmAIAgent::_systemPromptJson() const
         "【动作集】（按数组顺序依次执行）\n"
         "- {\"type\":\"set_selection\",\"vehicle_ids\":[整数,...]} 选中分组，后续集群指令只作用于这些飞机\n"
         "- {\"type\":\"arm\",\"arm\":true/false} 解锁/上锁\n"
-        "- {\"type\":\"takeoff\",\"altitude\":米} 集群起飞到相对高度\n"
+        "- {\"type\":\"takeoff\",\"altitude\":米} 集群起飞到相对高度；已在空中的飞机不再起飞，直接调整到该高度\n"
         "- {\"type\":\"land\"} / {\"type\":\"rtl\"} / {\"type\":\"pause\"} / {\"type\":\"start_mission\"} / "
         "{\"type\":\"disarm\"}\n"
         "- {\"type\":\"emergency_disarm\"} 强制上锁（仅当用户明确说“紧急/强制”时使用）\n"
@@ -320,7 +320,8 @@ QJsonArray SwarmAIAgent::_toolsJson() const
                     params(R"({"type":"object","properties":{
                         "arm":{"type":"boolean"}
                     },"required":["arm"]})")));
-    tools.append(fn(QStringLiteral("takeoff"), QStringLiteral("集群起飞到相对高度（米）"),
+    tools.append(fn(QStringLiteral("takeoff"),
+                    QStringLiteral("集群起飞到相对高度（米）；已在空中的飞机不再起飞，直接调整到该高度"),
                     params(R"({"type":"object","properties":{
                         "altitude":{"type":"number","minimum":2,"maximum":120}
                     },"required":["altitude"]})")));

@@ -41,4 +41,6 @@ private slots:
     void _testUdpHostnameRoundtrip();
     void _testUdpRemoveByHostname();
     void _testUdpResolveHostsUpdatesAddress();
+    void _testUdpRoutesVehicleCommands_data();
+    void _testUdpRoutesVehicleCommands();
 };

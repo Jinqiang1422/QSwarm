@@ -10,6 +10,7 @@
 
 #include "AutoConnectSettings.h"
 #include "QGCLoggingCategory.h"
+#include "QGCMAVLink.h"
 #include "QGCNetworkHelper.h"
 #include "SettingsManager.h"
 
@@ -18,6 +19,29 @@ QGC_LOGGING_CATEGORY(UDPLinkLog, "Comms.UDPLink")
 namespace {
 constexpr int BUFFER_TRIGGER_SIZE = 10 * 1024;
 constexpr int RECEIVE_TIME_LIMIT_MS = 50;
+
+// Use a private parser: routing must not consume a protocol channel or change its signing state.
+QList<mavlink_message_t> mavlinkMessages(const QByteArray& data)
+{
+    mavlink_message_t buffer{};
+    mavlink_status_t status{};
+    mavlink_message_t message{};
+    mavlink_status_t receivedStatus{};
+    QList<mavlink_message_t> messages;
+    qsizetype decodedBytes = 0;
+    for (const char byte : data) {
+        const uint8_t framing =
+            mavlink_frame_char_buffer(&buffer, &status, static_cast<uint8_t>(byte), &message, &receivedStatus);
+        if (framing == MAVLINK_FRAMING_OK) {
+            messages.append(message);
+            decodedBytes += mavlink_msg_get_send_buffer_length(&message);
+        } else if (framing != MAVLINK_FRAMING_INCOMPLETE) {
+            return {};
+        }
+    }
+    // Keep the existing fan-out for non-MAVLink data and incomplete datagrams.
+    return decodedBytes == data.size() ? messages : QList<mavlink_message_t>{};
+}
 
 bool containsTarget(const QList<std::shared_ptr<UDPClient>>& list, const QHostAddress& address, quint16 port)
 {
@@ -389,6 +413,7 @@ void UDPWorker::disconnectLink()
     _socket->close();
 
     _sessionTargets.clear();
+    _systemTargets.clear();
 }
 
 void UDPWorker::writeData(const QByteArray& data)
@@ -399,6 +424,8 @@ void UDPWorker::writeData(const QByteArray& data)
     }
 
     QMutexLocker locker(&_sessionTargetsMutex);
+
+    const QList<mavlink_message_t> messages = mavlinkMessages(data);
 
     // Send to all manually targeted systems
     for (const std::shared_ptr<UDPClient>& target : _udpConfig->targetHosts()) {
@@ -412,9 +439,29 @@ void UDPWorker::writeData(const QByteArray& data)
         }
     }
 
-    // Send to all connected systems
+    // PX4 rejects commands for other systems. Route each frame separately so a
+    // datagram containing commands for different vehicles cannot cross their ACKs.
     for (const std::shared_ptr<UDPClient>& target : _sessionTargets) {
-        if (_socket->writeDatagram(data, target->address, target->port) < 0) {
+        QByteArray routedData;
+        qsizetype offset = 0;
+        for (const mavlink_message_t& message : messages) {
+            const mavlink_msg_entry_t* entry = mavlink_get_msg_entry(message.msgid);
+            const quint8 systemId = entry && (entry->flags & MAV_MSG_ENTRY_FLAG_HAVE_TARGET_SYSTEM) &&
+                                            entry->target_system_ofs < message.len
+                                        ? static_cast<quint8>(_MAV_PAYLOAD(&message)[entry->target_system_ofs])
+                                        : 0;
+            const qsizetype length = mavlink_msg_get_send_buffer_length(&message);
+            if (systemId == 0 || !_systemTargets.contains(systemId) ||
+                containsTarget(_systemTargets.value(systemId), target->address, target->port)) {
+                // Preserve the original bytes, including MAVLink 2 signatures.
+                routedData.append(data.constData() + offset, length);
+            }
+            offset += length;
+        }
+        if (messages.isEmpty()) {
+            routedData = data;
+        }
+        if (!routedData.isEmpty() && _socket->writeDatagram(routedData, target->address, target->port) < 0) {
             qCWarning(UDPLinkLog) << "Could Not Send Data - Write Failed!";
         }
     }
@@ -482,6 +529,15 @@ void UDPWorker::_onSocketReadyRead()
         if (!containsTarget(_sessionTargets, senderAddress, datagramIn.senderPort())) {
             qCDebug(UDPLinkLog) << "UDP Adding target:" << senderAddress << datagramIn.senderPort();
             _sessionTargets.append(std::make_shared<UDPClient>(senderAddress, datagramIn.senderPort()));
+        }
+        for (const mavlink_message_t& message : mavlinkMessages(datagramIn.data())) {
+            if (message.sysid == 0) {
+                continue;
+            }
+            auto& targets = _systemTargets[message.sysid];
+            if (!containsTarget(targets, senderAddress, datagramIn.senderPort())) {
+                targets.append(std::make_shared<UDPClient>(senderAddress, datagramIn.senderPort()));
+            }
         }
         locker.unlock();
     }

@@ -227,6 +227,9 @@ public:
                                    double& dwellSeconds, QString& reason) const;
     virtual void takeoffAsync(Vehicle* vehicle, double altitude, QObject* context, std::function<bool()> allowed,
                               std::function<void(bool)> finished) const;
+    /// Move an airborne vehicle to the given altitude above home, holding its horizontal position.
+    virtual void changeAltitudeAsync(Vehicle* vehicle, double altitudeRelative, QObject* context,
+                                     std::function<bool()> allowed, std::function<void(bool)> finished) const;
 
     /// Command vehicle to move to specified location (altitude is ignored, vehicle uses current altitude)
     /// @return true: goto command accepted, false: goto failed (vehicle not moved)
