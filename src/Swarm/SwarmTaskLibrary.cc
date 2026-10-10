@@ -1,6 +1,7 @@
 #include "SwarmTaskLibrary.h"
 
 #include <QtCore/QCryptographicHash>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
@@ -103,48 +104,6 @@ const char kTplAllReturn[] = R"TPL({
   ]
 })TPL";
 
-const char kTplSectorSweep[] = R"TPL({
-  "name": "扇形扫掠搜索",
-  "description": "三扇区依次扫掠：全体起飞后按设定角度对三个扇区依次覆盖搜索，完成后返航",
-  "version": 1,
-  "builtin_revision": 2,
-  "schema_version": 2,
-  "tags": ["搜索", "扫掠", "覆盖"],
-  "min_fleet": 3,
-  "required_payload": "camera",
-  "parameters": [
-    {"key":"altitude","label":"作业高度（米）","type":"number","default":30,"min":10,"max":120},
-    {"key":"climb_gate","label":"升空判定高度（米）","type":"number","default":25,"min":5,"max":115},
-    {"key":"length","label":"扇区长度（米）","type":"number","default":300,"min":20,"max":100000},
-    {"key":"width","label":"扇区宽度（米）","type":"number","default":150,"min":20,"max":100000},
-    {"key":"spacing","label":"行距（米）","type":"number","default":20,"min":5,"max":200},
-    {"key":"angle1","label":"扇区1角度（度）","type":"number","default":0,"min":0,"max":359},
-    {"key":"angle2","label":"扇区2角度（度）","type":"number","default":60,"min":0,"max":359},
-    {"key":"angle3","label":"扇区3角度（度）","type":"number","default":120,"min":0,"max":359}
-  ],
-  "stages": [
-    {"name":"起飞","actions":[{"type":"takeoff","altitude":"${altitude}"}],
-     "complete_when":{"kind":"all_airborne","min_altitude":"${climb_gate}","timeout_sec":180}},
-    {"name":"扇区1扫掠","actions":[
-        {"type":"plan_coverage","center":"map_center","length":"${length}","width":"${width}",
-         "angle":"${angle1}","spacing":"${spacing}","altitude":"${altitude}"},
-        {"type":"start_mission"}],
-     "complete_when":{"kind":"all_mission_finished"}},
-    {"name":"扇区2扫掠","actions":[
-        {"type":"plan_coverage","center":"map_center","length":"${length}","width":"${width}",
-         "angle":"${angle2}","spacing":"${spacing}","altitude":"${altitude}"},
-        {"type":"start_mission"}],
-     "complete_when":{"kind":"all_mission_finished"}},
-    {"name":"扇区3扫掠","actions":[
-        {"type":"plan_coverage","center":"map_center","length":"${length}","width":"${width}",
-         "angle":"${angle3}","spacing":"${spacing}","altitude":"${altitude}"},
-        {"type":"start_mission"}],
-     "complete_when":{"kind":"all_mission_finished"}},
-    {"name":"返航","actions":[{"type":"rtl"}],
-     "complete_when":{"kind":"all_disarmed","timeout_sec":600}}
-  ]
-})TPL";
-
 const char kTplGridSweep[] = R"TPL({
   "name": "平行网格扫掠",
   "description": "双程网格扫掠：起飞后先按角度一覆盖，再旋转至角度二二次覆盖，提高目标发现率，完成后返航",
@@ -181,42 +140,6 @@ const char kTplGridSweep[] = R"TPL({
   ]
 })TPL";
 
-const char kTplFormationPatrol[] = R"TPL({
-  "name": "编队巡逻",
-  "description": "起飞后以主队形巡逻一段时间，变换队形继续巡逻，结束后停止编队返航",
-  "version": 1,
-  "builtin_revision": 2,
-  "schema_version": 2,
-  "tags": ["巡逻", "编队"],
-  "min_fleet": 3,
-  "parameters": [
-    {"key":"altitude","label":"作业高度（米）","type":"number","default":40,"min":10,"max":120},
-    {"key":"climb_gate","label":"升空判定高度（米）","type":"number","default":35,"min":5,"max":115},
-    {"key":"leader_id","label":"长机编号","type":"integer","default":1,"min":1,"max":250},
-    {"key":"formation","label":"主队形（wedge/column/line/circle）","type":"string","default":"wedge"},
-    {"key":"spacing","label":"编队间距（米）","type":"number","default":15,"min":2,"max":500},
-    {"key":"patrol_seconds","label":"第一程巡逻时长（秒）","type":"integer","default":180,"min":10,"max":7200},
-    {"key":"second_formation","label":"第二队形（wedge/column/line/circle）","type":"string","default":"column"},
-    {"key":"patrol_seconds_2","label":"第二程巡逻时长（秒）","type":"integer","default":180,"min":10,"max":7200}
-  ],
-  "stages": [
-    {"name":"起飞","actions":[{"type":"takeoff","altitude":"${altitude}"}],
-     "complete_when":{"kind":"all_airborne","min_altitude":"${climb_gate}","timeout_sec":180}},
-    {"name":"主队形就位","actions":[
-        {"type":"start_formation","leader_id":"${leader_id}","formation":"${formation}","spacing":"${spacing}"}],
-     "complete_when":{"kind":"formation_running"}},
-    {"name":"第一程巡逻","actions":[],
-     "complete_when":{"kind":"duration","seconds":"${patrol_seconds}"}},
-    {"name":"变换队形","actions":[
-        {"type":"start_formation","leader_id":"${leader_id}","formation":"${second_formation}","spacing":"${spacing}"}],
-     "complete_when":{"kind":"formation_running"}},
-    {"name":"第二程巡逻","actions":[],
-     "complete_when":{"kind":"duration","seconds":"${patrol_seconds_2}"}},
-    {"name":"返航","actions":[{"type":"stop_formation"},{"type":"rtl"}],
-     "complete_when":{"kind":"all_disarmed","timeout_sec":600}}
-  ]
-})TPL";
-
 const char kTplRelayWatch[] = R"TPL({
   "name": "多机接力值守",
   "description": "分组接力空中值守：全体起飞后 A 组先值守，B 组到点接替，最后全体返航（P3 接入感知后升级为接力跟踪）",
@@ -245,34 +168,6 @@ const char kTplRelayWatch[] = R"TPL({
   ]
 })TPL";
 
-const char kTplRendezvous[] = R"TPL({
-  "name": "会合集结",
-  "description": "起飞后以长机为集结点组成环形编队收拢，保持后全体返航",
-  "version": 1,
-  "builtin_revision": 2,
-  "schema_version": 2,
-  "tags": ["集结", "编队"],
-  "min_fleet": 3,
-  "parameters": [
-    {"key":"altitude","label":"集结高度（米）","type":"number","default":30,"min":10,"max":120},
-    {"key":"climb_gate","label":"升空判定高度（米）","type":"number","default":25,"min":5,"max":115},
-    {"key":"leader_id","label":"集结长机编号","type":"integer","default":1,"min":1,"max":250},
-    {"key":"gather_radius","label":"集结半径（米）","type":"number","default":20,"min":5,"max":200},
-    {"key":"hold_seconds","label":"集结保持时长（秒）","type":"integer","default":60,"min":10,"max":3600}
-  ],
-  "stages": [
-    {"name":"起飞","actions":[{"type":"takeoff","altitude":"${altitude}"}],
-     "complete_when":{"kind":"all_airborne","min_altitude":"${climb_gate}","timeout_sec":180}},
-    {"name":"集结","actions":[
-        {"type":"start_formation","leader_id":"${leader_id}","formation":"circle","spacing":"${gather_radius}"}],
-     "complete_when":{"kind":"formation_running"}},
-    {"name":"集结保持","actions":[],
-     "complete_when":{"kind":"duration","seconds":"${hold_seconds}"}},
-    {"name":"返航","actions":[{"type":"stop_formation"},{"type":"rtl"}],
-     "complete_when":{"kind":"all_disarmed","timeout_sec":600}}
-  ]
-})TPL";
-
 }  // namespace
 
 SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager* swarmManager)
@@ -284,11 +179,54 @@ SwarmTaskLibrary::SwarmTaskLibrary(SwarmManager* swarmManager)
     QDir().mkpath(_templateDir);
     (void) connect(this, &SwarmTaskLibrary::libraryFeedback, qgcApp(),
                    [](const QString& message) { qgcApp()->showAppMessage(message); });
+    _retireRemovedBuiltins();
     _ensureDefaults();
     _scan();
 }
 
 SwarmTaskLibrary::~SwarmTaskLibrary() = default;
+
+void SwarmTaskLibrary::_retireRemovedBuiltins()
+{
+    // 2026-10 内置模板由 9 套精简为 6 套。升级后首次启动时，把已落盘的 3 套旧内置模板一律改名退役
+    // （不论是否被编辑过）；写入标记后不再检查，此后同名文件按用户模板对待。
+    static constexpr int kBuiltinSetRevision = 3;
+    static const char* const kRetiredFiles[] = {"扇形扫掠搜索.json", "编队巡逻.json", "会合集结.json"};
+
+    const QString markerPath = _templateDir + QStringLiteral("/.builtin-set-revision");
+    QFile marker(markerPath);
+    if (marker.open(QIODevice::ReadOnly) && marker.readAll().trimmed().toInt() >= kBuiltinSetRevision)
+        return;
+    marker.close();
+
+    bool retiredAll = true;
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMddHHmmss"));
+    for (const char* retiredFile : kRetiredFiles) {
+        const QString fileName = QString::fromUtf8(retiredFile);
+        const QString path = _templateDir + QLatin1Char('/') + fileName;
+        if (!QFile::exists(path))
+            continue;
+        QString backupName = fileName + QStringLiteral(".retired.bak");
+        if (QFile::exists(_templateDir + QLatin1Char('/') + backupName))
+            backupName = fileName + QStringLiteral(".retired-%1.bak").arg(stamp);
+        const QString target = _templateDir + QLatin1Char('/') + backupName;
+        QFile retired(path);
+        if (!retired.rename(target)) {
+            retiredAll = false;
+            emit libraryFeedback(tr("旧模板退役失败：%1（%2）").arg(path, retired.errorString()));
+            continue;
+        }
+        SwarmAuditLogger::instance()->log(QStringLiteral("task_library"), QStringLiteral("template_retired"),
+                                          {{QStringLiteral("file"), fileName}, {QStringLiteral("backup"), backupName}});
+    }
+    if (!retiredAll)
+        return;
+
+    QSaveFile out(markerPath);
+    const QByteArray bytes = QByteArray::number(kBuiltinSetRevision);
+    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size() || !out.commit())
+        emit libraryFeedback(tr("模板版本标记写入失败：%1").arg(markerPath));
+}
 
 void SwarmTaskLibrary::_ensureDefaults()
 {
@@ -299,9 +237,7 @@ void SwarmTaskLibrary::_ensureDefaults()
     } defaults[] = {
         {"区域搜索后返航.json", kTplSearchReturn}, {"编队巡航后返航.json", kTplFormationCruise},
         {"快速出动待命.json", kTplQuickLaunch},    {"全员返航降落.json", kTplAllReturn},
-        {"扇形扫掠搜索.json", kTplSectorSweep},    {"平行网格扫掠.json", kTplGridSweep},
-        {"编队巡逻.json", kTplFormationPatrol},    {"多机接力值守.json", kTplRelayWatch},
-        {"会合集结.json", kTplRendezvous},
+        {"平行网格扫掠.json", kTplGridSweep},      {"多机接力值守.json", kTplRelayWatch},
     };
 
     static const QHash<QString, QByteArray> legacyDigests{
@@ -313,14 +249,10 @@ void SwarmTaskLibrary::_ensureDefaults()
          QByteArray("c83e3f4e6e51dbe670e739f1f26bc81a641bac3488e3547dacbcbd6ab71395a0")},
         {QStringLiteral("全员返航降落"),
          QByteArray("7d4e3230068f6960454f9d91e57c12273c542edf0f2b1c09ef8c3014e5ce7e4a")},
-        {QStringLiteral("扇形扫掠搜索"),
-         QByteArray("1f709f1781ee578124de978cf1570d6bc4f966d8c6178fd3a55714425966de47")},
         {QStringLiteral("平行网格扫掠"),
          QByteArray("a820306d4bff8db36644d579e1e435f77fcdfa2d6727b42eabd87a4d90f99af6")},
-        {QStringLiteral("编队巡逻"), QByteArray("72943503c576a1dbefd943c409fe0550e48a5edb950e4d5efe5dba4a8283ec28")},
         {QStringLiteral("多机接力值守"),
-         QByteArray("06455cd6a63b7ce5e7a6b24b90a96403a766ca8069ba129db8c5ca050ec8ffea")},
-        {QStringLiteral("会合集结"), QByteArray("fff9e7c57a117005f6d0420fcc6feca73e50e52d62ab967b5cc556b6580c4906")}};
+         QByteArray("06455cd6a63b7ce5e7a6b24b90a96403a766ca8069ba129db8c5ca050ec8ffea")}};
     for (const auto& def : defaults) {
         const QString path = _templateDir + QLatin1Char('/') + QString::fromUtf8(def.fileName);
         QFile previous(path);
@@ -352,10 +284,9 @@ void SwarmTaskLibrary::_ensureDefaults()
 
 void SwarmTaskLibrary::_scan()
 {
-    static const QSet<QString> builtInNames = {
-        QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"), QStringLiteral("快速出动待命"),
-        QStringLiteral("全员返航降落"),   QStringLiteral("扇形扫掠搜索"),   QStringLiteral("平行网格扫掠"),
-        QStringLiteral("编队巡逻"),       QStringLiteral("多机接力值守"),   QStringLiteral("会合集结")};
+    static const QSet<QString> builtInNames = {QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"),
+                                               QStringLiteral("快速出动待命"),   QStringLiteral("全员返航降落"),
+                                               QStringLiteral("平行网格扫掠"),   QStringLiteral("多机接力值守")};
 
     _templates.clear();
     _templateList.clear();

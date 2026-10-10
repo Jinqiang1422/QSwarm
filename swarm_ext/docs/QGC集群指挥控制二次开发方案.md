@@ -287,6 +287,7 @@ v1.2 三项升级：
    编队巡航后返航 / 快速出动待命 / 全员返航降落），参数占位符 `"${key}"` 实例化时代入（含默认值与限幅）。
    人工在面板按参数表单直接执行；AI 通过 `run_task_template` 工具按名引用——意图匹配模板时优先于自定义编排，
    实例化后仍经统一校验与人在回路确认。模板目录可手工扩展，沉淀组织级标准作业流程。
+   > 2026-10 更新：内置模板经 P2 扩充后精简为 6 套（区域搜索后返航 / 平行网格扫掠 / 编队巡航后返航 / 快速出动待命 / 全员返航降落 / 多机接力值守），见 `specs/2026-10-09-task-template-simplification-design.md`。
 
 - **端点无关**：任意 OpenAI 兼容接口（DeepSeek / Kimi / 通义千问 / OpenAI），外场可切 Ollama 本地模型离线部署；
 - **零新增全局补丁**：`QGroundControl.swarmManager.aiAgent / .taskController / .taskLibrary` 直达。

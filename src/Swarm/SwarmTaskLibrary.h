@@ -5,8 +5,9 @@
  * 任务模板库：常用多阶段任务以 JSON 模板形式存储，供人工面板与大模型直接引用。
  *
  *   - 模板目录：QStandardPaths::AppDataLocation/SwarmTemplates（*.json，可手工增删改）
- *   - 内置模板：首次启动自动落盘 4 套（区域搜索后返航 / 编队巡航后返航 /
- *     快速出动待命 / 全员返航降落），落盘后与用户模板同等待遇、可编辑
+ *   - 内置模板：首次启动自动落盘 6 套（区域搜索后返航 / 平行网格扫掠 / 编队巡航后返航 /
+ *     快速出动待命 / 全员返航降落 / 多机接力值守），落盘后与用户模板同等待遇、可编辑；
+ *     2026-10 移除的 3 套旧内置模板在升级时一次性改名为 *.retired.bak
  *   - 模板参数：动作与完成条件中的 "${key}" 占位符在实例化时按参数表代入，
  *     参数带默认值与 min/max 限幅
  *   - 执行通道：实例化 → SwarmTaskController::parseStages（统一校验）→ startTask；
@@ -101,8 +102,9 @@ private:
         QJsonArray stages;
     };
 
-    void _ensureDefaults();  ///< 内置模板首次落盘
-    void _scan();            ///< 扫描目录重建列表
+    void _retireRemovedBuiltins();  ///< 升级时一次性退役已移除的旧内置模板
+    void _ensureDefaults();         ///< 内置模板首次落盘
+    void _scan();                   ///< 扫描目录重建列表
     const TaskTemplate* _find(const QString& name) const;
     static QJsonValue _substitute(const QJsonValue& value, const QJsonObject& params);
 

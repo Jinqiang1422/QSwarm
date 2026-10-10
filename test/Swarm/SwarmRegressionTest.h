@@ -22,6 +22,7 @@ private slots:
     void withdrawnGroupDoesNotBlockFutureGroups();
     void allTemplatesUseRuntimeContracts();
     void legacyTemplateMigrationPreservesCustomEdits();
+    void removedBuiltinTemplatesAreRetiredOnce();
     void missionCompletionRequiresCurrentExecutionEvidence();
     void lateTakeoffAcknowledgementCannotArmWithdrawnTarget();
     void missionReplacementBlocksLaterStart();

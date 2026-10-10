@@ -1,5 +1,6 @@
 #include "SwarmRegressionTest.h"
 
+#include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QRegularExpression>
@@ -21,6 +22,7 @@
 #include "PX4FirmwarePlugin.h"
 #include "QmlObjectListModel.h"
 #include "RCToParamDialogController.h"
+#include "SwarmAuditLogger.h"
 #include "SwarmClock.h"
 #include "SwarmManager.h"
 #include "SwarmMissionPlanner.h"
@@ -474,14 +476,129 @@ void SwarmRegressionTest::legacyTemplateMigrationPreservesCustomEdits()
     QCOMPARE(file.readAll(), customBytes);
 }
 
+void SwarmRegressionTest::removedBuiltinTemplatesAreRetiredOnce()
+{
+    const QString dir = _manager->taskLibrary()->templateDir();
+    const QString marker = dir + QStringLiteral("/.builtin-set-revision");
+    const QStringList removed{QStringLiteral("扇形扫掠搜索"), QStringLiteral("编队巡逻"), QStringLiteral("会合集结")};
+    const auto purge = [dir, removed] {
+        for (const auto& name : removed) {
+            for (const auto& fileName : QDir(dir).entryList({name + QStringLiteral(".json*")}, QDir::Files))
+                QFile::remove(dir + QLatin1Char('/') + fileName);
+        }
+    };
+    purge();  // 清掉上次异常退出可能遗留的文件
+    const auto cleanup = qScopeGuard(purge);
+    const auto readFile = [](const QString& path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    const auto writeFile = [](const QString& path, const QByteArray& bytes) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+    };
+    const QJsonArray stages{QJsonObject{{"name", QStringLiteral("返航")},
+                                        {"actions", QJsonArray{QJsonObject{{"type", "rtl"}}}},
+                                        {"complete_when", QJsonObject{{"kind", "all_disarmed"}}}}};
+    const auto templateBytes = [&stages](const QString& name, const QString& description) {
+        return QJsonDocument(QJsonObject{{"name", name}, {"description", description}, {"stages", stages}}).toJson();
+    };
+    const auto find = [](const SwarmTaskLibrary& library, const QString& name) {
+        for (const auto& entry : library.templates()) {
+            if (entry.toMap().value("name").toString() == name)
+                return entry.toMap();
+        }
+        return QVariantMap();
+    };
+    const auto retiredAuditLines = [] {
+        QFile file(SwarmAuditLogger::instance()->sessionFilePath());
+        QStringList lines;
+        if (!file.open(QIODevice::ReadOnly))
+            return lines;
+        for (const auto& line : QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+            if (line.contains(QStringLiteral("template_retired")))
+                lines.append(line);
+        return lines;
+    };
+
+    // 目录中没有旧模板文件时，正常构造后也应写入标记（夹具 init 已构造过一次模板库）
+    QCOMPARE(readFile(marker).trimmed(), QByteArray("3"));
+
+    // 升级：没有标记时，三个旧内置模板文件一律退役，包括被操作员改过的那个
+    QVERIFY(QFile::remove(marker));
+    QHash<QString, QByteArray> originals;
+    for (const auto& name : removed) {
+        originals[name] = templateBytes(name, name == QStringLiteral("编队巡逻") ? QStringLiteral("operator edit")
+                                                                                 : QStringLiteral("old built-in"));
+        QVERIFY(writeFile(dir + QLatin1Char('/') + name + QStringLiteral(".json"), originals[name]));
+    }
+    const int retiredAuditLinesBefore = retiredAuditLines().size();
+    {
+        SwarmTaskLibrary upgraded(_manager.get());
+        const QStringList newRetiredAuditLines = retiredAuditLines().mid(retiredAuditLinesBefore);
+        QCOMPARE(newRetiredAuditLines.size(), 3);
+        for (const auto& name : removed) {
+            const QString backupName = name + QStringLiteral(".json.retired.bak");
+            QVERIFY(std::any_of(newRetiredAuditLines.begin(), newRetiredAuditLines.end(),
+                                [&backupName](const QString& line) { return line.contains(backupName); }));
+        }
+        for (const auto& name : removed) {
+            QVERIFY(!QFile::exists(dir + QLatin1Char('/') + name + QStringLiteral(".json")));
+            QCOMPARE(readFile(dir + QLatin1Char('/') + name + QStringLiteral(".json.retired.bak")), originals[name]);
+            QVERIFY(find(upgraded, name).isEmpty());
+        }
+        QStringList builtIns;
+        for (const auto& entry : upgraded.templates()) {
+            if (entry.toMap().value("builtIn").toBool())
+                builtIns.append(entry.toMap().value("name").toString());
+        }
+        builtIns.sort();
+        QStringList expected{QStringLiteral("区域搜索后返航"), QStringLiteral("平行网格扫掠"),
+                             QStringLiteral("编队巡航后返航"), QStringLiteral("快速出动待命"),
+                             QStringLiteral("全员返航降落"),   QStringLiteral("多机接力值守")};
+        expected.sort();
+        QCOMPARE(builtIns, expected);
+        QCOMPARE(readFile(marker).trimmed(), QByteArray("3"));
+    }
+
+    // 标记已为 3：用户之后自建的同名模板不会再被退役
+    expectAppMessage(QRegularExpression(QStringLiteral("模板「会合集结」已保存")));
+    QVERIFY(_manager->taskLibrary()->saveTemplate(QStringLiteral("会合集结"), QStringLiteral("operator rendezvous"),
+                                                  stages, {}));
+    verifyExpectedLogMessage();
+    const QString userPath = dir + QStringLiteral("/会合集结.json");
+    const QByteArray userBytes = readFile(userPath);
+    QVERIFY(!userBytes.isEmpty());
+    {
+        SwarmTaskLibrary rebuilt(_manager.get());
+        QCOMPARE(readFile(userPath), userBytes);
+        const auto user = find(rebuilt, QStringLiteral("会合集结"));
+        QVERIFY(!user.isEmpty());
+        QVERIFY(!user.value("builtIn").toBool());
+    }
+
+    // 同名 .retired.bak 已存在时改用带时间戳的备份名，不覆盖旧备份
+    QVERIFY(QFile::remove(marker));
+    {
+        SwarmTaskLibrary upgradedAgain(_manager.get());
+    }
+    QVERIFY(!QFile::exists(userPath));
+    QCOMPARE(readFile(userPath + QStringLiteral(".retired.bak")), originals[QStringLiteral("会合集结")]);
+    const auto stamped = QDir(dir).entryList({QStringLiteral("会合集结.json.retired-*.bak")}, QDir::Files);
+    QCOMPARE(stamped.size(), 1);
+    QVERIFY(QRegularExpression(QStringLiteral("^会合集结\\.json\\.retired-\\d{14}\\.bak$"))
+                .match(stamped.first())
+                .hasMatch());
+    QCOMPARE(readFile(dir + QLatin1Char('/') + stamped.first()), userBytes);
+}
+
 void SwarmRegressionTest::allTemplatesUseRuntimeContracts()
 {
     addVehicles(3);
     QString error;
-    const QStringList names{
-        QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"), QStringLiteral("快速出动待命"),
-        QStringLiteral("全员返航降落"),   QStringLiteral("扇形扫掠搜索"),   QStringLiteral("平行网格扫掠"),
-        QStringLiteral("编队巡逻"),       QStringLiteral("多机接力值守"),   QStringLiteral("会合集结")};
+    const QStringList names{QStringLiteral("区域搜索后返航"), QStringLiteral("编队巡航后返航"),
+                            QStringLiteral("快速出动待命"),   QStringLiteral("全员返航降落"),
+                            QStringLiteral("平行网格扫掠"),   QStringLiteral("多机接力值守")};
     for (const auto& name : names) {
         const auto stages = _manager->taskLibrary()->instantiate(name, {}, error);
         QVERIFY2(!stages.isEmpty() && error.isEmpty(), qPrintable(name + ": " + error));
