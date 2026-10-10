@@ -404,17 +404,17 @@ def validate_generated_contracts(issues: list[Issue]) -> dict[str, int]:
                 return {"llm_samples": 0}
         first = generated_one.read_bytes()
         second = generated_two.read_bytes()
-        checked_in = (eval_dir / "dataset_v1.jsonl").read_bytes()
+        checked_in = (eval_dir / "dataset_v2.jsonl").read_bytes()
         if first != second:
             issues.append(Issue("error", "swarm_ext/tests/llm_eval", "数据集生成不确定"))
         if first != checked_in:
             issues.append(
-                Issue("error", "swarm_ext/tests/llm_eval/dataset_v1.jsonl", "数据集已过期")
+                Issue("error", "swarm_ext/tests/llm_eval/dataset_v2.jsonl", "数据集已过期")
             )
         sample_count = len(generated_one.read_text(encoding="utf-8").splitlines())
         if sample_count < 500:
             issues.append(
-                Issue("error", "swarm_ext/tests/llm_eval/dataset_v1.jsonl", "样本少于 500 条")
+                Issue("error", "swarm_ext/tests/llm_eval/dataset_v2.jsonl", "样本少于 500 条")
             )
     return {"llm_samples": sample_count}
 

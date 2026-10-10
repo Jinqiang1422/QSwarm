@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # ruff: noqa: RUF001, RUF002, RUF003
 """
-generate_dataset.py — LLM 集群指令评测集 v1 生成器（WP1.4）
+generate_dataset.py — LLM 集群指令评测集 v2 生成器（WP1.4）
 
 确定性生成 ≥500 条"指令 → 标准答案"样本对（JSONL），覆盖：
   A 单动作指令（16 工具全谱 + 参数网格 + 限幅期望）
   B 多动作序列（常见战术组合 × 参数变体）
   C 多阶段任务（start_swarm_task，6 种完成条件）
-  D 模板引用（run_task_template，4 套内置模板 × 参数组合）
+  D 模板引用（run_task_template，6 套内置模板 × 参数组合）
   E 中止与状态问答（无工具调用）
   F 越界拒绝（攻击/绕过工具/超出能力，期望拒绝且无工具调用）
   G 歧义追问（信息不足，期望追问且无工具调用）
   H 中文表达变体（对 A/B 的口吻改写，expected 不变）
 
-用法：python3 generate_dataset.py [输出路径]   （默认 dataset_v1.jsonl）
+用法：python3 generate_dataset.py [输出路径]   （默认 dataset_v2.jsonl）
 """
 
 import json
@@ -344,6 +344,36 @@ def _task_entry(instruction, task_name, stages, note=""):
     }
 
 
+def _sweep_stages(altitude, length, width, angles):
+    """起飞 → 按各角度依次条带覆盖 → 返航（v1「扇形扫掠搜索」模板对应的自定义编排）。"""
+    stages = [
+        {
+            "name": "起飞",
+            "actions": [{"type": "arm", "arm": True}, {"type": "takeoff", "altitude": altitude}],
+            "complete_when": {"kind": "all_airborne", "min_altitude": altitude - 5},
+        }
+    ]
+    for angle in angles:
+        stages.append(
+            {
+                "name": f"{angle}度扫掠",
+                "actions": [
+                    {"type": "plan_coverage", "length": length, "width": width, "angle": angle},
+                    {"type": "start_mission"},
+                ],
+                "complete_when": {"kind": "all_mission_finished"},
+            }
+        )
+    stages.append(
+        {
+            "name": "返航",
+            "actions": [{"type": "rtl"}],
+            "complete_when": {"kind": "all_disarmed"},
+        }
+    )
+    return stages
+
+
 def gen_c() -> list:
     out = []
     out.append(
@@ -517,6 +547,59 @@ def gen_c() -> list:
             note="编队与覆盖复合任务",
         )
     )
+    # --- v2：原「扇形扫掠搜索」「编队巡逻」模板题，模板移除后改为自定义编排 ---
+    for instruction, altitude in (
+        ("按0、60、120度三个角度对该区域依次扫掠搜索，完成后返航", 30),
+        ("高度40米，对300×150米区域按0、60、120度三个角度依次扫掠，完成后返航", 40),
+        ("对当前区域做三轮扫掠，航线角度依次为0度、60度、120度，扫完返航", 30),
+    ):
+        out.append(
+            _task_entry(
+                instruction,
+                "三角度扫掠搜索",
+                _sweep_stages(altitude, 300, 150, (0, 60, 120)),
+                note="v2：原扇形扫掠搜索模板题",
+            )
+        )
+    out.append(
+        _task_entry(
+            "1号长机楔形编队巡逻5分钟，然后换成纵队再巡逻3分钟，结束后返航",
+            "编队巡逻换队形",
+            [
+                {
+                    "name": "起飞",
+                    "actions": [{"type": "arm", "arm": True}, {"type": "takeoff", "altitude": 40}],
+                    "complete_when": {"kind": "all_airborne", "min_altitude": 35},
+                },
+                {
+                    "name": "楔形编队",
+                    "actions": [{"type": "start_formation", "leader_id": 1, "formation": "wedge"}],
+                    "complete_when": {"kind": "formation_running"},
+                },
+                {
+                    "name": "第一程巡逻",
+                    "actions": [],
+                    "complete_when": {"kind": "duration", "seconds": 300},
+                },
+                {
+                    "name": "换纵队",
+                    "actions": [{"type": "start_formation", "leader_id": 1, "formation": "column"}],
+                    "complete_when": {"kind": "formation_running"},
+                },
+                {
+                    "name": "第二程巡逻",
+                    "actions": [],
+                    "complete_when": {"kind": "duration", "seconds": 180},
+                },
+                {
+                    "name": "返航",
+                    "actions": [{"type": "stop_formation"}, {"type": "rtl"}],
+                    "complete_when": {"kind": "all_disarmed"},
+                },
+            ],
+            note="v2：原编队巡逻模板题",
+        )
+    )
     return out
 
 
@@ -571,26 +654,12 @@ def gen_d() -> list:
         _tpl_entry("全员返航降落模板，立即执行", "全员返航降落", {}),
         _tpl_entry("不飞了，按全员返航降落模板回收", "全员返航降落", {}),
         _tpl_entry("用全员返航降落模板结束今天任务", "全员返航降落", {}),
-        # --- P2 新增模板 ---
-        _tpl_entry("用扇形扫掠模板搜索该区域", "扇形扫掠搜索", {}),
-        _tpl_entry(
-            "扇形扫掠模板，高度40米，扇区300×150",
-            "扇形扫掠搜索",
-            {"altitude": 40, "length": 300, "width": 150},
-        ),
-        _tpl_entry(
-            "扇形扫掠，三个扇区角度0、60、120度",
-            "扇形扫掠搜索",
-            {"angle1": 0, "angle2": 60, "angle3": 120},
-        ),
+        # --- P2 新增模板（v2：扇形扫掠搜索 / 编队巡逻 / 会合集结已移除）---
         _tpl_entry("平行网格扫掠模板，默认参数", "平行网格扫掠", {}),
         _tpl_entry("网格扫掠模板，区域500×400米", "平行网格扫掠", {"length": 500, "width": 400}),
         _tpl_entry(
-            "编队巡逻模板，楔形巡逻5分钟换纵队",
-            "编队巡逻",
-            {"formation": "wedge", "patrol_seconds": 300, "second_formation": "column"},
+            "编队巡航后返航模板，默认参数", "编队巡航后返航", {}, note="v2：原编队巡逻模板默认题"
         ),
-        _tpl_entry("编队巡逻模板，默认执行", "编队巡逻", {}),
         _tpl_entry(
             "多机接力值守模板，A组1到4号、B组5到8号",
             "多机接力值守",
@@ -598,11 +667,17 @@ def gen_d() -> list:
         ),
         _tpl_entry("接力值守模板，每组值守10分钟", "多机接力值守", {"watch_seconds": 600}),
         _tpl_entry(
-            "会合集结模板，半径25米保持2分钟",
-            "会合集结",
-            {"gather_radius": 25, "hold_seconds": 120},
+            "按编队巡航模板做一次环形编队会合集结，半径25米保持2分钟",
+            "编队巡航后返航",
+            {"formation": "circle", "spacing": 25, "cruise_seconds": 120},
+            note="v2：会合集结并入编队巡航后返航",
         ),
-        _tpl_entry("会合集结模板，默认执行", "会合集结", {}),
+        _tpl_entry(
+            "按编队巡航模板做环形编队会合集结，默认参数",
+            "编队巡航后返航",
+            {"formation": "circle"},
+            note="v2：会合集结并入编队巡航后返航",
+        ),
     ]
 
 
@@ -875,7 +950,7 @@ def gen_h(base: list, per: int) -> list:
 # ---------------------------------------------------------------------------
 def main() -> None:
     out_path = (
-        Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "dataset_v1.jsonl"
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "dataset_v2.jsonl"
     )
 
     a = gen_a()

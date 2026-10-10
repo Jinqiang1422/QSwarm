@@ -125,11 +125,8 @@ def build_context(entry: dict) -> str:
             "编队巡航后返航",
             "快速出动待命",
             "全员返航降落",
-            "扇形扫掠搜索",
             "平行网格扫掠",
-            "编队巡逻",
             "多机接力值守",
-            "会合集结",
         ],
         "situation": {
             "one_liner": "在线 3/3 架｜最低电 95%｜目标 3 个｜任务:空闲",
@@ -290,7 +287,7 @@ def judge(entry: dict, actual_calls: list, reply_text: str) -> bool:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", default=str(HERE / "dataset_v1.jsonl"))
+    ap.add_argument("--dataset", default=str(HERE / "dataset_v2.jsonl"))
     ap.add_argument("--tools", default=str(HERE / "tools_schema.json"))
     ap.add_argument("--base-url", default="https://api.deepseek.com/v1")
     ap.add_argument("--api-key", default="")
