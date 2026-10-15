@@ -36,7 +36,7 @@ jobs:
   cpp-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: 安装 Qt6 与构建工具
@@ -50,10 +50,10 @@ jobs:
   llm-eval-sanity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - name: 语法检查
         run: python3 -m py_compile swarm_ext/tests/llm_eval/*.py swarm_ext/sim/run_scenario.py
@@ -72,10 +72,10 @@ jobs:
   scenario-sanity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - name: 场景 JSON 合法性与 dry-run
         run: |
@@ -87,10 +87,10 @@ jobs:
   perception-service:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - name: 安装科学计算依赖
         run: pip install --quiet numpy scipy
